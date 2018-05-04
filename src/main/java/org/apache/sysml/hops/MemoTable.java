@@ -23,7 +23,6 @@ import java.util.ArrayList;
 import java.util.HashMap;
 
 import org.apache.sysml.hops.Hop.DataOpTypes;
-import org.apache.sysml.hops.Hop.VisitStatus;
 import org.apache.sysml.hops.recompile.RecompileStatus;
 import org.apache.sysml.parser.Expression.DataType;
 import org.apache.sysml.runtime.matrix.MatrixCharacteristics;
@@ -39,7 +38,7 @@ public class MemoTable
 	
 	public MemoTable()
 	{
-		_memo = new HashMap<Long, MatrixCharacteristics>();
+		_memo = new HashMap<>();
 	}
 
 	public void init( ArrayList<Hop> hops, RecompileStatus status)
@@ -186,7 +185,7 @@ public class MemoTable
 
 	private void rinit(Hop hop, RecompileStatus status) 
 	{
-		if( hop.getVisited() == VisitStatus.DONE )
+		if( hop.isVisited() )
 			return;
 		
 		//probe status of previous twrites
@@ -203,7 +202,7 @@ public class MemoTable
 			for( Hop c : hop.getInput() )
 				rinit( c, status );
 			
-		hop.setVisited(VisitStatus.DONE);
+		hop.setVisited();
 	}	
 	
 }

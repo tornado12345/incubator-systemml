@@ -22,42 +22,38 @@ package org.apache.sysml.parser;
 import java.util.ArrayList;
 import java.util.HashMap;
 
+import org.antlr.v4.runtime.ParserRuleContext;
+import org.antlr.v4.runtime.misc.Interval;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 
 import org.apache.sysml.hops.Hop.FileFormatTypes;
+import org.apache.sysml.runtime.controlprogram.parfor.util.IDSequence;
+import org.apache.sysml.runtime.matrix.MatrixCharacteristics;
 
 
-public abstract class Expression 
+public abstract class Expression implements ParseInfo
 {
-	/**
-	 * The kind of expression. Can be an operator (unary operator, binary operator, boolean operator, built-in function operator,
-	 * parameterized built-in function operator, data operator, relational operator, external built-in function operator, function call operator), data, or literal.
-	 */
-	public enum Kind {
-		UnaryOp, BinaryOp, BooleanOp, BuiltinFunctionOp, ParameterizedBuiltinFunctionOp, DataOp, Data, Literal, RelationalOp, ExtBuiltinFunctionOp, FunctionCallOp
-	};
-
 	/**
 	 * Binary operators.
 	 */
 	public enum BinaryOp {
 		PLUS, MINUS, MULT, DIV, MODULUS, INTDIV, MATMULT, POW, INVALID
-	};
+	}
 
 	/**
 	 * Relational operators.
 	 */
 	public enum RelationalOp {
 		LESSEQUAL, LESS, GREATEREQUAL, GREATER, EQUAL, NOTEQUAL, INVALID
-	};
+	}
 
 	/**
 	 * Boolean operators.
 	 */
 	public enum BooleanOp {
 		CONDITIONALAND, CONDITIONALOR, LOGICALAND, LOGICALOR, NOT, INVALID
-	};
+	}
 
 	/**
 	 * Built-in function operators.
@@ -67,7 +63,6 @@ public abstract class Expression
 		ACOS,
 		ASIN,
 		ATAN,
-		AVG,
 		CAST_AS_BOOLEAN,
 		CAST_AS_DOUBLE,
 		CAST_AS_FRAME,
@@ -80,10 +75,12 @@ public abstract class Expression
 		COLMAX,
 		COLMEAN,
 		COLMIN,
+		COLPROD,
 		COLSD,
 		COLSUM,
 		COLVAR,
 		COS,
+		COSH,
 		COV,
 		CUMMAX,
 		CUMMIN,
@@ -91,10 +88,13 @@ public abstract class Expression
 		CUMSUM,
 		DIAG,
 		EIGEN,
-		CONV2D, CONV2D_BACKWARD_FILTER, CONV2D_BACKWARD_DATA, 
-		MAX_POOL, AVG_POOL, MAX_POOL_BACKWARD,
+		EVAL,
+		EXISTS,
+		CONV2D, CONV2D_BACKWARD_FILTER, CONV2D_BACKWARD_DATA, BIAS_ADD, BIAS_MULTIPLY,
+		MAX_POOL, AVG_POOL, MAX_POOL_BACKWARD, AVG_POOL_BACKWARD,
 		EXP,
 		FLOOR,
+		IFELSE,
 		INTERQUANTILE,
 		INVERSE,
 		IQM,
@@ -122,6 +122,7 @@ public abstract class Expression
 		ROWMAX,
 		ROWMEAN, 
 		ROWMIN,
+		ROWPROD,
 		ROWSD,
 		ROWSUM,
 		ROWVAR,
@@ -129,34 +130,43 @@ public abstract class Expression
 		SD,
 		SEQ,
 		SIN,
+		SINH,
 		SIGN,
 		SOLVE,
 		SQRT,
 		SUM,
+		SVD,
 		TABLE,
 		TAN,
+		TANH,
 		TRACE, 
 		TRANS,
-		VAR
-	};
+		VAR,
+		XOR,
+		BITWAND,
+		BITWOR,
+		BITWXOR,
+		BITWSHIFTL,
+		BITWSHIFTR,
+	}
 
 	/**
 	 * Parameterized built-in function operators.
 	 */
 	public enum ParameterizedBuiltinFunctionOp {
-		GROUPEDAGG, RMEMPTY, REPLACE, ORDER, 
+		GROUPEDAGG, RMEMPTY, REPLACE, ORDER, LOWER_TRI, UPPER_TRI,
 		// Distribution Functions
 		CDF, INVCDF, PNORM, QNORM, PT, QT, PF, QF, PCHISQ, QCHISQ, PEXP, QEXP,
-		TRANSFORM, TRANSFORMAPPLY, TRANSFORMDECODE, TRANSFORMENCODE, TRANSFORMMETA,
+		TRANSFORMAPPLY, TRANSFORMDECODE, TRANSFORMENCODE, TRANSFORMCOLMAP, TRANSFORMMETA,
 		TOSTRING,	// The "toString" method for DML; named arguments accepted to format output
 		INVALID
-	};
+	}
 	
 	/**
 	 * Data operators.
 	 */
 	public enum DataOp {
-		READ, WRITE, RAND, MATRIX, INVALID	
+		READ, WRITE, RAND, MATRIX
 	}
 
 	/**
@@ -164,14 +174,7 @@ public abstract class Expression
 	 */
 	public enum FunctCallOp {
 		INTERNAL, EXTERNAL
-	};
-	
-	/**
-	 * External built-in function operators.
-	 */
-	public enum ExtBuiltinFunctionOp {
-		EIGEN, CHOLESKY
-	};
+	}
 
 	/**
 	 * Data types (matrix, scalar, frame, object, unknown).
@@ -182,48 +185,44 @@ public abstract class Expression
 		public boolean isMatrix() {
 			return (this == MATRIX);
 		}
+		public boolean isFrame() {
+			return (this == FRAME);
+		}
 		public boolean isScalar() {
 			return (this == SCALAR);
 		}
-	};
+	}
 
 	/**
 	 * Value types (int, double, string, boolean, object, unknown).
 	 */
 	public enum ValueType {
 		INT, DOUBLE, STRING, BOOLEAN, OBJECT, UNKNOWN
-	};
+	}
 
 	/**
 	 * Format types (text, binary, matrix market, csv, unknown).
 	 */
 	public enum FormatType {
-		TEXT, BINARY, MM, CSV, UNKNOWN
-	};
+		TEXT, BINARY, MM, CSV
+	}
 	
 	protected static final Log LOG = LogFactory.getLog(Expression.class.getName());
-
-	public abstract Expression rewriteExpression(String prefix) throws LanguageException;
-		
 	
-	protected Kind _kind;
+	private static final IDSequence _tempId = new IDSequence();
 	protected Identifier[] _outputs;
-
-	private static int _tempId;
 
 	public Expression() {
 		_outputs = null;
 	}
 
+	public abstract Expression rewriteExpression(String prefix);
+	
 	public void setOutput(Identifier output) {
 		if ( _outputs == null) {
 			_outputs = new Identifier[1];
 		}
 		_outputs[0] = output;
-	}
-
-	public Kind getKind() {
-		return _kind;
 	}
 
 	/**
@@ -246,15 +245,11 @@ public abstract class Expression
 		return _outputs;
 	}
 	
-	public void validateExpression(HashMap<String, DataIdentifier> ids, HashMap<String, ConstIdentifier> currConstVars, boolean conditional) 
-		throws LanguageException 
-	{
+	public void validateExpression(HashMap<String, DataIdentifier> ids, HashMap<String, ConstIdentifier> currConstVars, boolean conditional) {
 		raiseValidateError("Should never be invoked in Baseclass 'Expression'", false);
 	}
 	
-	public void validateExpression(MultiAssignmentStatement mas, HashMap<String, DataIdentifier> ids, HashMap<String, ConstIdentifier> currConstVars, boolean conditional) 
-		throws LanguageException 
-	{
+	public void validateExpression(MultiAssignmentStatement mas, HashMap<String, DataIdentifier> ids, HashMap<String, ConstIdentifier> currConstVars, boolean conditional) {
 		raiseValidateError("Should never be invoked in Baseclass 'Expression'", false);
 	}
 
@@ -290,7 +285,7 @@ public abstract class Expression
 	/**
 	 * Convert string value to relational operator.
 	 * 
-	 * @param val String value ('&lt;', '&lt=', '&gt;', '&gt;=', '==', '!=')
+	 * @param val String value ('&lt;', '&lt;=', '&gt;', '&gt;=', '==', '!=')
 	 * @return Relational operator ({@code RelationalOp.LESS}, {@code RelationalOp.LESSEQUAL}, 
 	 * {@code RelationalOp.GREATER}, {@code RelationalOp.GREATEREQUAL}, {@code RelationalOp.EQUAL}, 
 	 * {@code RelationalOp.NOTEQUAL}).
@@ -371,7 +366,7 @@ public abstract class Expression
 	 * @return Temporary name of expression.
 	 */
 	public static String getTempName() {
-		return "parsertemp" + _tempId++;
+		return "parsertemp" + _tempId.getNextID();
 	}
 
 	public abstract VariableSet variablesRead();
@@ -388,9 +383,8 @@ public abstract class Expression
 	 * @param expression2 Second expression
 	 * @param cast Whether a cast should potentially be performed
 	 * @return The data type ({@link DataType})
-	 * @throws LanguageException
 	 */
-	public static DataType computeDataType(Expression expression1, Expression expression2, boolean cast) throws LanguageException {
+	public static DataType computeDataType(Expression expression1, Expression expression2, boolean cast) {
 		return computeDataType(expression1.getOutput(), expression2.getOutput(), cast);
 	}
 
@@ -403,9 +397,8 @@ public abstract class Expression
 	 * @param identifier2 Second identifier
 	 * @param cast Whether a cast should potentially be performed
 	 * @return The data type ({@link DataType})
-	 * @throws LanguageException
 	 */
-	public static DataType computeDataType(Identifier identifier1, Identifier identifier2, boolean cast) throws LanguageException {
+	public static DataType computeDataType(Identifier identifier1, Identifier identifier2, boolean cast) {
 		DataType d1 = identifier1.getDataType();
 		DataType d2 = identifier2.getDataType();
 
@@ -436,9 +429,8 @@ public abstract class Expression
 	 * @param expression2 Second expression
 	 * @param cast Whether a cast should potentially be performed
 	 * @return The value type ({@link ValueType})
-	 * @throws LanguageException
 	 */
-	public static ValueType computeValueType(Expression expression1, Expression expression2, boolean cast) throws LanguageException {
+	public static ValueType computeValueType(Expression expression1, Expression expression2, boolean cast) {
 		return computeValueType(expression1.getOutput(), expression2.getOutput(), cast);
 	}
 	
@@ -452,9 +444,8 @@ public abstract class Expression
 	 * @param identifier2 Second identifier
 	 * @param cast Whether a cast should potentially be performed
 	 * @return The value type ({@link ValueType})
-	 * @throws LanguageException
 	 */
-	public static ValueType computeValueType(Identifier identifier1, Identifier identifier2, boolean cast) throws LanguageException {
+	public static ValueType computeValueType(Identifier identifier1, Identifier identifier2, boolean cast) {
 		ValueType v1 = identifier1.getValueType();
 		ValueType v2 = identifier2.getValueType();
 
@@ -510,9 +501,8 @@ public abstract class Expression
 	 * Throw a LanguageException with the message.
 	 * 
 	 * @param message the error message
-	 * @throws LanguageException
 	 */
-	public void raiseValidateError( String message ) throws LanguageException {
+	public void raiseValidateError( String message ) {
 		raiseValidateError(message, false, null);
 	}
 	
@@ -523,9 +513,8 @@ public abstract class Expression
 	 * @param message the error (or warning) message
 	 * @param conditional if {@code true}, display log warning message. Otherwise, the message
 	 * will be thrown as a LanguageException
-	 * @throws LanguageException thrown if conditional is {@code false}.
 	 */
-	public void raiseValidateError( String message, boolean conditional ) throws LanguageException {
+	public void raiseValidateError( String message, boolean conditional ) {
 		raiseValidateError(message, conditional, null);
 	}
 	
@@ -537,79 +526,53 @@ public abstract class Expression
 	 * @param conditional if {@code true}, display log warning message. Otherwise, the message (and optional
 	 * error code) will be thrown as a LanguageException
 	 * @param errorCode optional error code
-	 * @throws LanguageException thrown if conditional is {@code false}.
 	 */
-	public void raiseValidateError( String message, boolean conditional, String errorCode ) 
-		throws LanguageException
-	{
-		if( conditional )  //warning if conditional
-		{
-			String fullMsg = this.printWarningLocation() + message;
-			
-			LOG.warn( fullMsg );
-		}
-		else  //error and exception if unconditional
-		{
-			String fullMsg = this.printErrorLocation() + message;
-			
-			//LOG.error( fullMsg ); //no redundant error			
-			if( errorCode != null )
-				throw new LanguageException( fullMsg, errorCode );
-			else 
-				throw new LanguageException( fullMsg );
+	public void raiseValidateError(String msg, boolean conditional, String errorCode) {
+		if (conditional) {// warning if conditional
+			String fullMsg = this.printWarningLocation() + msg;
+			LOG.warn(fullMsg);
+		} else {// error and exception if unconditional
+			String fullMsg = this.printErrorLocation() + msg;
+			if (errorCode != null)
+				throw new LanguageException(fullMsg, errorCode);
+			else
+				throw new LanguageException(fullMsg);
 		}
 	}
-	
-	
+
 	/**
 	 * Returns the matrix characteristics for scalar-scalar, scalar-matrix, matrix-scalar, matrix-matrix
 	 * operations. This method is aware of potentially unknowns and matrix-vector (col/row) operations.
 	 * 
-	 * 
 	 * @param expression1 The first expression
 	 * @param expression2 The second expression
-	 * @return long array of 4 values, where [0] is the number of rows (rlen),
+	 * @return matrix characteristics
 	 * [1] is the number of columns (clen), [2] is the number of rows in a block (brlen),
 	 * and [3] is the number of columns in a block (bclen). Default (unknown) values are
 	 * -1. Scalar values are all 0.
 	 */
-	public static long[] getBinaryMatrixCharacteristics(Expression expression1, Expression expression2)
-	{
-		long[] ret = new long[]{ -1, -1, -1, -1 };
-		
+	public static MatrixCharacteristics getBinaryMatrixCharacteristics(Expression expression1, Expression expression2) {
 		Identifier idleft = expression1.getOutput();
 		Identifier idright = expression2.getOutput();
-		
 		if( idleft.getDataType()==DataType.SCALAR && idright.getDataType()==DataType.SCALAR ) {
-			ret[0] = 0; 
-			ret[1] = 0; 
-			ret[2] = 0; 
-			ret[3] = 0; 
+			return new MatrixCharacteristics(0, 0, 0, 0);
 		}
 		else if( idleft.getDataType()==DataType.SCALAR && idright.getDataType()==DataType.MATRIX ) {
-			ret[0] = idright.getDim1(); 
-			ret[1] = idright.getDim2(); 
-			ret[2] = idright.getRowsInBlock(); 
-			ret[3] = idright.getColumnsInBlock();
+			return new MatrixCharacteristics(idright.getDim1(), idright.getDim2(), idright.getRowsInBlock(), idright.getColumnsInBlock());
 		}
 		else if( idleft.getDataType()==DataType.MATRIX && idright.getDataType()==DataType.SCALAR ) {
-			ret[0] = idleft.getDim1(); 
-			ret[1] = idleft.getDim2(); 
-			ret[2] = idleft.getRowsInBlock(); 
-			ret[3] = idleft.getColumnsInBlock();
+			return new MatrixCharacteristics(idleft.getDim1(), idleft.getDim2(), idleft.getRowsInBlock(), idleft.getColumnsInBlock());
 		}
 		else if( idleft.getDataType()==DataType.MATRIX && idright.getDataType()==DataType.MATRIX ) {
-			ret[0] = idleft.getDim1(); 
-			ret[1] = idleft.getDim2(); 
-			ret[2] = idleft.getRowsInBlock(); 
-			ret[3] = idleft.getColumnsInBlock();
-			if( ret[0] < 0 && idright.getDim1() > 1 ) //robustness for row vectors
-				ret[0] = idright.getDim1();
-			if( ret[1] < 0 && idright.getDim2() > 1 ) //robustness for row vectors
-				ret[1] = idright.getDim2();
+			MatrixCharacteristics mc = new MatrixCharacteristics(
+				idleft.getDim1(), idleft.getDim2(), idleft.getRowsInBlock(), idleft.getColumnsInBlock());
+			if( mc.getRows() < 0 && idright.getDim1() > 1 ) //robustness for row vectors
+				mc.setRows(idright.getDim1());
+			if( mc.getCols() < 0 && idright.getDim2() > 1 ) //robustness for row vectors
+				mc.setCols(idright.getDim2());
+			return mc;
 		}
-		
-		return ret;
+		return new MatrixCharacteristics(-1, -1, -1, -1);
 	}
 	
 	///////////////////////////////////////////////////////////////////////////
@@ -618,57 +581,118 @@ public abstract class Expression
 	private String _filename;
 	private int _beginLine, _beginColumn;
 	private int _endLine, _endColumn;
-	private ArrayList<String> _parseExceptionList = new ArrayList<String>();
+	private String _text;
+	private ArrayList<String> _parseExceptionList = new ArrayList<>();
 	
 	public void setFilename(String passed)  { _filename = passed;   }
 	public void setBeginLine(int passed)    { _beginLine = passed;   }
 	public void setBeginColumn(int passed) 	{ _beginColumn = passed; }
 	public void setEndLine(int passed) 		{ _endLine = passed;   }
 	public void setEndColumn(int passed)	{ _endColumn = passed; }
+	public void setText(String text) { _text = text; }
 	public void setParseExceptionList(ArrayList<String> passed) { _parseExceptionList = passed;}
-	
+
 	/**
-	 * Set the filename, the beginning line/column positions, and the ending line/column positions.
-	 * 
-	 * @param filename The DML/PYDML filename (if it exists)
-	 * @param blp Beginning line position
-	 * @param bcp Beginning column position
-	 * @param elp Ending line position
-	 * @param ecp Ending column position
+	 * Set parse information.
+	 *
+	 * @param parseInfo
+	 *            parse information, such as beginning line position, beginning
+	 *            column position, ending line position, ending column position,
+	 *            text, and filename
+	 * @param filename
+	 *            the DML/PYDML filename (if it exists)
 	 */
-	public void setAllPositions(String filename, int blp, int bcp, int elp, int ecp){
-		_filename    = filename;
-		_beginLine	 = blp; 
-		_beginColumn = bcp; 
-		_endLine 	 = elp;
-		_endColumn 	 = ecp;
+	public void setParseInfo(ParseInfo parseInfo) {
+		_beginLine = parseInfo.getBeginLine();
+		_beginColumn = parseInfo.getBeginColumn();
+		_endLine = parseInfo.getEndLine();
+		_endColumn = parseInfo.getEndColumn();
+		_text = parseInfo.getText();
+		_filename = parseInfo.getFilename();
 	}
+
+	/**
+	 * Set ParserRuleContext values (begin line, begin column, end line, end
+	 * column, and text).
+	 *
+	 * @param ctx
+	 *            the antlr ParserRuleContext
+	 */
+	public void setCtxValues(ParserRuleContext ctx) {
+		setBeginLine(ctx.start.getLine());
+		setBeginColumn(ctx.start.getCharPositionInLine());
+		setEndLine(ctx.stop.getLine());
+		setEndColumn(ctx.stop.getCharPositionInLine());
+		// preserve whitespace if possible
+		if ((ctx.start != null) && (ctx.stop != null) && (ctx.start.getStartIndex() != -1)
+				&& (ctx.stop.getStopIndex() != -1) && (ctx.start.getStartIndex() <= ctx.stop.getStopIndex())
+				&& (ctx.start.getInputStream() != null)) {
+			String text = ctx.start.getInputStream()
+					.getText(Interval.of(ctx.start.getStartIndex(), ctx.stop.getStopIndex()));
+			if (text != null) {
+				text = text.trim();
+			}
+			setText(text);
+		} else {
+			String text = ctx.getText();
+			if (text != null) {
+				text = text.trim();
+			}
+			setText(text);
+		}
+	}
+
+	/**
+	 * Set ParserRuleContext values (begin line, begin column, end line, end
+	 * column, and text) and file name.
+	 *
+	 * @param ctx
+	 *            the antlr ParserRuleContext
+	 * @param filename
+	 *            the filename (if it exists)
+	 */
+	public void setCtxValuesAndFilename(ParserRuleContext ctx, String filename) {
+		setCtxValues(ctx);
+		setFilename(filename);
+	}
+
 
 	public String getFilename()	{ return _filename;   }
 	public int getBeginLine()	{ return _beginLine;   }
 	public int getBeginColumn() { return _beginColumn; }
 	public int getEndLine() 	{ return _endLine;   }
 	public int getEndColumn()	{ return _endColumn; }
+	public String getText() { return _text; }
 	public ArrayList<String> getParseExceptionList() { return _parseExceptionList; }
-	
-	/**
-	 * Return error message containing the filename, the beginning line position, and the beginning column position.
-	 * 
-	 * @return the error message
-	 */
-	public String printErrorLocation(){
-		return "ERROR: " + _filename + " -- line " + _beginLine + ", column " + _beginColumn + " -- ";
+
+	public String printErrorLocation() {
+		String file = _filename;
+		if (file == null) {
+			file = "";
+		} else {
+			file = file + " ";
+		}
+		if (getText() != null) {
+			return "ERROR: " + file + "[line " + _beginLine + ":" + _beginColumn + "] -> " + getText() + " -- ";
+		} else {
+			return "ERROR: " + file + "[line " + _beginLine + ":" + _beginColumn + "] -- ";
+		}
 	}
-	
-	/**
-	 * Return warning message containing the filename, the beginning line position, and the beginning column position.
-	 * 
-	 * @return the warning message
-	 */
-	public String printWarningLocation(){
-		return "WARNING: " + _filename + " -- line " + _beginLine + ", column " + _beginColumn + " -- ";
+
+	public String printWarningLocation() {
+		String file = _filename;
+		if (file == null) {
+			file = "";
+		} else {
+			file = file + " ";
+		}
+		if (getText() != null) {
+			return "WARNING: " + file + "[line " + _beginLine + ":" + _beginColumn + "] -> " + getText() + " -- ";
+		} else {
+			return "WARNING: " + file + "[line " + _beginLine + ":" + _beginColumn + "] -- ";
+		}
 	}
-	
+
 	/**
 	 * Return info message containing the filename, the beginning line position, and the beginning column position.
 	 * 

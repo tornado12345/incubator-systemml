@@ -19,12 +19,9 @@
 
 package org.apache.sysml.parser;
 
-import java.io.IOException;
 import java.util.ArrayList;
 import java.util.HashMap;
 
-import org.apache.sysml.hops.Hop;
-import org.apache.sysml.hops.HopsException;
 import org.apache.sysml.hops.FunctionOp.FunctionType;
 import org.apache.sysml.parser.Expression.DataType;
 import org.apache.sysml.parser.Expression.ValueType;
@@ -42,13 +39,11 @@ public class FunctionStatementBlock extends StatementBlock
 	 *    default values start, they keep going to the right
 	 *    
 	 *    2)  The other parameters for External Functions
-	 * @throws IOException 
+	 * 
 	 */
 	@Override
 	public VariableSet validate(DMLProgram dmlProg, VariableSet ids, HashMap<String,ConstIdentifier> constVars, boolean conditional) 
-		throws LanguageException, ParseException, IOException 
 	{
-		
 		if (_statements.size() > 1){
 			LOG.error(this.printBlockErrorLocation() + "FunctionStatementBlock should have only 1 statement (FunctionStatement)");
 			throw new LanguageException(this.printBlockErrorLocation() + "FunctionStatementBlock should have only 1 statement (FunctionStatement)");
@@ -110,9 +105,8 @@ public class FunctionStatementBlock extends StatementBlock
 							if (curr.getValueType() == ValueType.INT){
 								IntIdentifier currIntValue = (IntIdentifier)constVars.get(curr.getName());
 								if (currIntValue != null){
-									DoubleIdentifier currDoubleValue = new DoubleIdentifier(currIntValue.getValue(), 
-											curr.getFilename(), curr.getBeginLine(), curr.getBeginColumn(), 
-											curr.getEndLine(), curr.getEndColumn());
+									DoubleIdentifier currDoubleValue = new DoubleIdentifier(currIntValue.getValue(),
+											curr);
 									constVars.put(curr.getName(), currDoubleValue);
 								}
 								LOG.warn(curr.printWarningLocation() + "for function " + fstmt.getName() 
@@ -203,14 +197,13 @@ public class FunctionStatementBlock extends StatementBlock
 		return ret;
 	}
 	
-	public VariableSet initializeforwardLV(VariableSet activeInPassed) throws LanguageException {
-		
+	@Override
+	public VariableSet initializeforwardLV(VariableSet activeInPassed) {
 		FunctionStatement fstmt = (FunctionStatement)_statements.get(0);
 		if (_statements.size() > 1){
 			LOG.error(this.printBlockErrorLocation() + "FunctionStatementBlock should have only 1 statement (while statement)");
 			throw new LanguageException(this.printBlockErrorLocation() + "FunctionStatementBlock should have only 1 statement (while statement)");
 		}
-		
 		_read = new VariableSet();
 		_gen = new VariableSet();
 				
@@ -248,7 +241,8 @@ public class FunctionStatementBlock extends StatementBlock
 		return _liveOut;
 	}
 
-	public VariableSet initializebackwardLV(VariableSet loPassed) throws LanguageException{
+	@Override
+	public VariableSet initializebackwardLV(VariableSet loPassed) {
 		
 		FunctionStatement wstmt = (FunctionStatement)_statements.get(0);
 			
@@ -267,25 +261,13 @@ public class FunctionStatementBlock extends StatementBlock
 	
 	}
 	
-	
-	public ArrayList<Hop> get_hops() throws HopsException {
-		
-		if (_hops != null && _hops.size() > 0){
-			LOG.error(this.printBlockErrorLocation() + "there should be no HOPs associated with the FunctionStatementBlock");
-			throw new HopsException(this.printBlockErrorLocation() + "there should be no HOPs associated with the FunctionStatementBlock");
-		}
-		
-		return _hops;
-	}
-	
-	
-	public VariableSet analyze(VariableSet loPassed) throws LanguageException{
+	@Override
+	public VariableSet analyze(VariableSet loPassed) {
 		LOG.error(this.printBlockErrorLocation() + "Both liveIn and liveOut variables need to be specified for liveness analysis for FunctionStatementBlock");
 		throw new LanguageException(this.printBlockErrorLocation() + "Both liveIn and liveOut variables need to be specified for liveness analysis for FunctionStatementBlock");	
 	}
 	
-	
-	public VariableSet analyze(VariableSet liPassed, VariableSet loPassed) throws LanguageException{
+	public VariableSet analyze(VariableSet liPassed, VariableSet loPassed) {
  		
 		VariableSet candidateLO = new VariableSet();
 		candidateLO.addVariables(loPassed);

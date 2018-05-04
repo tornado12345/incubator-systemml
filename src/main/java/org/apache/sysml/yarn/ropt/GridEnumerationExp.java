@@ -21,7 +21,6 @@ package org.apache.sysml.yarn.ropt;
 
 import java.util.ArrayList;
 
-import org.apache.sysml.runtime.DMLRuntimeException;
 import org.apache.sysml.runtime.controlprogram.ProgramBlock;
 
 public class GridEnumerationExp extends GridEnumeration
@@ -31,27 +30,19 @@ public class GridEnumerationExp extends GridEnumeration
 
 	private double _factor = -1;
 	
-	public GridEnumerationExp( ArrayList<ProgramBlock> prog, long min, long max ) 
-		throws DMLRuntimeException
-	{
+	public GridEnumerationExp( ArrayList<ProgramBlock> prog, long min, long max ) {
 		super(prog, min, max);
-		
 		_factor = DEFAULT_FACTOR;
 	}
 	
-	/**
-	 * 
-	 * @param steps
-	 */
-	public void setFactor( double factor )
-	{
+	public void setFactor( double factor ) {
 		_factor = factor;
 	}
 	
 	@Override
 	public ArrayList<Long> enumerateGridPoints() 
 	{
-		ArrayList<Long> ret = new ArrayList<Long>();
+		ArrayList<Long> ret = new ArrayList<>();
 		long v = _min;
 		while( v < _max ) {
 			ret.add( v );

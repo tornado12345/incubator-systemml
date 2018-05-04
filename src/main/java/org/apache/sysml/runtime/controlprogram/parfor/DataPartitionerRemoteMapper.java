@@ -31,6 +31,7 @@ import org.apache.hadoop.mapred.Reporter;
 import org.apache.sysml.runtime.controlprogram.ParForProgramBlock.PDataPartitionFormat;
 import org.apache.sysml.runtime.controlprogram.parfor.util.PairWritableBlock;
 import org.apache.sysml.runtime.controlprogram.parfor.util.PairWritableCell;
+import org.apache.sysml.runtime.matrix.MatrixCharacteristics;
 import org.apache.sysml.runtime.matrix.data.IJV;
 import org.apache.sysml.runtime.matrix.data.InputInfo;
 import org.apache.sysml.runtime.matrix.data.MatrixBlock;
@@ -48,18 +49,11 @@ import org.apache.sysml.runtime.util.MapReduceTool;
  */
 public class DataPartitionerRemoteMapper 
 	implements Mapper<Writable, Writable, Writable, Writable>
-{	
-	
+{
 	private DataPartitionerMapper _mapper = null;
 	
-	public DataPartitionerRemoteMapper( ) 
-	{
-		
-	}
+	public DataPartitionerRemoteMapper( ) { }
 	
-	/**
-	 * 
-	 */
 	@Override
 	public void map(Writable key, Writable value, OutputCollector<Writable, Writable> out, Reporter reporter) 
 		throws IOException
@@ -67,16 +61,10 @@ public class DataPartitionerRemoteMapper
 		_mapper.processKeyValue(key, value, out, reporter);		
 	}
 
-	/**
-	 * 
-	 */
 	@Override
 	public void configure(JobConf job)
 	{
-		long rlen = MRJobConfiguration.getPartitioningNumRows( job );
-		long clen = MRJobConfiguration.getPartitioningNumCols( job );
-		int brlen = MRJobConfiguration.getPartitioningBlockNumRows( job );
-		int bclen = MRJobConfiguration.getPartitioningBlockNumCols( job );
+		MatrixCharacteristics mc = MRJobConfiguration.getPartitionedMatrixSize(job);
 		InputInfo ii = MRJobConfiguration.getPartitioningInputInfo( job );
 		OutputInfo oi = MRJobConfiguration.getPartitioningOutputInfo( job );
 		PDataPartitionFormat pdf = MRJobConfiguration.getPartitioningFormat( job );
@@ -84,17 +72,21 @@ public class DataPartitionerRemoteMapper
 		boolean keepIndexes =  MRJobConfiguration.getPartitioningIndexFlag( job );
 		
 		if( ii == InputInfo.TextCellInputInfo )
-			_mapper = new DataPartitionerMapperTextcell(rlen, clen, brlen, bclen, pdf, n);
+			_mapper = new DataPartitionerMapperTextcell(mc.getRows(), mc.getCols(),
+				mc.getRowsPerBlock(), mc.getColsPerBlock(), pdf, n);
 		else if( ii == InputInfo.BinaryCellInputInfo )
-			_mapper = new DataPartitionerMapperBinarycell(rlen, clen, brlen, bclen, pdf, n);
+			_mapper = new DataPartitionerMapperBinarycell(mc.getRows(), mc.getCols(),
+				mc.getRowsPerBlock(), mc.getColsPerBlock(), pdf, n);
 		else if( ii == InputInfo.BinaryBlockInputInfo )
 		{
 			if( oi == OutputInfo.BinaryBlockOutputInfo )
-				_mapper = new DataPartitionerMapperBinaryblock(rlen, clen, brlen, bclen, pdf, n, keepIndexes);
+				_mapper = new DataPartitionerMapperBinaryblock(mc.getRows(), mc.getCols(),
+					mc.getRowsPerBlock(), mc.getColsPerBlock(), pdf, n, keepIndexes);
 			else if( oi == OutputInfo.BinaryCellOutputInfo )
 			{
 				boolean outputEmpty = MRJobConfiguration.getProgramBlocks(job)!=null; //fused parfor
-				_mapper = new DataPartitionerMapperBinaryblock2Binarycell(job, rlen, clen, brlen, bclen, pdf, n, keepIndexes, outputEmpty); 
+				_mapper = new DataPartitionerMapperBinaryblock2Binarycell(job, mc.getRows(), mc.getCols(),
+					mc.getRowsPerBlock(), mc.getColsPerBlock(), pdf, n, keepIndexes, outputEmpty); 
 			}
 			else
 				throw new RuntimeException("Partitioning from '"+ii+"' to '"+oi+"' not supported");
@@ -102,10 +94,7 @@ public class DataPartitionerRemoteMapper
 		else
 			throw new RuntimeException("Unable to configure mapper with unknown input info: "+ii.toString());
 	}
-	
-	/**
-	 * 
-	 */
+
 	@Override
 	public void close() 
 		throws IOException 
@@ -351,7 +340,7 @@ public class DataPartitionerRemoteMapper
 						{
 							_longKey.set(row_offset+1+i);
 							_pairKey.setIndexes(1, (col_offset/_bclen+1) );	
-							value2.sliceOperations(i, i, 0, (int)(cols-1), _reuseBlk);
+							value2.slice(i, i, 0, (int)(cols-1), _reuseBlk);
 							out.collect(_longKey, _pair);
 							_reuseBlk.reset();
 						}
@@ -377,7 +366,7 @@ public class DataPartitionerRemoteMapper
 						{
 							_longKey.set(col_offset+1+i);
 							_pairKey.setIndexes(row_offset/_brlen+1, 1);							
-							value2.sliceOperations(0, (int)(rows-1), i, i, _reuseBlk);
+							value2.slice(0, (int)(rows-1), i, i, _reuseBlk);
 							out.collect(_longKey, _pair );
 							_reuseBlk.reset();
 						}	
@@ -407,10 +396,7 @@ public class DataPartitionerRemoteMapper
 			}
 		}	
 	}
-	
-	/**
-	 * 
-	 */
+
 	private class DataPartitionerMapperBinaryblock2Binarycell extends DataPartitionerMapper
 	{
 		private JobConf _cachedJobConf = null;

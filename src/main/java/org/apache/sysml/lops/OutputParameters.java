@@ -29,10 +29,9 @@ import org.apache.sysml.runtime.controlprogram.caching.MatrixObject.UpdateType;
 
 public class OutputParameters 
 {
-	
 	public enum Format {
 		TEXT, BINARY, MM, CSV
-	};
+	}
 
 	private boolean _blocked = true;
 	private long _num_rows = -1;
@@ -62,7 +61,7 @@ public class OutputParameters
 		_file_label = label;
 	}
 
-	public void setDimensions(long rows, long cols, long rows_per_block, long cols_per_block, long nnz) throws HopsException {
+	public void setDimensions(long rows, long cols, long rows_per_block, long cols_per_block, long nnz) {
 		_num_rows = rows;
 		_num_cols = cols;
 		_nnz = nnz;
@@ -83,7 +82,7 @@ public class OutputParameters
 		}
 	}
 
-	public void setDimensions(long rows, long cols, long rows_per_block, long cols_per_block, long nnz, UpdateType update) throws HopsException {
+	public void setDimensions(long rows, long cols, long rows_per_block, long cols_per_block, long nnz, UpdateType update) {
 		_updateType = update;
 		setDimensions(rows, cols, rows_per_block, cols_per_block, nnz);
 	}

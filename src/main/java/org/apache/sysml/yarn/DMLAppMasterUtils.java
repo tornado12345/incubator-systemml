@@ -19,7 +19,6 @@
 
 package org.apache.sysml.yarn;
 
-import java.io.IOException;
 import java.util.ArrayList;
 import java.util.HashMap;
 
@@ -29,12 +28,9 @@ import org.apache.sysml.api.DMLScript;
 import org.apache.sysml.conf.CompilerConfig;
 import org.apache.sysml.conf.ConfigurationManager;
 import org.apache.sysml.conf.DMLConfig;
-import org.apache.sysml.hops.HopsException;
 import org.apache.sysml.hops.OptimizerUtils;
 import org.apache.sysml.hops.OptimizerUtils.OptimizationLevel;
 import org.apache.sysml.lops.Lop;
-import org.apache.sysml.lops.LopsException;
-import org.apache.sysml.runtime.DMLRuntimeException;
 import org.apache.sysml.runtime.controlprogram.Program;
 import org.apache.sysml.runtime.controlprogram.ProgramBlock;
 import org.apache.sysml.runtime.controlprogram.parfor.stat.InfrastructureAnalyzer;
@@ -45,17 +41,9 @@ import org.apache.sysml.yarn.ropt.YarnClusterConfig;
 
 public class DMLAppMasterUtils 
 {
-	
 	private static ResourceConfig _rc = null;
 	private static HashMap<ProgramBlock, Long> _rcMap = null;
 	
-
-	/**
-	 * 
-	 * @param conf
-	 * @param appId
-	 * @return
-	 */
 	public static String constructHDFSWorkingDir(DMLConfig conf, ApplicationId appId)
 	{
 		StringBuilder sb = new StringBuilder();
@@ -65,14 +53,8 @@ public class DMLAppMasterUtils
 		sb.append( Lop.FILE_SEPARATOR );
 		return sb.toString();	
 	}
-	
-	/**
-	 * 
-	 * @param conf
-	 * @throws DMLRuntimeException 
-	 */
+
 	public static void setupConfigRemoteMaxMemory(DMLConfig conf) 
-		throws DMLRuntimeException
 	{
 		//set remote max memory (if in yarn appmaster context)
 		if( DMLScript.isActiveAM() ){
@@ -103,58 +85,38 @@ public class DMLAppMasterUtils
 					//see GMR and parfor EMR and DPEMR for runtime configuration
 					long mem = ((long)conf.getIntValue(DMLConfig.YARN_MAPREDUCEMEM)) * 1024 * 1024;
 					InfrastructureAnalyzer.setRemoteMaxMemoryMap(mem);
-					InfrastructureAnalyzer.setRemoteMaxMemoryReduce(mem);		
+					InfrastructureAnalyzer.setRemoteMaxMemoryReduce(mem);
 				}
 			}
 		}
 	}
-	
-	/**
-	 * 
-	 * @param prog
-	 * @throws DMLRuntimeException
-	 * @throws HopsException
-	 * @throws LopsException
-	 * @throws IOException
-	 */
-	public static void setupProgramMappingRemoteMaxMemory(Program prog) 
-		throws DMLRuntimeException, HopsException, LopsException, IOException
-	{
+
+	public static void setupProgramMappingRemoteMaxMemory(Program prog) {
 		if( DMLScript.isActiveAM() && isResourceOptimizerEnabled() )
 		{
 			ArrayList<ProgramBlock> pbProg = getRuntimeProgramBlocks( prog ); 
 			ArrayList<ProgramBlock> B = ResourceOptimizer.compileProgram( pbProg, _rc );
 			
-			_rcMap = new HashMap<ProgramBlock, Long>();
+			_rcMap = new HashMap<>();
 			for( int i=0; i<B.size(); i++ ){
 				_rcMap.put(B.get(i), _rc.getMRResources(i));
 			}
 		}
 	}
-	
-	/**
-	 * 
-	 * @param sb
-	 */
-	public static void setupProgramBlockRemoteMaxMemory(ProgramBlock pb)
-	{
+
+	public static void setupProgramBlockRemoteMaxMemory(ProgramBlock pb) {
 		if( DMLScript.isActiveAM() && isResourceOptimizerEnabled() )
 		{
 			if( _rcMap != null && _rcMap.containsKey(pb) ){ 
 				//set max map and reduce memory (to be used by the compiler)
 				long mem = _rcMap.get(pb);
 				InfrastructureAnalyzer.setRemoteMaxMemoryMap(mem);
-				InfrastructureAnalyzer.setRemoteMaxMemoryReduce(mem);			
+				InfrastructureAnalyzer.setRemoteMaxMemoryReduce(mem);
 				OptimizerUtils.resetDefaultSize();
 			}
-		}	
+		}
 	}
-	
-	/**
-	 * 
-	 * @param job
-	 * @param conf
-	 */
+
 	public static void setupMRJobRemoteMaxMemory(JobConf job, DMLConfig conf)
 	{
 		if( DMLScript.isActiveAM() && conf.getBooleanValue(DMLConfig.YARN_APPMASTER) )
@@ -181,46 +143,24 @@ public class DMLAppMasterUtils
 			}
 		}
 	}
-	
-	/**
-	 * 
-	 * @return
-	 */
-	public static boolean isResourceOptimizerEnabled()
-	{
-		return ( DMLYarnClientProxy.RESOURCE_OPTIMIZER
-				|| OptimizerUtils.isOptLevel(OptimizationLevel.O3_LOCAL_RESOURCE_TIME_MEMORY) );
-	}
-	
 
-	/**
-	 * 
-	 * @param args
-	 * @return
-	 * @throws DMLException
-	 */
-	protected static ArrayList<ProgramBlock> getRuntimeProgramBlocks(Program prog) 
-		throws DMLRuntimeException
-	{			
+	public static boolean isResourceOptimizerEnabled() {
+		return ( DMLYarnClientProxy.RESOURCE_OPTIMIZER
+			|| OptimizerUtils.isOptLevel(OptimizationLevel.O3_LOCAL_RESOURCE_TIME_MEMORY) );
+	}
+
+	protected static ArrayList<ProgramBlock> getRuntimeProgramBlocks(Program prog) {
 		//construct single list of all program blocks including functions
-		ArrayList<ProgramBlock> ret = new ArrayList<ProgramBlock>();
+		ArrayList<ProgramBlock> ret = new ArrayList<>();
 		ret.addAll(prog.getProgramBlocks());
 		ret.addAll(prog.getFunctionProgramBlocks().values());
-		
 		return ret;
 	}
-	
-	/**
-	 * 
-	 * @param cc
-	 */
-	protected static void setupRemoteParallelTasks( YarnClusterConfig cc )
-	{
+
+	protected static void setupRemoteParallelTasks( YarnClusterConfig cc ) {
 		int pmap = (int) cc.getNumCores();
 		int preduce = (int) cc.getNumCores()/2;
 		InfrastructureAnalyzer.setRemoteParallelMapTasks(pmap);
 		InfrastructureAnalyzer.setRemoteParallelReduceTasks(preduce);
 	}
-	
-	
 }

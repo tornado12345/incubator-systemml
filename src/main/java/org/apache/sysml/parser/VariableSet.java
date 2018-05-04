@@ -19,57 +19,46 @@
 
 package org.apache.sysml.parser;
 
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Set;
 
 public class VariableSet 
 {
-	
 	private HashMap<String,DataIdentifier> _variables;
 	
-	public VariableSet(){
-		_variables = new HashMap<String,DataIdentifier>();
+	public VariableSet() {
+		_variables = new HashMap<>();
 	}
 	
-	public VariableSet( VariableSet vs )
-	{
-		_variables = new HashMap<String,DataIdentifier>();
-		
-		if (vs != null) {
-			HashMap<String,DataIdentifier> vars = vs.getVariables();
-			_variables.putAll(vars);
-		}		
+	public VariableSet( VariableSet vs ) {
+		_variables = new HashMap<>();
+		if (vs != null)
+			_variables.putAll(vs.getVariables());
 	}
 	
-	public void addVariable(String name, DataIdentifier id)
-	{
+	public void addVariable(String name, DataIdentifier id) {
 		_variables.put(name,id);
 	}
 	
-	public void addVariables(VariableSet vs)
-	{
-		if (vs != null) {
-			HashMap<String,DataIdentifier> vars = vs.getVariables();
-			_variables.putAll(vars);
-		}
+	public void addVariables(VariableSet vs) {
+		if (vs != null)
+			_variables.putAll(vs.getVariables());
 	}
 	
-	public void removeVariables(VariableSet vs)
-	{
-		if( vs != null ){
-			Set<String> vars = vs.getVariables().keySet();
-			for (String var : vars)
+	public void removeVariables(VariableSet vs) {
+		if( vs != null )
+			for( String var : vs.getVariables().keySet() )
 				_variables.remove(var);
-		}
 	}
-	
-	public void removeVariable(String name)
-	{
-		_variables.remove(name);
-	}
-	
+
 	public boolean containsVariable(String name){
 		return _variables.containsKey(name);
+	}
+	
+	public boolean containsAnyName(Set<String> names){
+		return _variables.keySet().stream()
+			.anyMatch(n -> names.contains(n));
 	}
 	
 	public DataIdentifier getVariable(String name){
@@ -84,12 +73,21 @@ public class VariableSet
 		return _variables;
 	}
 	
-	public String toString(){
-		StringBuilder sb = new StringBuilder();
-		for (String var : _variables.keySet()){
-			sb.append(var + ",");
-		}
-		return sb.toString();
+	@Override
+	public String toString() {
+		return Arrays.toString(
+			_variables.keySet().toArray());
 	}
 	
+	public static VariableSet union(VariableSet vs1, VariableSet vs2) {
+		VariableSet ret = new VariableSet(vs1);
+		ret.addVariables(vs2);
+		return ret;
+	}
+	
+	public static VariableSet minus(VariableSet vs1, VariableSet vs2) {
+		VariableSet ret = new VariableSet(vs1);
+		ret.removeVariables(vs2);
+		return ret;
+	}
 }

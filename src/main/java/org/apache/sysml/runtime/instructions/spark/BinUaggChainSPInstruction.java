@@ -22,7 +22,6 @@ package org.apache.sysml.runtime.instructions.spark;
 import org.apache.spark.api.java.JavaPairRDD;
 import org.apache.spark.api.java.function.Function;
 
-import org.apache.sysml.runtime.DMLRuntimeException;
 import org.apache.sysml.runtime.controlprogram.context.ExecutionContext;
 import org.apache.sysml.runtime.controlprogram.context.SparkExecutionContext;
 import org.apache.sysml.runtime.instructions.InstructionUtils;
@@ -32,44 +31,33 @@ import org.apache.sysml.runtime.matrix.data.MatrixIndexes;
 import org.apache.sysml.runtime.matrix.operators.AggregateUnaryOperator;
 import org.apache.sysml.runtime.matrix.operators.BinaryOperator;
 
-
-public class BinUaggChainSPInstruction extends UnarySPInstruction 
-{
-	
-	//operators
+public class BinUaggChainSPInstruction extends UnarySPInstruction {
+	// operators
 	private BinaryOperator _bOp = null;
 	private AggregateUnaryOperator _uaggOp = null;
-	
-	public BinUaggChainSPInstruction(CPOperand in, CPOperand out, BinaryOperator bop, AggregateUnaryOperator uaggop, String opcode, String istr )
-	{
-		super(null, in, out, opcode, istr);
-		_sptype = SPINSTRUCTION_TYPE.BinUaggChain;
-		
+
+	private BinUaggChainSPInstruction(CPOperand in, CPOperand out, BinaryOperator bop, AggregateUnaryOperator uaggop,
+			String opcode, String istr) {
+		super(SPType.BinUaggChain, null, in, out, opcode, istr);
 		_bOp = bop;
 		_uaggOp = uaggop;
 
 	}
 
-	public static BinUaggChainSPInstruction parseInstruction ( String str ) 
-		throws DMLRuntimeException 
-	{
+	public static BinUaggChainSPInstruction parseInstruction ( String str ) {
 		//parse instruction parts (without exec type)
-		String[] parts = InstructionUtils.getInstructionPartsWithValueType( str );		
+		String[] parts = InstructionUtils.getInstructionPartsWithValueType( str );
 		InstructionUtils.checkNumFields( parts, 4 );
-		
 		String opcode = parts[0];
 		BinaryOperator bop = InstructionUtils.parseBinaryOperator(parts[1]);
 		AggregateUnaryOperator uaggop = InstructionUtils.parseBasicAggregateUnaryOperator(parts[2]);
 		CPOperand in = new CPOperand(parts[3]);
 		CPOperand out = new CPOperand(parts[4]);
-		
 		return new BinUaggChainSPInstruction(in, out, bop, uaggop, opcode, str);
 	}
 
 	@Override
-	public void processInstruction(ExecutionContext ec)
-		throws DMLRuntimeException 
-	{
+	public void processInstruction(ExecutionContext ec) {
 		SparkExecutionContext sec = (SparkExecutionContext)ec;
 		
 		//get input
@@ -84,10 +72,7 @@ public class BinUaggChainSPInstruction extends UnarySPInstruction
 		sec.setRDDHandleForVariable(output.getName(), out);	
 		sec.addLineageRDD(output.getName(), input1.getName());
 	}
-	
-	/**
-	 * 
-	 */
+
 	public static class RDDBinUaggChainFunction implements Function<MatrixBlock,MatrixBlock> 
 	{
 		private static final long serialVersionUID = 886065328623752520L;
@@ -112,7 +97,7 @@ public class BinUaggChainSPInstruction extends UnarySPInstruction
 			arg0.aggregateUnaryOperations(_uaggOp, out1, brlen, bclen, null);
 			
 			//strip-off correction
-			out1.dropLastRowsOrColums(_uaggOp.aggOp.correctionLocation);
+			out1.dropLastRowsOrColumns(_uaggOp.aggOp.correctionLocation);
 		
 			//perform binary operation
 			MatrixBlock out2 = new MatrixBlock();

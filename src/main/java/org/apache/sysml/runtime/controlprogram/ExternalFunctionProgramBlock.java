@@ -23,77 +23,59 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.HashSet;
-import java.util.StringTokenizer;
 import java.util.TreeMap;
 
 import org.apache.sysml.api.DMLScript;
 import org.apache.sysml.conf.ConfigurationManager;
 import org.apache.sysml.lops.Lop;
-import org.apache.sysml.lops.ReBlock;
 import org.apache.sysml.lops.compile.JobType;
 import org.apache.sysml.parser.DataIdentifier;
-import org.apache.sysml.parser.Expression.DataType;
-import org.apache.sysml.parser.Expression.ValueType;
 import org.apache.sysml.parser.ExternalFunctionStatement;
 import org.apache.sysml.runtime.DMLRuntimeException;
-import org.apache.sysml.runtime.controlprogram.caching.CacheException;
 import org.apache.sysml.runtime.controlprogram.caching.MatrixObject;
 import org.apache.sysml.runtime.controlprogram.context.ExecutionContext;
 import org.apache.sysml.runtime.controlprogram.parfor.util.IDSequence;
 import org.apache.sysml.runtime.instructions.Instruction;
 import org.apache.sysml.runtime.instructions.MRJobInstruction;
-import org.apache.sysml.runtime.instructions.cp.BooleanObject;
+import org.apache.sysml.runtime.instructions.cp.CPOperand;
 import org.apache.sysml.runtime.instructions.cp.Data;
-import org.apache.sysml.runtime.instructions.cp.DoubleObject;
-import org.apache.sysml.runtime.instructions.cp.IntObject;
-import org.apache.sysml.runtime.instructions.cp.ScalarObject;
-import org.apache.sysml.runtime.instructions.cp.StringObject;
 import org.apache.sysml.runtime.instructions.cp.VariableCPInstruction;
-import org.apache.sysml.runtime.matrix.MatrixCharacteristics;
-import org.apache.sysml.runtime.matrix.MatrixFormatMetaData;
 import org.apache.sysml.runtime.matrix.data.InputInfo;
 import org.apache.sysml.runtime.matrix.data.OutputInfo;
 import org.apache.sysml.udf.ExternalFunctionInvocationInstruction;
-import org.apache.sysml.udf.FunctionParameter;
-import org.apache.sysml.udf.Matrix;
 import org.apache.sysml.udf.PackageFunction;
-import org.apache.sysml.udf.Scalar;
-import org.apache.sysml.udf.FunctionParameter.FunctionParameterType;
-import org.apache.sysml.udf.BinaryObject;
 import org.apache.sysml.udf.Scalar.ScalarValueType;
 
 public class ExternalFunctionProgramBlock extends FunctionProgramBlock 
 {
-		
 	protected static final IDSequence _idSeq = new IDSequence();
 
-	protected String _baseDir = null;
-
-	ArrayList<Instruction> block2CellInst; 
-	ArrayList<Instruction> cell2BlockInst; 
-
-	// holds other key value parameters specified in function declaration
-	protected HashMap<String, String> _otherParams;
-
-	protected HashMap<String, String> _unblockedFileNames;
-	protected HashMap<String, String> _blockedFileNames;
-
 	protected long _runID = -1; //ID for block of statements
+	protected String _baseDir = null;
+	protected HashMap<String, String> _otherParams; // holds other key value parameters 
+
+	private ArrayList<Instruction> block2CellInst; 
+	private ArrayList<Instruction> cell2BlockInst; 
+	private  HashMap<String, String> _unblockedFileNames;
+	private HashMap<String, String> _blockedFileNames;
+
 	
 	/**
 	 * Constructor that also provides otherParams that are needed for external
 	 * functions. Remaining parameters will just be passed to constructor for
 	 * function program block.
 	 * 
-	 * @param eFuncStat
-	 * @throws DMLRuntimeException 
+	 * @param prog runtime program
+	 * @param inputParams list of input data identifiers
+	 * @param outputParams list of output data indentifiers
+	 * @param baseDir base directory
 	 */
 	protected ExternalFunctionProgramBlock(Program prog,
 			ArrayList<DataIdentifier> inputParams,
 			ArrayList<DataIdentifier> outputParams,
-			String baseDir) throws DMLRuntimeException
+			String baseDir)
 	{
-		super(prog, inputParams, outputParams);		
+		super(prog, inputParams, outputParams);
 		_baseDir = baseDir;
 	}
 	
@@ -101,17 +83,17 @@ public class ExternalFunctionProgramBlock extends FunctionProgramBlock
 			ArrayList<DataIdentifier> inputParams,
 			ArrayList<DataIdentifier> outputParams,
 			HashMap<String, String> otherParams,
-			String baseDir) throws DMLRuntimeException {
+			String baseDir) {
 
 		super(prog, inputParams, outputParams);
 		_baseDir = baseDir;
 		
 		// copy other params
-		_otherParams = new HashMap<String, String>();
+		_otherParams = new HashMap<>();
 		_otherParams.putAll(otherParams);
 
-		_unblockedFileNames = new HashMap<String, String>();
-		_blockedFileNames = new HashMap<String, String>();
+		_unblockedFileNames = new HashMap<>();
+		_blockedFileNames = new HashMap<>();
 	
 		// generate instructions
 		createInstructions();
@@ -136,31 +118,27 @@ public class ExternalFunctionProgramBlock extends FunctionProgramBlock
 	 * by the external function program block.
 	 * 
 	 * 
-	 * @param id
+	 * @param id this field does nothing
 	 */
-	private void changeTmpOutput( long id )
-	{
+	private void changeTmpOutput( long id ) {
 		ArrayList<DataIdentifier> outputParams = getOutputParams();
 		cell2BlockInst = getCell2BlockInstructions(outputParams, _blockedFileNames);
 	}
-	
-	/**
-	 * 
-	 * @return
-	 */
-	public String getBaseDir()
-	{
+
+	public String getBaseDir() {
 		return _baseDir;
+	}
+	
+	public HashMap<String,String> getOtherParams() {
+		return _otherParams;
 	}
 	
 	/**
 	 * Method to be invoked to execute instructions for the external function
 	 * invocation
-	 * @throws DMLRuntimeException 
 	 */
 	@Override
 	public void execute(ExecutionContext ec) 
-		throws DMLRuntimeException
 	{
 		_runID = _idSeq.getNextID();
 		
@@ -172,12 +150,10 @@ public class ExternalFunctionProgramBlock extends FunctionProgramBlock
 		
 		try {
 			inputParams = getInputParams();
-			for(DataIdentifier di : inputParams ) {			
+			for(DataIdentifier di : inputParams ) {
 				Data d = ec.getVariable(di.getName());
-				if ( d.getDataType() == DataType.MATRIX ) {
-					MatrixObject inputObj = (MatrixObject) d;
-					inputObj.exportData();
-				}
+				if( d.getDataType().isMatrix() )
+					((MatrixObject) d).exportData();
 			}
 		}
 		catch (Exception e){
@@ -187,7 +163,7 @@ public class ExternalFunctionProgramBlock extends FunctionProgramBlock
 		// convert block to cell
 		if( block2CellInst != null )
 		{
-			ArrayList<Instruction> tempInst = new ArrayList<Instruction>();
+			ArrayList<Instruction> tempInst = new ArrayList<>();
 			tempInst.addAll(block2CellInst);
 			try {
 				this.executeInstructions(tempInst,ec);
@@ -203,7 +179,7 @@ public class ExternalFunctionProgramBlock extends FunctionProgramBlock
 		{
 			try {
 				if (_inst.get(i) instanceof ExternalFunctionInvocationInstruction)
-					executeInstruction(ec, (ExternalFunctionInvocationInstruction) _inst.get(i));
+					((ExternalFunctionInvocationInstruction) _inst.get(i)).processInstruction(ec);
 			} 
 			catch(Exception e) {
 				throw new DMLRuntimeException(this.printBlockErrorLocation() + 
@@ -214,7 +190,7 @@ public class ExternalFunctionProgramBlock extends FunctionProgramBlock
 		// convert cell to block
 		if( cell2BlockInst != null )
 		{
-			ArrayList<Instruction> tempInst = new ArrayList<Instruction>();
+			ArrayList<Instruction> tempInst = new ArrayList<>();
 			try {
 				tempInst.clear();
 				tempInst.addAll(cell2BlockInst);
@@ -231,54 +207,29 @@ public class ExternalFunctionProgramBlock extends FunctionProgramBlock
 	}
 
 	/**
-	 * Given a list of parameters as data identifiers, returns a string
-	 * representation.
+	 * Given a list of parameters as data identifiers, returns an array
+	 * of instruction operands.
 	 * 
-	 * @param params
-	 * @return
+	 * @param params list of data identifiers
+	 * @return operands
 	 */
-	protected String getParameterString(ArrayList<DataIdentifier> params) {
-		String parameterString = "";
-
+	protected CPOperand[] getOperands(ArrayList<DataIdentifier> params) {
+		CPOperand[] ret = new CPOperand[params.size()];
 		for (int i = 0; i < params.size(); i++) {
-			if (i != 0)
-				parameterString += ",";
-
 			DataIdentifier param = params.get(i);
-
-			if (param.getDataType() == DataType.MATRIX) {
-				String s = getDataTypeString(DataType.MATRIX) + ":";
-				s = s + "" + param.getName() + "" + ":";
-				s = s + getValueTypeString(param.getValueType());
-				parameterString += s;
-				continue;
-			}
-
-			if (param.getDataType() == DataType.SCALAR) {
-				String s = getDataTypeString(DataType.SCALAR) + ":";
-				s = s + "" + param.getName() + "" + ":";
-				s = s + getValueTypeString(param.getValueType());
-				parameterString += s;
-				continue;
-			}
-
-			if (param.getDataType() == DataType.OBJECT) {
-				String s = getDataTypeString(DataType.OBJECT) + ":";
-				s = s + "" + param.getName() + "" + ":";
-				parameterString += s;
-				continue;
-			}
+			ret[i] = new CPOperand(param.getName(),
+				param.getValueType(), param.getDataType());
 		}
-
-		return parameterString;
+		return ret;
 	}
 
 	/**
-	 * method to get instructions
+	 * method to create instructions
+	 * 
 	 */
 	protected void createInstructions() {
 
-		_inst = new ArrayList<Instruction>();
+		_inst = new ArrayList<>();
 
 		// unblock all input matrices
 		block2CellInst = getBlock2CellInstructions(getInputParams(),_unblockedFileNames);
@@ -287,39 +238,69 @@ public class ExternalFunctionProgramBlock extends FunctionProgramBlock
 		String className = _otherParams.get(ExternalFunctionStatement.CLASS_NAME);
 		String configFile = _otherParams.get(ExternalFunctionStatement.CONFIG_FILE);
 		
-		// class name cannot be null, however, configFile and execLocation can
-		// be null
+		// class name cannot be null, however, configFile and execLocation can be null
 		if (className == null)
 			throw new RuntimeException(this.printBlockErrorLocation() + ExternalFunctionStatement.CLASS_NAME + " not provided!");
 
-		// assemble input and output param strings
-		String inputParameterString = getParameterString(getInputParams());
-		String outputParameterString = getParameterString(getOutputParams());
-
-		// generate instruction
-		ExternalFunctionInvocationInstruction einst = new ExternalFunctionInvocationInstruction(
-				className, configFile, inputParameterString,
-				outputParameterString);
+		// assemble input and output operands
+		CPOperand[] inputs = getOperands(getInputParams());
+		CPOperand[] outputs = getOperands(getOutputParams());
 		
+		// generate instruction
+		PackageFunction fun = createFunctionObject(className, configFile);
+		ExternalFunctionInvocationInstruction einst = 
+			new ExternalFunctionInvocationInstruction(inputs, outputs, fun, _baseDir, InputInfo.TextCellInputInfo);
+		verifyFunctionInputsOutputs(fun, inputs, outputs);
 		if (getInputParams().size() > 0)
 			einst.setLocation(getInputParams().get(0));
 		else if (getOutputParams().size() > 0)
 			einst.setLocation(getOutputParams().get(0));
 		else
-			einst.setLocation(this._beginLine, this._endLine, this._beginColumn, this._endColumn);
-		
+			einst.setLocation(getFilename(), _beginLine, _endLine, _beginColumn, _endColumn);
 		_inst.add(einst);
 
 		// block output matrices
 		cell2BlockInst = getCell2BlockInstructions(getOutputParams(),_blockedFileNames);
 	}
+	
+	@SuppressWarnings("unchecked")
+	protected PackageFunction createFunctionObject(String className, String configFile) {
+		try {
+			//create instance of package function
+			Class<Instruction> cla = (Class<Instruction>) Class.forName(className);
+			Object o = cla.newInstance();
+			if (!(o instanceof PackageFunction))
+				throw new DMLRuntimeException(this.printBlockErrorLocation() + "Class is not of type PackageFunction");
+			PackageFunction fun = (PackageFunction) o;
+			
+			//configure package function
+			fun.setConfiguration(configFile);
+			fun.setBaseDir(_baseDir);
+			
+			return fun;
+		} 
+		catch (Exception e) {
+			throw new DMLRuntimeException(this.printBlockErrorLocation() + "Error instantiating package function ", e );
+		}
+	}
+	
+	protected void verifyFunctionInputsOutputs(PackageFunction fun, CPOperand[] inputs, CPOperand[] outputs) {
+		// verify number of outputs if fixed, otherwise best effort handle of outputs
+		if( !fun.hasVarNumFunctionOutputs()
+			&& outputs.length != fun.getNumFunctionOutputs() ) {
+			throw new DMLRuntimeException(
+					"Number of function outputs ("+fun.getNumFunctionOutputs()+") " +
+					"does not match with declaration ("+outputs.length+").");
+		}
+	}
 
 	
 	/**
 	 * Method to generate a reblock job to convert the cell representation into block representation
-	 * @param outputParams
-	 * @param blockedFileNames
-	 * @return
+	 * 
+	 * @param outputParams list out output data identifiers
+	 * @param blockedFileNames map of blocked file names
+	 * @return list of instructions
 	 */
 	private ArrayList<Instruction> getCell2BlockInstructions(
 			ArrayList<DataIdentifier> outputParams,
@@ -328,12 +309,12 @@ public class ExternalFunctionProgramBlock extends FunctionProgramBlock
 		ArrayList<Instruction> c2binst = null;
 		
 		//list of matrices that need to be reblocked
-		ArrayList<DataIdentifier> matrices = new ArrayList<DataIdentifier>();
-		ArrayList<DataIdentifier> matricesNoReblock = new ArrayList<DataIdentifier>();
+		ArrayList<DataIdentifier> matrices = new ArrayList<>();
+		ArrayList<DataIdentifier> matricesNoReblock = new ArrayList<>();
 
 		// identify outputs that are matrices
 		for (int i = 0; i < outputParams.size(); i++) {
-			if (outputParams.get(i).getDataType() == DataType.MATRIX) {
+			if( outputParams.get(i).getDataType().isMatrix() ) {
 				if( _skipOutReblock.contains(outputParams.get(i).getName()) )
 					matricesNoReblock.add(outputParams.get(i));
 				else
@@ -343,15 +324,15 @@ public class ExternalFunctionProgramBlock extends FunctionProgramBlock
 
 		if( !matrices.isEmpty() )
 		{
-			c2binst = new ArrayList<Instruction>();
+			c2binst = new ArrayList<>();
 			MRJobInstruction reblkInst = new MRJobInstruction(JobType.REBLOCK);
 			TreeMap<Integer, ArrayList<String>> MRJobLineNumbers = null;
 			if(DMLScript.ENABLE_DEBUG_MODE) {
-				MRJobLineNumbers = new TreeMap<Integer, ArrayList<String>>();
+				MRJobLineNumbers = new TreeMap<>();
 			}
 			
-			ArrayList<String> inLabels = new ArrayList<String>();
-			ArrayList<String> outLabels = new ArrayList<String>();
+			ArrayList<String> inLabels = new ArrayList<>();
+			ArrayList<String> outLabels = new ArrayList<>();
 			String[] outputs = new String[matrices.size()];
 			byte[] resultIndex = new byte[matrices.size()];
 			String reblock = "";
@@ -365,25 +346,25 @@ public class ExternalFunctionProgramBlock extends FunctionProgramBlock
 					inLabels.add(matrices.get(i).getName());
 					outLabels.add(matrices.get(i).getName() + "_extFnOutput");
 					outputs[i] = scratchSpaceLoc +
-					             Lop.FILE_SEPARATOR + Lop.PROCESS_PREFIX + DMLScript.getUUID() + Lop.FILE_SEPARATOR + 
-		                         _otherParams.get(ExternalFunctionStatement.CLASS_NAME) + _runID + "_" + i + "Output";
+							Lop.FILE_SEPARATOR + Lop.PROCESS_PREFIX + DMLScript.getUUID() + Lop.FILE_SEPARATOR + 
+							_otherParams.get(ExternalFunctionStatement.CLASS_NAME) + _runID + "_" + i + "Output";
 					blockedFileNames.put(matrices.get(i).getName(), outputs[i]);
 					resultIndex[i] = (byte) i; // (matrices.size()+i);
 		
 					if (i > 0)
 						reblock += Lop.INSTRUCTION_DELIMITOR;
 		
-					reblock += "MR" + ReBlock.OPERAND_DELIMITOR + "rblk" + ReBlock.OPERAND_DELIMITOR + 
-									i + ReBlock.DATATYPE_PREFIX + matrices.get(i).getDataType() + ReBlock.VALUETYPE_PREFIX + matrices.get(i).getValueType() + ReBlock.OPERAND_DELIMITOR + 
-									i + ReBlock.DATATYPE_PREFIX + matrices.get(i).getDataType() + ReBlock.VALUETYPE_PREFIX + matrices.get(i).getValueType() + ReBlock.OPERAND_DELIMITOR + 
-									ConfigurationManager.getBlocksize() + ReBlock.OPERAND_DELIMITOR + ConfigurationManager.getBlocksize() + ReBlock.OPERAND_DELIMITOR + "true";
+					reblock += "MR" + Lop.OPERAND_DELIMITOR + "rblk" + Lop.OPERAND_DELIMITOR + 
+									i + Lop.DATATYPE_PREFIX + matrices.get(i).getDataType() + Lop.VALUETYPE_PREFIX + matrices.get(i).getValueType() + Lop.OPERAND_DELIMITOR + 
+									i + Lop.DATATYPE_PREFIX + matrices.get(i).getDataType() + Lop.VALUETYPE_PREFIX + matrices.get(i).getValueType() + Lop.OPERAND_DELIMITOR + 
+									ConfigurationManager.getBlocksize() + Lop.OPERAND_DELIMITOR + ConfigurationManager.getBlocksize() + Lop.OPERAND_DELIMITOR + "true";
 					
 					if(DMLScript.ENABLE_DEBUG_MODE) {
 						//Create a copy of reblock instruction but as a single instruction (FOR DEBUGGER)
-						reblockStr = "MR" + ReBlock.OPERAND_DELIMITOR + "rblk" + ReBlock.OPERAND_DELIMITOR + 
-										i + ReBlock.DATATYPE_PREFIX + matrices.get(i).getDataType() + ReBlock.VALUETYPE_PREFIX + matrices.get(i).getValueType() + ReBlock.OPERAND_DELIMITOR + 
-										i + ReBlock.DATATYPE_PREFIX + matrices.get(i).getDataType() + ReBlock.VALUETYPE_PREFIX + matrices.get(i).getValueType() + ReBlock.OPERAND_DELIMITOR + 
-										ConfigurationManager.getBlocksize() + ReBlock.OPERAND_DELIMITOR + ConfigurationManager.getBlocksize()  + ReBlock.OPERAND_DELIMITOR + "true";					
+						reblockStr = "MR" + Lop.OPERAND_DELIMITOR + "rblk" + Lop.OPERAND_DELIMITOR + 
+										i + Lop.DATATYPE_PREFIX + matrices.get(i).getDataType() + Lop.VALUETYPE_PREFIX + matrices.get(i).getValueType() + Lop.OPERAND_DELIMITOR + 
+										i + Lop.DATATYPE_PREFIX + matrices.get(i).getDataType() + Lop.VALUETYPE_PREFIX + matrices.get(i).getValueType() + Lop.OPERAND_DELIMITOR + 
+										ConfigurationManager.getBlocksize() + Lop.OPERAND_DELIMITOR + ConfigurationManager.getBlocksize()  + Lop.OPERAND_DELIMITOR + "true";					
 						//Set MR reblock instruction line number (FOR DEBUGGER)
 						if (!MRJobLineNumbers.containsKey(matrices.get(i).getBeginLine())) {
 							MRJobLineNumbers.put(matrices.get(i).getBeginLine(), new ArrayList<String>()); 
@@ -438,8 +419,9 @@ public class ExternalFunctionProgramBlock extends FunctionProgramBlock
 	 * Method to generate instructions to convert input matrices from block to
 	 * cell. We generate a GMR job here.
 	 * 
-	 * @param inputParams
-	 * @return
+	 * @param inputParams list of data identifiers
+	 * @param unBlockedFileNames map of unblocked file names
+	 * @return list of instructions
 	 */
 	private ArrayList<Instruction> getBlock2CellInstructions(
 			ArrayList<DataIdentifier> inputParams,
@@ -448,12 +430,12 @@ public class ExternalFunctionProgramBlock extends FunctionProgramBlock
 		ArrayList<Instruction> b2cinst = null;
 		
 		//list of input matrices
-		ArrayList<DataIdentifier> matrices = new ArrayList<DataIdentifier>();
-		ArrayList<DataIdentifier> matricesNoReblock = new ArrayList<DataIdentifier>();
+		ArrayList<DataIdentifier> matrices = new ArrayList<>();
+		ArrayList<DataIdentifier> matricesNoReblock = new ArrayList<>();
 
 		// find all inputs that are matrices
 		for (int i = 0; i < inputParams.size(); i++) {
-			if (inputParams.get(i).getDataType() == DataType.MATRIX) {
+			if( inputParams.get(i).getDataType().isMatrix() ) {
 				if( _skipInReblock.contains(inputParams.get(i).getName()) )
 					matricesNoReblock.add(inputParams.get(i));
 				else
@@ -463,15 +445,15 @@ public class ExternalFunctionProgramBlock extends FunctionProgramBlock
 		
 		if( !matrices.isEmpty() )
 		{
-			b2cinst = new ArrayList<Instruction>();
+			b2cinst = new ArrayList<>();
 			MRJobInstruction gmrInst = new MRJobInstruction(JobType.GMR);
 			TreeMap<Integer, ArrayList<String>> MRJobLineNumbers = null;
 			if(DMLScript.ENABLE_DEBUG_MODE) {
-				MRJobLineNumbers = new TreeMap<Integer, ArrayList<String>>();
+				MRJobLineNumbers = new TreeMap<>();
 			}
 			String gmrStr="";
-			ArrayList<String> inLabels = new ArrayList<String>();
-			ArrayList<String> outLabels = new ArrayList<String>();
+			ArrayList<String> inLabels = new ArrayList<>();
+			ArrayList<String> outLabels = new ArrayList<>();
 			String[] outputs = new String[matrices.size()];
 			byte[] resultIndex = new byte[matrices.size()];
 	
@@ -560,172 +542,12 @@ public class ExternalFunctionProgramBlock extends FunctionProgramBlock
 		
 		return b2cinst; //null if no input matrices
 	}
-
-	/**
-	 * Method to execute an external function invocation instruction.
-	 * 
-	 * @param ec
-	 * @param inst
-	 * @throws DMLRuntimeException
-	 */
-	@SuppressWarnings("unchecked")
-	public void executeInstruction(ExecutionContext ec, ExternalFunctionInvocationInstruction inst) 
-		throws DMLRuntimeException 
-	{		
-		String className = inst.getClassName();
-		String configFile = inst.getConfigFile();
-
-		if (className == null)
-			throw new DMLRuntimeException(this.printBlockErrorLocation() + "Class name can't be null");
-
-		// create instance of package function.
-		Object o;
-		try 
-		{
-			Class<Instruction> cla = (Class<Instruction>) Class.forName(className);
-			o = cla.newInstance();
-		} 
-		catch (Exception e) 
-		{
-			throw new DMLRuntimeException(this.printBlockErrorLocation() + "Error generating package function object " ,e );
-		}
-
-		if (!(o instanceof PackageFunction))
-			throw new DMLRuntimeException(this.printBlockErrorLocation() + "Class is not of type PackageFunction");
-
-		PackageFunction func = (PackageFunction) o;
-
-		// add inputs to this package function based on input parameter
-		// and their mappings.
-		setupInputs(func, inst.getInputParams(), ec.getVariables());
-		func.setConfiguration(configFile);
-		func.setBaseDir(_baseDir);
-		
-		//executes function
-		func.execute();
-		
-		// verify output of function execution matches declaration
-		// and add outputs to variableMapping and Metadata
-		verifyAndAttachOutputs(ec, func, inst.getOutputParams());
-	}
-
-	/**
-	 * Method to verify that function outputs match with declared outputs
-	 * 
-	 * @param returnFunc
-	 * @param outputParams
-	 * @throws DMLRuntimeException 
-	 */
-	protected void verifyAndAttachOutputs(ExecutionContext ec, PackageFunction returnFunc,
-			String outputParams) throws DMLRuntimeException {
-
-		ArrayList<String> outputs = getParameters(outputParams);
-		// make sure they are of equal size first
-
-		if (outputs.size() != returnFunc.getNumFunctionOutputs()) {
-			throw new DMLRuntimeException(
-					"Number of function outputs ("+returnFunc.getNumFunctionOutputs()+") " +
-					"does not match with declaration ("+outputs.size()+").");
-		}
-
-		// iterate over each output and verify that type matches
-		for (int i = 0; i < outputs.size(); i++) {
-			StringTokenizer tk = new StringTokenizer(outputs.get(i), ":");
-			ArrayList<String> tokens = new ArrayList<String>();
-			while (tk.hasMoreTokens()) {
-				tokens.add(tk.nextToken());
-			}
-
-			if (returnFunc.getFunctionOutput(i).getType() == FunctionParameterType.Matrix) {
-				Matrix m = (Matrix) returnFunc.getFunctionOutput(i);
-
-				if (!(tokens.get(0).equals(getFunctionParameterDataTypeString(FunctionParameterType.Matrix)))
-						|| !(tokens.get(2).equals(getMatrixValueTypeString(m.getValueType())))) {
-					throw new DMLRuntimeException(
-							"Function output '"+outputs.get(i)+"' does not match with declaration.");
-				}
-
-				// add result to variableMapping
-				String varName = tokens.get(1);
-				MatrixObject newVar = createOutputMatrixObject( m ); 
-				newVar.setVarName(varName);
-				
-				//getVariables().put(varName, newVar); //put/override in local symbol table
-				ec.setVariable(varName, newVar);
-				
-				continue;
-			}
-
-			if (returnFunc.getFunctionOutput(i).getType() == FunctionParameterType.Scalar) {
-				Scalar s = (Scalar) returnFunc.getFunctionOutput(i);
-
-				if (!tokens.get(0).equals(getFunctionParameterDataTypeString(FunctionParameterType.Scalar))
-						|| !tokens.get(2).equals(
-								getScalarValueTypeString(s.getScalarType()))) {
-					throw new DMLRuntimeException(
-							"Function output '"+outputs.get(i)+"' does not match with declaration.");
-				}
-
-				// allocate and set appropriate object based on type
-				ScalarObject scalarObject = null;
-				ScalarValueType type = s.getScalarType();
-				switch (type) {
-				case Integer:
-					scalarObject = new IntObject(tokens.get(1),
-							Long.parseLong(s.getValue()));
-					break;
-				case Double:
-					scalarObject = new DoubleObject(tokens.get(1),
-							Double.parseDouble(s.getValue()));
-					break;
-				case Boolean:
-					scalarObject = new BooleanObject(tokens.get(1),
-							Boolean.parseBoolean(s.getValue()));
-					break;
-				case Text:
-					scalarObject = new StringObject(tokens.get(1), s.getValue());
-					break;
-				default:
-					throw new DMLRuntimeException(
-							"Unknown scalar value type '"+type+"' of output '"+outputs.get(i)+"'.");
-				}
-
-				//this.getVariables().put(tokens.get(1), scalarObject);
-				ec.setVariable(tokens.get(1), scalarObject);
-				continue;
-			}
-
-			if (returnFunc.getFunctionOutput(i).getType() == FunctionParameterType.Object) {
-				if (!tokens.get(0).equals(getFunctionParameterDataTypeString(FunctionParameterType.Object))) {
-					throw new DMLRuntimeException(
-							"Function output '"+outputs.get(i)+"' does not match with declaration.");
-				}
-
-				throw new DMLRuntimeException(
-						"Object types not yet supported");
-
-				// continue;
-			}
-
-			throw new DMLRuntimeException(
-					"Unknown data type '"+returnFunc.getFunctionOutput(i).getType()+"' " +
-					"of output '"+outputs.get(i)+"'.");
-		}
-	}
-
-	protected MatrixObject createOutputMatrixObject( Matrix m ) 
-		throws CacheException 
-	{
-		MatrixCharacteristics mc = new MatrixCharacteristics(m.getNumRows(),m.getNumCols(), ConfigurationManager.getBlocksize(), ConfigurationManager.getBlocksize());
-		MatrixFormatMetaData mfmd = new MatrixFormatMetaData(mc, OutputInfo.TextCellOutputInfo, InputInfo.TextCellInputInfo);		
-		return new MatrixObject(ValueType.DOUBLE, m.getFilePath(), mfmd);
-	}
-
+	
 	/**
 	 * Method to get string representation of scalar value type
 	 * 
-	 * @param scalarType
-	 * @return
+	 * @param scalarType scalar value type
+	 * @return scalar value type string
 	 */
 	protected String getScalarValueTypeString(ScalarValueType scalarType) {
 		if (scalarType.equals(ScalarValueType.Text))
@@ -733,195 +555,8 @@ public class ExternalFunctionProgramBlock extends FunctionProgramBlock
 		else
 			return scalarType.toString();
 	}
-
-	/**
-	 * Method to parse inputs, update labels, and add to package function.
-	 * 
-	 * @param func
-	 * @param inputParams
-	 * @param metaData
-	 * @param variableMapping
-	 */
-	protected void setupInputs (PackageFunction func, String inputParams, LocalVariableMap variableMapping) {
-		ArrayList<String> inputs = getParameters(inputParams);
-		ArrayList<FunctionParameter> inputObjects = getInputObjects(inputs, variableMapping);
-		func.setNumFunctionInputs(inputObjects.size());
-		for (int i = 0; i < inputObjects.size(); i++)
-			func.setInput(inputObjects.get(i), i);
-	}
-
-	/**
-	 * Method to convert string representation of input into function input
-	 * object.
-	 * 
-	 * @param inputs
-	 * @param variableMapping
-	 * @param metaData
-	 * @return
-	 */
-
-	protected ArrayList<FunctionParameter> getInputObjects(ArrayList<String> inputs,
-			LocalVariableMap variableMapping) {
-		ArrayList<FunctionParameter> inputObjects = new ArrayList<FunctionParameter>();
-
-		for (int i = 0; i < inputs.size(); i++) {
-			ArrayList<String> tokens = new ArrayList<String>();
-			StringTokenizer tk = new StringTokenizer(inputs.get(i), ":");
-			while (tk.hasMoreTokens()) {
-				tokens.add(tk.nextToken());
-			}
-
-			if (tokens.get(0).equals("Matrix")) {
-				String varName = tokens.get(1);
-				MatrixObject mobj = (MatrixObject) variableMapping.get(varName);
-				MatrixCharacteristics mc = mobj.getMatrixCharacteristics();
-				Matrix m = new Matrix(mobj.getFileName(),
-						mc.getRows(), mc.getCols(),
-						getMatrixValueType(tokens.get(2)));
-				modifyInputMatrix(m, mobj);
-				inputObjects.add(m);
-			}
-
-			if (tokens.get(0).equals("Scalar")) {
-				String varName = tokens.get(1);
-				ScalarObject so = (ScalarObject) variableMapping.get(varName);
-				Scalar s = new Scalar(getScalarValueType(tokens.get(2)),
-						so.getStringValue());
-				inputObjects.add(s);
-
-			}
-
-			if (tokens.get(0).equals("Object")) {
-				String varName = tokens.get(1);
-				Object o = variableMapping.get(varName);
-				BinaryObject obj = new BinaryObject(o);
-				inputObjects.add(obj);
-
-			}
-		}
-
-		return inputObjects;
-
-	}
-
-	protected void modifyInputMatrix(Matrix m, MatrixObject mobj) 
-	{
-		//do nothing, intended for extensions
-	}
-
-	/**
-	 * Converts string representation of scalar value type to enum type
-	 * 
-	 * @param string
-	 * @return
-	 */
-	protected ScalarValueType getScalarValueType(String string) {
-		if (string.equals("String"))
-			return ScalarValueType.Text;
-		else 
-			return ScalarValueType.valueOf(string);
-	}
-
-	/**
-	 * Get string representation of matrix value type
-	 * 
-	 * @param t
-	 * @return
-	 */
-	protected String getMatrixValueTypeString(Matrix.ValueType t) {
-		return t.toString();
-	}
-
-	/**
-	 * Converts string representation of matrix value type into enum type
-	 * 
-	 * @param string
-	 * @return
-	 */
-	protected Matrix.ValueType getMatrixValueType(String string) {
-		return Matrix.ValueType.valueOf(string); 
-	}
-
-	/**
-	 * Method to break the comma separated input parameters into an arraylist of
-	 * parameters
-	 * 
-	 * @param inputParams
-	 * @return
-	 */
-	protected ArrayList<String> getParameters(String inputParams) {
-		ArrayList<String> inputs = new ArrayList<String>();
-
-		StringTokenizer tk = new StringTokenizer(inputParams, ",");
-		while (tk.hasMoreTokens()) {
-			inputs.add(tk.nextToken());
-		}
-
-		return inputs;
-	}
-
-	/**
-	 * Get string representation for data type
-	 * 
-	 * @param d
-	 * @return
-	 */
-	protected String getDataTypeString(DataType d) {
-		if (d.equals(DataType.MATRIX))
-			return "Matrix";
-
-		if (d.equals(DataType.SCALAR))
-			return "Scalar";
-
-		if (d.equals(DataType.OBJECT))
-			return "Object";
-
-		throw new RuntimeException("Should never come here");
-	}
-
-	/**
-	 * Method to get string representation of data type.
-	 * 
-	 * @param t
-	 * @return
-	 */
-	protected String getFunctionParameterDataTypeString(FunctionParameterType t) {
-		return t.toString();
-	}
-
-	/**
-	 * Get string representation of value type
-	 * 
-	 * @param v
-	 * @return
-	 */
-	protected String getValueTypeString(ValueType v) {
-		if (v.equals(ValueType.DOUBLE))
-			return "Double";
-
-		if (v.equals(ValueType.INT))
-			return "Integer";
-
-		if (v.equals(ValueType.BOOLEAN))
-			return "Boolean";
-
-		if (v.equals(ValueType.STRING))
-			return "String";
-
-		throw new RuntimeException("Should never come here");
-	}
-
-	public void printMe() {
-		//System.out.println("***** INSTRUCTION BLOCK *****");
-		for (Instruction i : this._inst) {
-			i.printMe();
-		}
-	}
 	
-	public HashMap<String,String> getOtherParams() {
-		return _otherParams;
-	}
-	
+	@Override
 	public String printBlockErrorLocation(){
 		return "ERROR: Runtime error in external function program block generated from external function statement block between lines " + _beginLine + " and " + _endLine + " -- ";
 	}
@@ -934,31 +569,13 @@ public class ExternalFunctionProgramBlock extends FunctionProgramBlock
 	
 	//FUNCTION PATCH
 	
-	private Collection<String> _skipInReblock = new HashSet<String>();
-	private Collection<String> _skipOutReblock = new HashSet<String>();
-	
-	public void setSkippedReblockLists( Collection<String> varsIn, Collection<String> varsOut )
-	{
-		_skipInReblock.clear();
-		_skipOutReblock.clear();
-		
-		if( varsIn!=null || varsOut!=null )
-		{
-			if( varsIn != null )
-				_skipInReblock.addAll(varsIn);		
-			if( varsOut != null )
-				_skipOutReblock.addAll(varsOut);
-		
-			 //regenerate instructions
-			createInstructions();
-		}
-	}
-	
+	private Collection<String> _skipInReblock = new HashSet<>();
+	private Collection<String> _skipOutReblock = new HashSet<>();
 	
 	@Override
 	public ArrayList<Instruction> getInstructions()
 	{
-		ArrayList<Instruction> tmp = new ArrayList<Instruction>();
+		ArrayList<Instruction> tmp = new ArrayList<>();
 		if( cell2BlockInst != null )
 			tmp.addAll(cell2BlockInst);
 		if( block2CellInst != null )

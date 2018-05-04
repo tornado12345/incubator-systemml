@@ -38,49 +38,60 @@ public class Transform extends Lop
 		Reshape,
 		Sort,
 		Rev
-	};
+	}
 	
 	private OperationTypes operation = null;
 	private boolean _bSortIndInMem = false;
+	private boolean _outputEmptyBlock = true;
 	private int _numThreads = 1;
-		
-	/**
-	 * Constructor when we have one input.
-	 * 
-	 * @param input low-level operator
-	 * @param op transform operation type
-	 * @param dt data type
-	 * @param vt value type
-	 * @param et execution type
-	 */
+	
 	public Transform(Lop input, Transform.OperationTypes op, DataType dt, ValueType vt, ExecType et) {
-		this(input, op, dt, vt, et, 1);		
+		this(input, op, dt, vt, et, 1);
+	}
+	
+	public Transform(Lop[] inputs, Transform.OperationTypes op, DataType dt, ValueType vt, boolean outputEmptyBlock, ExecType et) {
+		this(inputs, op, dt, vt, et, 1);
+		_outputEmptyBlock = outputEmptyBlock;
 	}
 	
 	public Transform(Lop input, Transform.OperationTypes op, DataType dt, ValueType vt, ExecType et, int k)  {
-		super(Lop.Type.Transform, dt, vt);		
-		init(input, op, dt, vt, et);
+		super(Lop.Type.Transform, dt, vt);
+		init(new Lop[]{input}, op, dt, vt, et);
+		_numThreads = k;
+	}
+	
+	public Transform(Lop[] inputs, Transform.OperationTypes op, DataType dt, ValueType vt, ExecType et, int k)  {
+		super(Lop.Type.Transform, dt, vt);
+		init(inputs, op, dt, vt, et);
 		_numThreads = k;
 	}
 	
 	public Transform(Lop input, Transform.OperationTypes op, DataType dt, ValueType vt) {
-		super(Lop.Type.Transform, dt, vt);		
-		init(input, op, dt, vt, ExecType.MR);
+		super(Lop.Type.Transform, dt, vt);
+		init(new Lop[]{input}, op, dt, vt, ExecType.MR);
 	}
 
 	public Transform(Lop input, Transform.OperationTypes op, DataType dt, ValueType vt, ExecType et, boolean bSortIndInMem) {
-		super(Lop.Type.Transform, dt, vt);		
+		super(Lop.Type.Transform, dt, vt);
 		_bSortIndInMem = bSortIndInMem;
-		init(input, op, dt, vt, et);
+		init(new Lop[]{input}, op, dt, vt, et);
 	}
 	
-	private void init (Lop input, Transform.OperationTypes op, DataType dt, ValueType vt, ExecType et) 
+	public Transform(Lop[] inputs, Transform.OperationTypes op, DataType dt, ValueType vt, ExecType et, boolean bSortIndInMem) {
+		super(Lop.Type.Transform, dt, vt);
+		_bSortIndInMem = bSortIndInMem;
+		init(inputs, op, dt, vt, et);
+	}
+	
+	private void init (Lop[] input, Transform.OperationTypes op, DataType dt, ValueType vt, ExecType et) 
 	{
 		operation = op;
- 
-		this.addInput(input);
-		input.addOutput(this);
-
+		
+		for(Lop in : input) {
+			this.addInput(in);
+			in.addOutput(this);
+		}
+		
 		boolean breaksAlignment = true;
 		boolean aligner = false;
 		boolean definesMRJob = false;
@@ -158,9 +169,7 @@ public class Transform extends Lop
 	//CP instructions
 	
 	@Override
-	public String getInstructions(String input1, String output) 
-		throws LopsException 
-	{
+	public String getInstructions(String input1, String output) {
 		StringBuilder sb = new StringBuilder();
 		sb.append( getExecType() );
 		sb.append( OPERAND_DELIMITOR );
@@ -169,7 +178,7 @@ public class Transform extends Lop
 		sb.append( getInputs().get(0).prepInputOperand(input1));
 		sb.append( OPERAND_DELIMITOR );
 		sb.append( this.prepOutputOperand(output));
-
+		
 		if( getExecType()==ExecType.CP && operation == OperationTypes.Transpose ) {
 			sb.append( OPERAND_DELIMITOR );
 			sb.append( _numThreads );
@@ -179,9 +188,7 @@ public class Transform extends Lop
 	}
 
 	@Override
-	public String getInstructions(String input1, String input2, String input3, String input4, String output) 
-		throws LopsException 
-	{
+	public String getInstructions(String input1, String input2, String input3, String input4, String output) {
 		//only used for reshape
 		
 		StringBuilder sb = new StringBuilder();
@@ -204,6 +211,11 @@ public class Transform extends Lop
 		sb.append( OPERAND_DELIMITOR );
 		sb.append( this.prepOutputOperand(output));
 		
+		if( getExecType()==ExecType.SPARK && operation == OperationTypes.Reshape ) {
+			sb.append( OPERAND_DELIMITOR );
+			sb.append( _outputEmptyBlock );
+		}
+		
 		if( getExecType()==ExecType.SPARK && operation == OperationTypes.Sort ){
 			sb.append( OPERAND_DELIMITOR );
 			sb.append( _bSortIndInMem );
@@ -215,9 +227,7 @@ public class Transform extends Lop
 	//MR instructions
 
 	@Override 
-	public String getInstructions(int input_index, int output_index) 
-		throws LopsException
-	{
+	public String getInstructions(int input_index, int output_index) {
 		StringBuilder sb = new StringBuilder();
 		sb.append( getExecType() );
 		sb.append( OPERAND_DELIMITOR );
@@ -231,9 +241,7 @@ public class Transform extends Lop
 	}
 	
 	@Override 
-	public String getInstructions(int input_index1, int input_index2, int input_index3, int input_index4, int output_index) 
-		throws LopsException
-	{
+	public String getInstructions(int input_index1, int input_index2, int input_index3, int input_index4, int output_index) {
 		//only used for reshape
 		
 		StringBuilder sb = new StringBuilder();
@@ -272,30 +280,4 @@ public class Transform extends Lop
 		
 		return sb.toString();
 	}
-
-	public static Transform constructTransformLop(Lop input1, OperationTypes op, DataType dt, ValueType vt) {
-		
-		for (Lop lop  : input1.getOutputs()) {
-			if ( lop.type == Lop.Type.Transform ) {
-				return (Transform)lop;
-			}
-		}
-		Transform retVal = new Transform(input1, op, dt, vt);
-		retVal.setAllPositions(input1.getBeginLine(), input1.getBeginColumn(), input1.getEndLine(), input1.getEndColumn());
-		return retVal;
-	}
-
-	public static Transform constructTransformLop(Lop input1, OperationTypes op, DataType dt, ValueType vt, ExecType et) {
-		
-		for (Lop lop  : input1.getOutputs()) {
-			if ( lop.type == Lop.Type.Transform ) {
-				return (Transform)lop;
-			}
-		}
-		Transform retVal = new  Transform(input1, op, dt, vt, et);
-		retVal.setAllPositions(input1.getBeginLine(), input1.getBeginColumn(), input1.getEndLine(), input1.getEndColumn());
-		return retVal; 
-	}
-
- 
 }

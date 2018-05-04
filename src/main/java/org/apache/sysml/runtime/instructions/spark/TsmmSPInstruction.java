@@ -36,49 +36,28 @@ import org.apache.sysml.runtime.matrix.operators.Operator;
 
 import scala.Tuple2;
 
-/**
- * 
- */
-public class TsmmSPInstruction extends UnarySPInstruction 
-{
-	
+public class TsmmSPInstruction extends UnarySPInstruction {
 	private MMTSJType _type = null;
-	
-	public TsmmSPInstruction(Operator op, CPOperand in1, CPOperand out, MMTSJType type, String opcode, String istr )
-	{
-		super(op, in1, out, opcode, istr);
-		_sptype = SPINSTRUCTION_TYPE.TSMM;		
+
+	private TsmmSPInstruction(Operator op, CPOperand in1, CPOperand out, MMTSJType type, String opcode, String istr) {
+		super(SPType.TSMM, op, in1, out, opcode, istr);
 		_type = type;
 	}
 
-	/**
-	 * 
-	 * @param str
-	 * @return
-	 * @throws DMLRuntimeException
-	 */
-	public static TsmmSPInstruction parseInstruction( String str ) 
-		throws DMLRuntimeException 
-	{
+	public static TsmmSPInstruction parseInstruction( String str ) {
 		String parts[] = InstructionUtils.getInstructionPartsWithValueType(str);
 		String opcode = parts[0];
-		
 		//check supported opcode 
-		if ( !opcode.equalsIgnoreCase("tsmm") ) {
-			throw new DMLRuntimeException("TsmmSPInstruction.parseInstruction():: Unknown opcode " + opcode);			
-		}
-			
+		if ( !opcode.equalsIgnoreCase("tsmm") )
+			throw new DMLRuntimeException("TsmmSPInstruction.parseInstruction():: Unknown opcode " + opcode);
 		CPOperand in1 = new CPOperand(parts[1]);
 		CPOperand out = new CPOperand(parts[2]);
 		MMTSJType type = MMTSJType.valueOf(parts[3]);
-		
 		return new TsmmSPInstruction(null, in1, out, type, opcode, str);
 	}
 	
 	@Override
-	public void processInstruction(ExecutionContext ec) 
-		throws DMLRuntimeException
-	{	
+	public void processInstruction(ExecutionContext ec) {
 		SparkExecutionContext sec = (SparkExecutionContext)ec;
 		
 		//get input
@@ -91,12 +70,9 @@ public class TsmmSPInstruction extends UnarySPInstruction
 		      
 		//put output block into symbol table (no lineage because single block)
 		//this also includes implicit maintenance of matrix characteristics
-		sec.setMatrixOutput(output.getName(), out);
+		sec.setMatrixOutput(output.getName(), out, getExtendedOpcode());
 	}
-	
-	/**
-	 * 
-	 */
+
 	private static class RDDTSMMFunction implements Function<Tuple2<MatrixIndexes,MatrixBlock>, MatrixBlock> 
 	{
 		private static final long serialVersionUID = 2935770425858019666L;

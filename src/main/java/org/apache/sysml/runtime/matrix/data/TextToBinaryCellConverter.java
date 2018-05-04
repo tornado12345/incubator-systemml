@@ -29,10 +29,9 @@ import org.apache.sysml.runtime.util.FastStringTokenizer;
 public class TextToBinaryCellConverter 
 implements Converter<LongWritable, Text, MatrixIndexes, MatrixCell>
 {
-	
 	private MatrixIndexes indexes = new MatrixIndexes();
 	private MatrixCell value = new MatrixCell();
-	private Pair<MatrixIndexes, MatrixCell> pair = new Pair<MatrixIndexes, MatrixCell>(indexes, value);
+	private Pair<MatrixIndexes, MatrixCell> pair = new Pair<>(indexes, value);
 	private FastStringTokenizer st = new FastStringTokenizer(' '); 
 	private boolean hasValue = false;
 	private boolean toIgnore = false;
@@ -54,14 +53,18 @@ implements Converter<LongWritable, Text, MatrixIndexes, MatrixCell>
 			hasValue=false;
 			return;
 		}
-			
+		
 		//reset the tokenizer
 		st.reset( str );
 		
 		//convert text to matrix cell
 		indexes.setIndexes( st.nextLong(), st.nextLong() );
+		if( indexes.getRowIndex() == 0 || indexes.getColumnIndex() == 0 ) {
+			hasValue = false;
+			return;
+		}
 		value.setValue( st.nextDouble() );
-		hasValue = true;		
+		hasValue = true;
 	}
 	
 	@Override
@@ -73,14 +76,12 @@ implements Converter<LongWritable, Text, MatrixIndexes, MatrixCell>
 	public Pair<MatrixIndexes, MatrixCell> next() {
 		if(!hasValue)
 			return null;
-		
 		hasValue=false;
 		return pair;
 	}
 
 	@Override
-	public void setBlockSize(int rl, int cl) 
-	{
-		
+	public void setBlockSize(int rl, int cl) {
+		//do nothing
 	}
 }

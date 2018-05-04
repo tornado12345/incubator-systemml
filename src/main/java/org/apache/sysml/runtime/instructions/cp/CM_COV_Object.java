@@ -29,7 +29,6 @@ import org.apache.sysml.runtime.matrix.operators.CMOperator.AggregateOperationTy
 
 public class CM_COV_Object extends Data 
 {
-
 	private static final long serialVersionUID = -5814207545197934085L;
 
 	//for central moment
@@ -42,8 +41,8 @@ public class CM_COV_Object extends Data
 	public KahanObject mean_v;
 	public KahanObject c2;
 	
-	public String toString()
-	{
+	@Override
+	public String toString() {
 		return "weight: "+w+", mean: "+mean+", m2: "+m2+", m3: "+m3+", m4: "+m4+", mean2: "+mean_v+", c2: "+c2;
 	}
 	
@@ -129,16 +128,16 @@ public class CM_COV_Object extends Data
 	/**
 	 * Return the result of the aggregated operation given the
 	 * operator.
+	 * 
+	 * @param op operator
+	 * @return result of the aggregated operation for the given operator
 	 */
-	public double getRequiredResult(Operator op) throws DMLRuntimeException
-	{
-		if(op instanceof CMOperator)
-		{
+	public double getRequiredResult(Operator op) {
+		if(op instanceof CMOperator) {
 			AggregateOperationTypes agg=((CMOperator)op).aggOpType;
 			return getRequiredResult(agg);
 		}
-		else
-		{
+		else {
 			//avoid division by 0
 			if(w==1.0)
 				return 0;
@@ -150,8 +149,11 @@ public class CM_COV_Object extends Data
 	/**
 	 * Return the result of the aggregated operation given the
 	 * operation type.
+	 * 
+	 * @param agg aggregate operation type
+	 * @return result of the aggregated operation given the operation type
 	 */
-	public double getRequiredResult(AggregateOperationTypes agg) throws DMLRuntimeException {
+	public double getRequiredResult(AggregateOperationTypes agg) {
 		switch(agg)
 		{
 			case COUNT:
@@ -171,26 +173,14 @@ public class CM_COV_Object extends Data
 		}
 	}
 
-	/**
-	 * 
-	 * @param op
-	 * @return
-	 * @throws DMLRuntimeException
-	 */
-	public double getRequiredPartialResult(Operator op) 
-		throws DMLRuntimeException
-	{
-		if(op instanceof CMOperator)
-		{
+	public double getRequiredPartialResult(Operator op) {
+		if(op instanceof CMOperator) {
 			AggregateOperationTypes agg=((CMOperator)op).aggOpType;
-			switch(agg)
-			{
-				case COUNT:
-					return 0;
-				case MEAN:
-					return mean._sum;
-				case CM2:					
-				case CM3:					
+			switch(agg) {
+				case COUNT: return 0;
+				case MEAN:  return mean._sum;
+				case CM2:
+				case CM3:
 				case CM4:
 				case VARIANCE:
 					throw new DMLRuntimeException("Aggregation operator '"+agg.toString()+"' does not apply to partial aggregation.");
@@ -202,12 +192,7 @@ public class CM_COV_Object extends Data
 			return c2._sum;
 	}
 
-	/**
-	 * 
-	 * @return
-	 */
-	public double getWeight() 
-	{
+	public double getWeight() {
 		return w;
 	}
 	

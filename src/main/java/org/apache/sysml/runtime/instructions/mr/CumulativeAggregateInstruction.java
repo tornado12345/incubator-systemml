@@ -21,7 +21,6 @@ package org.apache.sysml.runtime.instructions.mr;
 
 import java.util.ArrayList;
 
-import org.apache.sysml.runtime.DMLRuntimeException;
 import org.apache.sysml.runtime.instructions.InstructionUtils;
 import org.apache.sysml.runtime.matrix.MatrixCharacteristics;
 import org.apache.sysml.runtime.matrix.data.MatrixBlock;
@@ -33,43 +32,32 @@ import org.apache.sysml.runtime.matrix.mapred.IndexedMatrixValue;
 import org.apache.sysml.runtime.matrix.operators.AggregateUnaryOperator;
 import org.apache.sysml.runtime.matrix.operators.Operator;
 
-
-public class CumulativeAggregateInstruction extends AggregateUnaryInstruction 
-{
-	
+public class CumulativeAggregateInstruction extends AggregateUnaryInstruction {
 	private MatrixCharacteristics _mcIn = null;
-	
-	public CumulativeAggregateInstruction(Operator op, byte in, byte out, String istr)
-	{
+
+	private CumulativeAggregateInstruction(Operator op, byte in, byte out, String istr) {
 		super(op, in, out, true, istr);
 	}
-	
+
 	public void setMatrixCharacteristics( MatrixCharacteristics mcIn )
 	{
 		_mcIn = mcIn;
 	}
 	
-	public static CumulativeAggregateInstruction parseInstruction ( String str ) 
-		throws DMLRuntimeException 
-	{
+	public static CumulativeAggregateInstruction parseInstruction ( String str ) {
 		InstructionUtils.checkNumFields ( str, 2 );
-		
 		String[] parts = InstructionUtils.getInstructionParts ( str );
-		
 		String opcode = parts[0];
 		byte in = Byte.parseByte(parts[1]);
 		byte out = Byte.parseByte(parts[2]);
-		
 		AggregateUnaryOperator aggun = InstructionUtils.parseCumulativeAggregateUnaryOperator(opcode);
-		
 		return new CumulativeAggregateInstruction(aggun, in, out, str);
 	}
 	
 	@Override
 	public void processInstruction(Class<? extends MatrixValue> valueClass, CachedValueMap cachedValues, 
 			IndexedMatrixValue tempValue, IndexedMatrixValue zeroInput, int blockRowFactor, int blockColFactor)
-		throws DMLRuntimeException 
-	{	
+	{
 		ArrayList<IndexedMatrixValue> blkList = cachedValues.get(input);
 		if( blkList == null ) 
 			return;
@@ -87,7 +75,7 @@ public class CumulativeAggregateInstruction extends AggregateUnaryInstruction
 			OperationsOnMatrixValues.performAggregateUnary( inix, in1.getValue(), out.getIndexes(), out.getValue(), 
 					                            ((AggregateUnaryOperator)optr), blockRowFactor, blockColFactor);
 			if( ((AggregateUnaryOperator)optr).aggOp.correctionExists )
-				((MatrixBlock)out.getValue()).dropLastRowsOrColums(((AggregateUnaryOperator)optr).aggOp.correctionLocation);
+				((MatrixBlock)out.getValue()).dropLastRowsOrColumns(((AggregateUnaryOperator)optr).aggOp.correctionLocation);
 			
 			//cumsum expand partial aggregates
 			long rlenOut = (long)Math.ceil((double)_mcIn.getRows()/blockRowFactor);

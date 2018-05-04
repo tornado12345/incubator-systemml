@@ -24,9 +24,6 @@ import java.io.DataInput;
 import java.io.DataOutput;
 import java.io.IOException;
 
-import org.apache.hadoop.io.RawComparator;
-import org.apache.hadoop.io.WritableComparator;
-
 public class TaggedMatrixIndexes extends Tagged<MatrixIndexes>
 {	
 	public TaggedMatrixIndexes(){}
@@ -45,6 +42,7 @@ public class TaggedMatrixIndexes extends Tagged<MatrixIndexes>
 		return "k: "+base+", tag: "+tag;
 	}
 	
+	@Override
 	public void readFields(DataInput in) throws IOException {
 		if( base == null ){
 			base = new MatrixIndexes();
@@ -53,6 +51,7 @@ public class TaggedMatrixIndexes extends Tagged<MatrixIndexes>
 		tag=in.readByte();
 	}
 	
+	@Override
 	public void write(DataOutput out) throws IOException {
 		base.write(out);
 		out.writeByte(tag);
@@ -81,19 +80,5 @@ public class TaggedMatrixIndexes extends Tagged<MatrixIndexes>
 	public int hashCode() {
 		 return base.hashCode() + tag;
 	}
-	
-	public static class Comparator implements RawComparator<TaggedMatrixIndexes>
-	{
-		@Override
-		public int compare(byte[] b1, int s1, int l1,
-                byte[] b2, int s2, int l2)
-		{
-			return WritableComparator.compareBytes(b1, s1, l1, b2, s2, l2);
-		}
 
-		@Override
-		public int compare(TaggedMatrixIndexes m1, TaggedMatrixIndexes m2) {
-			return m1.compareTo(m2);
-		}	
-	}
 }

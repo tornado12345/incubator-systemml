@@ -24,20 +24,19 @@ import java.util.ArrayList;
 
 
 public class ForStatement extends Statement
-{	
-
-	
-	protected IterablePredicate 		_predicate;
+{
+	protected IterablePredicate _predicate;
 	protected ArrayList<StatementBlock> _body;
 	
-	public Statement rewriteStatement(String prefix) throws LanguageException{
+	@Override
+	public Statement rewriteStatement(String prefix) {
 		LOG.error(this.printErrorLocation() + "should not call rewriteStatement for ForStatement");
 		throw new LanguageException(this.printErrorLocation() + "should not call rewriteStatement for ForStatement");
 	}
 	
 	public ForStatement(){
 		 _predicate = null;
-		 _body = new ArrayList<StatementBlock>();
+		 _body = new ArrayList<>();
 	}
 	
 	public void setPredicate(IterablePredicate pred){
@@ -71,6 +70,7 @@ public class ForStatement extends Statement
 		_body = StatementBlock.mergeStatementBlocks(_body);
 	}
 	
+	@Override
 	public String toString(){
 		StringBuilder sb = new StringBuilder();
 		sb.append("for ");
@@ -83,12 +83,14 @@ public class ForStatement extends Statement
 		return sb.toString();
 	}
 
-	public void initializeforwardLV(VariableSet activeIn) throws LanguageException{
+	@Override
+	public void initializeforwardLV(VariableSet activeIn) {
 		LOG.error(this.printErrorLocation() + "should never call initializeforwardLV for ForStatement");
 		throw new LanguageException(this.printErrorLocation() + "should never call initializeforwardLV for ForStatement");
 	}
 	
-	public VariableSet initializebackwardLV(VariableSet lo) throws LanguageException{
+	@Override
+	public VariableSet initializebackwardLV(VariableSet lo) {
 		LOG.error(this.printErrorLocation() + "should never call initializeforwardLV for ForStatement");
 		throw new LanguageException(this.printErrorLocation() + "should never call initializeforwardLV for ForStatement");
 		

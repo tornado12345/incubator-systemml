@@ -21,7 +21,6 @@ package org.apache.sysml.runtime.instructions.mr;
 
 import java.util.ArrayList;
 
-import org.apache.sysml.runtime.DMLRuntimeException;
 import org.apache.sysml.runtime.instructions.InstructionUtils;
 import org.apache.sysml.runtime.matrix.data.MatrixBlock;
 import org.apache.sysml.runtime.matrix.data.MatrixIndexes;
@@ -30,34 +29,28 @@ import org.apache.sysml.runtime.matrix.mapred.CachedValueMap;
 import org.apache.sysml.runtime.matrix.mapred.IndexedMatrixValue;
 import org.apache.sysml.runtime.matrix.operators.Operator;
 
-
-public class AppendGInstruction extends AppendInstruction 
-{
-	private long _offset = -1; //cols of input1 
-	private long _offset2 = -1; //cols of input2
+public class AppendGInstruction extends AppendInstruction {
+	private long _offset = -1; // cols of input1
+	private long _offset2 = -1; // cols of input2
 	private long _len = -1;
-	
-	public AppendGInstruction(Operator op, byte in1, byte in2, long offset, long offset2, byte out, boolean cbind, String istr)
-	{
+
+	private AppendGInstruction(Operator op, byte in1, byte in2, long offset, long offset2, byte out, boolean cbind,
+			String istr) {
 		super(op, in1, in2, out, cbind, istr);
 		_offset = offset;
 		_offset2 = offset2;
 		_len = _offset + _offset2;
 	}
 
-	public static AppendGInstruction parseInstruction ( String str ) 
-		throws DMLRuntimeException 
-	{
+	public static AppendGInstruction parseInstruction ( String str ) {
 		String[] parts = InstructionUtils.getInstructionParts ( str );
 		InstructionUtils.checkNumFields (parts, 6);
-			
 		byte in1 = Byte.parseByte(parts[1]);
 		byte in2 = Byte.parseByte(parts[2]);
 		long offset = (long)(Double.parseDouble(parts[3]));
 		long len = (long)(Double.parseDouble(parts[4]));
 		byte out = Byte.parseByte(parts[5]);
 		boolean cbind = Boolean.parseBoolean(parts[6]);
-			
 		return new AppendGInstruction(null, in1, in2, offset, len, out, cbind, str);
 	}
 	
@@ -65,7 +58,6 @@ public class AppendGInstruction extends AppendInstruction
 	@Override
 	public void processInstruction(Class<? extends MatrixValue> valueClass,
 			CachedValueMap cachedValues, IndexedMatrixValue tempValue, IndexedMatrixValue zeroInput, int brlen, int bclen)
-			throws DMLRuntimeException 
 	{
 		//setup basic meta data
 		int blen = _cbind ? bclen : brlen;
@@ -137,7 +129,7 @@ public class AppendGInstruction extends AppendInstruction
 						ix1.setIndexes( tmpix.getRowIndex(), cix1);
 						tmpvalNew.reset( tmpval.getNumRows(), cols1 );
 						tmpvalNew.copy(0, tmpval.getNumRows()-1, (int)((_offset+1)%blen)-1, cols1-1, 
-								       tmpval.sliceOperations(0, tmpval.getNumRows()-1, 0, 
+								       tmpval.slice(0, tmpval.getNumRows()-1, 0, 
 								    		                     (int)(cols1-((_offset)%blen)-1), new MatrixBlock()), true);
 						data1.getIndexes().setIndexes(ix1);
 						
@@ -152,7 +144,7 @@ public class AppendGInstruction extends AppendInstruction
 							ix2.setIndexes( tmpix.getRowIndex(), cix2);
 							tmpvalNew2.reset( tmpval.getNumRows(), cols2 );
 							tmpvalNew2.copy(0, tmpval.getNumRows()-1, 0, cols2-1, 
-									       tmpval.sliceOperations(0, tmpval.getNumRows()-1, (int)(cols1-((_offset)%blen)), 
+									       tmpval.slice(0, tmpval.getNumRows()-1, (int)(cols1-((_offset)%blen)), 
 									    		                     tmpval.getNumColumns()-1, new MatrixBlock()), true);
 							data2.getIndexes().setIndexes(ix2);
 						}	
@@ -165,7 +157,7 @@ public class AppendGInstruction extends AppendInstruction
 						ix1.setIndexes( rix1, tmpix.getColumnIndex());
 						tmpvalNew.reset( rows1, tmpval.getNumColumns() );
 						tmpvalNew.copy((int)((_offset+1)%blen)-1, rows1-1, 0, tmpval.getNumColumns()-1,  
-								       tmpval.sliceOperations(0,(int)(rows1-((_offset)%blen)-1), 
+								       tmpval.slice(0,(int)(rows1-((_offset)%blen)-1), 
 								    		   0, tmpval.getNumColumns()-1, new MatrixBlock()), true);
 						data1.getIndexes().setIndexes(ix1);
 						
@@ -180,7 +172,7 @@ public class AppendGInstruction extends AppendInstruction
 							ix2.setIndexes(rix2, tmpix.getColumnIndex());
 							tmpvalNew2.reset( rows2, tmpval.getNumColumns() );
 							tmpvalNew2.copy(0, rows2-1, 0, tmpval.getNumColumns()-1,  
-									       tmpval.sliceOperations((int)(rows1-((_offset)%blen)), tmpval.getNumRows()-1, 
+									       tmpval.slice((int)(rows1-((_offset)%blen)), tmpval.getNumRows()-1, 
 									    		   0, tmpval.getNumColumns()-1, new MatrixBlock()), true);
 							data2.getIndexes().setIndexes(ix2);
 						}	

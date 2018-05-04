@@ -40,14 +40,12 @@ public class WeightedUnaryMM extends Lop
 	private OperationTypes _uop = null;
 	private int _numThreads = 1;
 	
-	public WeightedUnaryMM(Lop input1, Lop input2, Lop input3, DataType dt, ValueType vt, WUMMType wt, OperationTypes op, ExecType et) 
-		throws LopsException 
-	{
-		super(Lop.Type.WeightedUMM, dt, vt);		
+	public WeightedUnaryMM(Lop input1, Lop input2, Lop input3, DataType dt, ValueType vt, WUMMType wt, OperationTypes op, ExecType et) {
+		super(Lop.Type.WeightedUMM, dt, vt);
 		addInput(input1); //X
 		addInput(input2); //U
 		addInput(input3); //V
-		input1.addOutput(this); 
+		input1.addOutput(this);
 		input2.addOutput(this);
 		input3.addOutput(this);
 		
@@ -80,14 +78,13 @@ public class WeightedUnaryMM extends Lop
 		}
 	}
 
+	@Override
 	public String toString() {
 		return "Operation = WeightedUMM";
 	}
 	
 	@Override
-	public String getInstructions(int input1, int input2, int input3, int output) 
-		throws LopsException
-	{
+	public String getInstructions(int input1, int input2, int input3, int output) {
 		return getInstructions(
 				String.valueOf(input1),
 				String.valueOf(input2),
@@ -96,9 +93,7 @@ public class WeightedUnaryMM extends Lop
 	}
 
 	@Override
-	public String getInstructions(String input1, String input2, String input3, String output) 
-		throws LopsException
-	{
+	public String getInstructions(String input1, String input2, String input3, String output) {
 		StringBuilder sb = new StringBuilder();
 		
 		sb.append(getExecType());
@@ -137,21 +132,14 @@ public class WeightedUnaryMM extends Lop
 	}
 	
 	@Override
-	public boolean usesDistributedCache() 
-	{
-		if( getExecType()==ExecType.MR )
-			return true;
-		else
-			return false;
+	public boolean usesDistributedCache() {
+		return (getExecType()==ExecType.MR);
 	}
 	
 	@Override
-	public int[] distributedCacheInputIndex() 
-	{
-		if( getExecType()==ExecType.MR )
-			return new int[]{2,3};
-		else
-			return new int[]{-1};
+	public int[] distributedCacheInputIndex() {
+		return (getExecType()==ExecType.MR) ?
+			new int[]{2,3} : new int[]{-1};
 	}
 	
 	public void setNumThreads(int k) {

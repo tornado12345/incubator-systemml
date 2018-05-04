@@ -52,19 +52,16 @@ public class TaskPartitionerFactoring extends TaskPartitioner
 	}
 
 	@Override
-	public List<Task> createTasks() 
-		throws DMLRuntimeException 
+	public List<Task> createTasks()
 	{
-		LinkedList<Task> tasks = new LinkedList<Task>();
-		
-		long lFrom  = _fromVal.getLongValue();
-		long lTo    = _toVal.getLongValue();
-		long lIncr  = _incrVal.getLongValue();
-		
+		LinkedList<Task> tasks = new LinkedList<>();
+		long lFrom = _fromVal.getLongValue();
+		long lTo = _toVal.getLongValue();
+		long lIncr = _incrVal.getLongValue();
 		int P = _numThreads;  // number of parallel workers
-		long N = _numIter;     // total number of iterations
-		long R = N;            // remaining number of iterations
-		long K = -1;           // next _numThreads task sizes	
+		long N = _numIter;    // total number of iterations
+		long R = N;           // remaining number of iterations
+		long K = -1;          // next _numThreads task sizes
 		TaskType type = null; // type of iterations: range tasks (similar to run-length encoding) make only sense if taskSize>3
 		
 		for( long i = lFrom; i<=lTo;  )
@@ -73,7 +70,7 @@ public class TaskPartitionerFactoring extends TaskPartitioner
 			R -= (K * P);
 			
 			type = (ParForProgramBlock.USE_RANGE_TASKS_IF_USEFUL && K>3 ) ? 
-					   TaskType.RANGE : TaskType.SET;
+				TaskType.RANGE : TaskType.SET;
 			
 			//for each logical processor
 			for( int j=0; j<P; j++ )
@@ -82,28 +79,23 @@ public class TaskPartitionerFactoring extends TaskPartitioner
 					break;
 				
 				//create new task and add to list of tasks
-				Task lTask = new Task( type );
+				Task lTask = new Task(_iterVarName, type);
 				tasks.addLast(lTask);
 				
 				// add iterations to task 
-				if( type == TaskType.SET ) 
-				{
+				if( type == TaskType.SET ) {
 					//value based tasks
 					for( long k=0; k<K && i<=lTo; k++, i+=lIncr )
-					{
-						lTask.addIteration(new IntObject(_iterVarName, i));				
-					}				
+						lTask.addIteration(new IntObject(i));
 				}
-				else 
-				{
+				else {
 					//determine end of task
 					long to = Math.min( i+(K-1)*lIncr, lTo );
 					
 					//range based tasks
-					lTask.addIteration(new IntObject(_iterVarName, i));	    //from
-					lTask.addIteration(new IntObject(_iterVarName, to));    //to
-					lTask.addIteration(new IntObject(_iterVarName, lIncr));	//increment
-					
+					lTask.addIteration(new IntObject(i));     //from
+					lTask.addIteration(new IntObject(to));    //to
+					lTask.addIteration(new IntObject(lIncr)); //increment
 					i = to + lIncr;
 				}
 			}
@@ -114,19 +106,18 @@ public class TaskPartitionerFactoring extends TaskPartitioner
 
 	@Override
 	public long createTasks(LocalTaskQueue<Task> queue) 
-		throws DMLRuntimeException 
-	{		
+	{
 		long numCreatedTasks = 0;
 		
 		long lFrom  = _fromVal.getLongValue();
 		long lTo    = _toVal.getLongValue();
 		long lIncr  = _incrVal.getLongValue();
 		
-		int P = _numThreads;     // number of parallel workers
+		int P = _numThreads;   // number of parallel workers
 		long N = _numIter;     // total number of iterations
-		long R = N;               // remaining number of iterations
-		long K = -1;              //next _numThreads task sizes	
-	    TaskType type = null;    // type of iterations: range tasks (similar to run-length encoding) make only sense if taskSize>3
+		long R = N;            // remaining number of iterations
+		long K = -1;           //next _numThreads task sizes	
+	    TaskType type = null;  // type of iterations: range tasks (similar to run-length encoding) make only sense if taskSize>3
 		
 		try
 		{
@@ -145,16 +136,14 @@ public class TaskPartitionerFactoring extends TaskPartitioner
 						break;
 					
 					//create new task and add to list of tasks
-					Task lTask = new Task( type );
+					Task lTask = new Task(_iterVarName, type);
 					
 					// add iterations to task 
 					if( type == TaskType.SET ) 
 					{
 						//value based tasks
 						for( long k=0; k<K && i<=lTo; k++, i+=lIncr )
-						{
-							lTask.addIteration(new IntObject(_iterVarName, i));				
-						}				
+							lTask.addIteration(new IntObject(i));
 					}
 					else 
 					{
@@ -162,9 +151,9 @@ public class TaskPartitionerFactoring extends TaskPartitioner
 						long to = Math.min( i+(K-1)*lIncr, lTo );
 						
 						//range based tasks
-						lTask.addIteration(new IntObject(_iterVarName, i));	    //from
-						lTask.addIteration(new IntObject(_iterVarName, to));    //to
-						lTask.addIteration(new IntObject(_iterVarName, lIncr));	//increment
+						lTask.addIteration(new IntObject(i));	    //from
+						lTask.addIteration(new IntObject(to));    //to
+						lTask.addIteration(new IntObject(lIncr));	//increment
 						
 						i = to + lIncr;
 					}
@@ -193,8 +182,9 @@ public class TaskPartitionerFactoring extends TaskPartitioner
 	 * 
 	 * NOTE: x can be set to different values, but the original paper argues for x=2.
 	 * 
-	 * @param R
-	 * @return
+	 * @param R ?
+	 * @param P ?
+	 * @return next batch task size
 	 */
 	protected long determineNextBatchSize(long R, int P) 
 	{

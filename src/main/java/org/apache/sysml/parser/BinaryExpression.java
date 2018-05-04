@@ -24,24 +24,19 @@ import java.util.HashMap;
 
 public class BinaryExpression extends Expression 
 {
-	
 	private Expression _left;
 	private Expression _right;
 	private BinaryOp _opcode;
-
 	
-	public Expression rewriteExpression(String prefix) throws LanguageException{
-		
-		
-		BinaryExpression newExpr = new BinaryExpression(this._opcode,
-				this.getFilename(), this.getBeginLine(), this.getBeginColumn(), this.getEndLine(), this.getEndColumn());
+	@Override
+	public Expression rewriteExpression(String prefix) {
+		BinaryExpression newExpr = new BinaryExpression(this._opcode, this);
 		newExpr.setLeft(_left.rewriteExpression(prefix));
 		newExpr.setRight(_right.rewriteExpression(prefix));
 		return newExpr;
 	}
 	
 	public BinaryExpression(BinaryOp bop) {
-		_kind = Kind.BinaryOp;
 		_opcode = bop;
 		
 		setFilename("MAIN SCRIPT");
@@ -49,19 +44,13 @@ public class BinaryExpression extends Expression
 		setBeginColumn(0);
 		setEndLine(0);
 		setEndColumn(0);
+		setText(null);
 	}
-	
-	public BinaryExpression(BinaryOp bop, String filename, int beginLine, int beginColumn, int endLine, int endColumn) {
-		_kind = Kind.BinaryOp;
+
+	public BinaryExpression(BinaryOp bop, ParseInfo parseInfo) {
 		_opcode = bop;
-		
-		setFilename(filename);
-		setBeginLine(beginLine);
-		setBeginColumn(beginColumn);
-		setEndLine(endLine);
-		setEndColumn(endColumn);
+		setParseInfo(parseInfo);
 	}
-	
 
 	public BinaryOp getOpCode() {
 		return _opcode;
@@ -72,9 +61,7 @@ public class BinaryExpression extends Expression
 		
 		// update script location information --> left expression is BEFORE in script
 		if (_left != null){
-			setFilename(_left.getFilename());
-			setBeginLine(_left.getBeginLine());
-			setBeginColumn(_left.getBeginColumn());
+			setParseInfo(_left);
 		}
 		
 	}
@@ -84,9 +71,7 @@ public class BinaryExpression extends Expression
 		
 		// update script location information --> right expression is AFTER in script
 		if (_right != null){
-			setFilename(_right.getFilename());
-			setBeginLine(_right.getEndLine());
-			setBeginColumn(_right.getEndColumn());
+			setParseInfo(_right);
 		}
 	}
 
@@ -102,18 +87,16 @@ public class BinaryExpression extends Expression
 	 * Validate parse tree : Process Binary Expression in an assignment
 	 * statement
 	 * 
-	 * @throws LanguageException
 	 */
 	@Override
 	public void validateExpression(HashMap<String, DataIdentifier> ids, HashMap<String, ConstIdentifier> constVars, boolean conditional)
-			throws LanguageException 
-	{	
+	{
 		//recursive validate
-		if (_left instanceof FunctionCallIdentifier || _right instanceof FunctionCallIdentifier){
-			raiseValidateError("user-defined function calls not supported in binary expressions", 
-		            false, LanguageException.LanguageErrorCodes.UNSUPPORTED_EXPRESSION);
+		if (_left instanceof FunctionCallIdentifier || _right instanceof FunctionCallIdentifier) {
+			raiseValidateError("User-defined function calls not supported in binary expressions.", false,
+					LanguageException.LanguageErrorCodes.UNSUPPORTED_EXPRESSION);
 		}
-			
+
 		_left.validateExpression(ids, constVars, conditional);
 		_right.validateExpression(ids, constVars, conditional);
 		
@@ -126,7 +109,7 @@ public class BinaryExpression extends Expression
 		
 		String outputName = getTempName();
 		DataIdentifier output = new DataIdentifier(outputName);
-		output.setAllPositions(this.getFilename(), this.getBeginLine(), this.getBeginColumn(), this.getEndLine(), this.getEndColumn());		
+		output.setParseInfo(this);
 		output.setDataType(computeDataType(this.getLeft(), this.getRight(), true));
 		ValueType resultVT = computeValueType(this.getLeft(), this.getRight(), true);
 
@@ -161,8 +144,7 @@ public class BinaryExpression extends Expression
 		this.setOutput(output);
 	}
 
-	private void checkAndSetDimensions(DataIdentifier output, boolean conditional)
-			throws LanguageException {
+	private void checkAndSetDimensions(DataIdentifier output, boolean conditional) {
 		Identifier left = this.getLeft().getOutput();
 		Identifier right = this.getRight().getOutput();
 		Identifier pivot = null;
@@ -177,16 +159,17 @@ public class BinaryExpression extends Expression
 			pivot = right;
 		}
 
-		if ((pivot != null) && (aux != null)) 
-		{
-			//check dimensions binary operations (if dims known)
-			if (isSameDimensionBinaryOp(this.getOpCode()) && pivot.dimsKnown() && aux.dimsKnown() )
-			{
-				if(   (pivot.getDim1() != aux.getDim1() && aux.getDim1()>1)  //number of rows must always be equivalent if not row vector
-				   || (pivot.getDim2() != aux.getDim2() && aux.getDim2()>1)) //number of cols must be equivalent if not col vector
-				{
-					raiseValidateError("Mismatch in dimensions for operation "+ this.toString(), conditional, LanguageException.LanguageErrorCodes.INVALID_PARAMETERS);
-				} 
+		if ((pivot != null) && (aux != null)) {
+			// check dimensions binary operations (if dims known)
+			if (isSameDimensionBinaryOp(this.getOpCode()) && pivot.dimsKnown() && aux.dimsKnown()) {
+				// number of rows must always be equivalent if not row vector
+				// number of cols must be equivalent if not col vector
+				if ((pivot.getDim1() != aux.getDim1() && aux.getDim1() > 1)
+						|| (pivot.getDim2() != aux.getDim2() && aux.getDim2() > 1)) {
+					raiseValidateError("Mismatch in dimensions for operation '" + this.getText() + "'. " + pivot
+							+ " is " + pivot.getDim1() + "x" + pivot.getDim2() + " and " + aux + " is " + aux.getDim1()
+							+ "x" + aux.getDim2() + ".", conditional);
+				}
 			}
 		}
 
@@ -196,10 +179,22 @@ public class BinaryExpression extends Expression
 		}
 	}
 	
+	@Override
 	public String toString() {
-
-		return "(" + _left.toString() + " " + _opcode.toString() + " "
-				+ _right.toString() + ")";
+		String leftString;
+		String rightString;
+		if (_left instanceof StringIdentifier) {
+			leftString = "\"" + _left.toString() + "\"";
+		} else {
+			leftString = _left.toString();
+		}
+		if (_right instanceof StringIdentifier) {
+			rightString = "\"" + _right.toString() + "\"";
+		} else {
+			rightString = _right.toString();
+		}
+		return "(" + leftString + " " + _opcode.toString() + " "
+				+ rightString + ")";
 
 	}
 

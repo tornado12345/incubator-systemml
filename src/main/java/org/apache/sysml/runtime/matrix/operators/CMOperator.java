@@ -30,25 +30,33 @@ public class CMOperator extends Operator
 	
 	// supported aggregates
 	public enum AggregateOperationTypes {
-		SUM, COUNT, MEAN, CM, CM2, CM3, CM4, NORM, VARIANCE, INVALID
-	};
+		SUM,
+		COUNT,
+		MEAN, //a.k.a. CM
+		CM2,
+		CM3,
+		CM4,
+		VARIANCE,
+		INVALID
+	}
 
 	public ValueFunction fn;
 	public AggregateOperationTypes aggOpType;
 
 	public CMOperator(ValueFunction op, AggregateOperationTypes agg) {
+		super(true);
 		fn = op;
 		aggOpType = agg;
-		sparseSafe = true;
 	}
 
 	public AggregateOperationTypes getAggOpType() {
 		return aggOpType;
 	}
 	
-	public void setCMAggOp(int order) {
-		aggOpType = getCMAggOpType(order);
-		fn = CM.getCMFnObject(aggOpType);
+	public CMOperator setCMAggOp(int order) {
+		AggregateOperationTypes agg = getCMAggOpType(order);
+		ValueFunction fn = CM.getCMFnObject(aggOpType);
+		return new CMOperator(fn, agg);
 	}
 	
 	public static AggregateOperationTypes getCMAggOpType ( int order ) {
@@ -89,11 +97,7 @@ public class CMOperator extends Operator
 		}
 		return AggregateOperationTypes.INVALID;
 	}
-	
-	/**
-	 * 
-	 * @return
-	 */
+
 	public boolean isPartialAggregateOperator()
 	{
 		boolean ret = false;

@@ -33,7 +33,6 @@ import org.apache.sysml.hops.Hop.AggOp;
 import org.apache.sysml.hops.Hop.DataOpTypes;
 import org.apache.sysml.hops.Hop.Direction;
 import org.apache.sysml.hops.Hop.OpOp1;
-import org.apache.sysml.hops.Hop.VisitStatus;
 import org.apache.sysml.hops.rewrite.HopRewriteUtils;
 import org.apache.sysml.parser.Expression.DataType;
 import org.apache.sysml.runtime.DMLRuntimeException;
@@ -41,6 +40,7 @@ import org.apache.sysml.runtime.controlprogram.LocalVariableMap;
 import org.apache.sysml.runtime.controlprogram.caching.MatrixObject;
 import org.apache.sysml.runtime.instructions.cp.Data;
 import org.apache.sysml.runtime.instructions.cp.ScalarObject;
+import org.apache.sysml.runtime.instructions.cp.ScalarObjectFactory;
 import org.apache.sysml.runtime.matrix.data.MatrixBlock;
 import org.apache.sysml.utils.Statistics;
 
@@ -51,10 +51,9 @@ public class LiteralReplacement
 	private static final long REPLACE_LITERALS_MAX_MATRIX_SIZE = 1000000; //10^6 cells (8MB)
 	private static final boolean REPORT_LITERAL_REPLACE_OPS_STATS = true; 	
 	
-	protected static void rReplaceLiterals( Hop hop, LocalVariableMap vars ) 
-		throws DMLRuntimeException
+	protected static void rReplaceLiterals( Hop hop, LocalVariableMap vars, boolean scalarsOnly )
 	{
-		if( hop.getVisited() == VisitStatus.DONE )
+		if( hop.isVisited() )
 			return;
 
 		if( hop.getInput() != null )
@@ -69,10 +68,12 @@ public class LiteralReplacement
 				lit = (lit==null) ? replaceLiteralScalarRead(c, vars) : lit;
 				lit = (lit==null) ? replaceLiteralValueTypeCastScalarRead(c, vars) : lit;
 				lit = (lit==null) ? replaceLiteralValueTypeCastLiteral(c, vars) : lit;
-				lit = (lit==null) ? replaceLiteralDataTypeCastMatrixRead(c, vars) : lit;
-				lit = (lit==null) ? replaceLiteralValueTypeCastRightIndexing(c, vars) : lit;
-				lit = (lit==null) ? replaceLiteralFullUnaryAggregate(c, vars) : lit;
-				lit = (lit==null) ? replaceLiteralFullUnaryAggregateRightIndexing(c, vars) : lit;
+				if( !scalarsOnly ) {
+					lit = (lit==null) ? replaceLiteralDataTypeCastMatrixRead(c, vars) : lit;
+					lit = (lit==null) ? replaceLiteralValueTypeCastRightIndexing(c, vars) : lit;
+					lit = (lit==null) ? replaceLiteralFullUnaryAggregate(c, vars) : lit;
+					lit = (lit==null) ? replaceLiteralFullUnaryAggregateRightIndexing(c, vars) : lit;
+				}
 				
 				//replace hop w/ literal on demand
 				if( lit != null )
@@ -81,7 +82,7 @@ public class LiteralReplacement
 					//because hop c marked as visited, and (2) repeated evaluation of uagg ops
 					
 					if( c.getParent().size() > 1 ) { //multiple parents
-						ArrayList<Hop> parents = new ArrayList<Hop>(c.getParent());
+						ArrayList<Hop> parents = new ArrayList<>(c.getParent());
 						for( Hop p : parents ) {
 							int pos = HopRewriteUtils.getChildReferencePos(p, c);
 							HopRewriteUtils.removeChildReferenceByPos(p, c, pos);
@@ -89,19 +90,17 @@ public class LiteralReplacement
 						}
 					}
 					else { //current hop is only parent
-						HopRewriteUtils.removeChildReferenceByPos(hop, c, i);
-						HopRewriteUtils.addChildReference(hop, lit, i);
+						HopRewriteUtils.replaceChildReference(hop, c, lit, i);
 					}
 				}
 				//recursively process children
-				else 
-				{
-					rReplaceLiterals(c, vars);	
-				}			
+				else {
+					rReplaceLiterals(c, vars, scalarsOnly);	
+				}
 			}
 		}
 		
-		hop.setVisited(VisitStatus.DONE);
+		hop.setVisited();
 	}
 	
 
@@ -118,22 +117,9 @@ public class LiteralReplacement
 			&& c.getDataType()==DataType.SCALAR )
 		{
 			Data dat = vars.get(c.getName());
-			if( dat != null ) //required for selective constant propagation
-			{
+			if( dat != null ) { //required for selective constant propagation
 				ScalarObject sdat = (ScalarObject)dat;
-				switch( sdat.getValueType() ) {
-					case INT:
-						ret = new LiteralOp(sdat.getLongValue());		
-						break;
-					case DOUBLE:
-						ret = new LiteralOp(sdat.getDoubleValue());	
-						break;
-					case BOOLEAN:
-						ret = new LiteralOp(sdat.getBooleanValue());
-						break;
-					default:	
-						//otherwise: do nothing
-				}
+				ret = ScalarObjectFactory.createLiteralOp(sdat);
 			}
 		}
 		
@@ -173,8 +159,7 @@ public class LiteralReplacement
 		return ret;
 	}
 	
-	private static LiteralOp replaceLiteralValueTypeCastLiteral( Hop c, LocalVariableMap vars ) 
-		throws DMLRuntimeException
+	private static LiteralOp replaceLiteralValueTypeCastLiteral( Hop c, LocalVariableMap vars )
 	{
 		LiteralOp ret = null;
 		
@@ -213,8 +198,7 @@ public class LiteralReplacement
 		return ret;
 	}
 	
-	private static LiteralOp replaceLiteralDataTypeCastMatrixRead( Hop c, LocalVariableMap vars ) 
-		throws DMLRuntimeException
+	private static LiteralOp replaceLiteralDataTypeCastMatrixRead( Hop c, LocalVariableMap vars )
 	{
 		LiteralOp ret = null;
 		
@@ -243,7 +227,6 @@ public class LiteralReplacement
 	}
 	
 	private static LiteralOp replaceLiteralValueTypeCastRightIndexing( Hop c, LocalVariableMap vars ) 
-		throws DMLRuntimeException
 	{
 		LiteralOp ret = null;
 		
@@ -285,8 +268,7 @@ public class LiteralReplacement
 		return ret;
 	}
 
-	private static LiteralOp replaceLiteralFullUnaryAggregate( Hop c, LocalVariableMap vars ) 
-		throws DMLRuntimeException
+	private static LiteralOp replaceLiteralFullUnaryAggregate( Hop c, LocalVariableMap vars )
 	{
 		LiteralOp ret = null;
 		
@@ -315,8 +297,7 @@ public class LiteralReplacement
 		return ret;
 	}
 	
-	private static LiteralOp replaceLiteralFullUnaryAggregateRightIndexing( Hop c, LocalVariableMap vars ) 
-		throws DMLRuntimeException
+	private static LiteralOp replaceLiteralFullUnaryAggregateRightIndexing( Hop c, LocalVariableMap vars )
 	{
 		LiteralOp ret = null;
 		
@@ -349,7 +330,7 @@ public class LiteralReplacement
 				if( mo.getNumRows()*mo.getNumColumns() < REPLACE_LITERALS_MAX_MATRIX_SIZE )
 				{
 					MatrixBlock mBlock = mo.acquireRead();
-					MatrixBlock mBlock2 = mBlock.sliceOperations((int)(rlval-1), (int)(ruval-1), (int)(clval-1), (int)(cuval-1), new MatrixBlock());
+					MatrixBlock mBlock2 = mBlock.slice((int)(rlval-1), (int)(ruval-1), (int)(clval-1), (int)(cuval-1), new MatrixBlock());
 					double value = replaceUnaryAggregate((AggUnaryOp)c, mBlock2);
 					mo.release();
 						
@@ -375,8 +356,7 @@ public class LiteralReplacement
 				   && h.getInput().get(0) instanceof DataOp && vars.keySet().contains(h.getInput().get(0).getName())) );
 	}
 	
-	private static long getIntValueDataLiteral(Hop hop, LocalVariableMap vars) 
-		throws DMLRuntimeException
+	private static long getIntValueDataLiteral(Hop hop, LocalVariableMap vars)
 	{
 		long value = -1;
 		
@@ -426,8 +406,7 @@ public class LiteralReplacement
 		return cdir && cop;
 	}
 	
-	private static double replaceUnaryAggregate( AggUnaryOp auop, MatrixBlock mb ) 
-		throws DMLRuntimeException
+	private static double replaceUnaryAggregate( AggUnaryOp auop, MatrixBlock mb )
 	{
 		//setup stats reporting if necessary
 		boolean REPORT_STATS = (DMLScript.STATISTICS && REPORT_LITERAL_REPLACE_OPS_STATS); 

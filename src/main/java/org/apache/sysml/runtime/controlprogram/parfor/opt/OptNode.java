@@ -22,14 +22,14 @@ package org.apache.sysml.runtime.controlprogram.parfor.opt;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
-import java.util.LinkedList;
+import java.util.Iterator;
 import java.util.Set;
 
-import org.apache.sysml.lops.LopProperties;
+import org.apache.commons.lang.ArrayUtils;
 import org.apache.sysml.lops.Lop;
-
 import org.apache.sysml.runtime.controlprogram.ParForProgramBlock;
 import org.apache.sysml.runtime.controlprogram.ParForProgramBlock.PDataPartitionFormat;
+import org.apache.sysml.runtime.controlprogram.ParForProgramBlock.PartitionFormat;
 
 /**
  * Internal representation of a plan alternative for program blocks and instructions 
@@ -39,7 +39,6 @@ import org.apache.sysml.runtime.controlprogram.ParForProgramBlock.PDataPartition
  */
 public class OptNode 
 {
-	
 	public enum NodeType{
 		GENERIC,
 		FUNCCALL,
@@ -48,24 +47,18 @@ public class OptNode
 		FOR,
 		PARFOR,
 		INST,
-		HOP
+		HOP;
+		public boolean isLoop() {
+			return this == WHILE ||
+				this == FOR || this == PARFOR;
+		}
 	}
 	
 	public enum ExecType { 
 		CP,
 		MR,
 		SPARK;
-		
-		public LopProperties.ExecType toLopsExecType() {
-			switch( this ) {
-				case CP: 	return LopProperties.ExecType.CP;
-				case MR: 	return LopProperties.ExecType.MR;
-				case SPARK: return LopProperties.ExecType.SPARK;
-			}
-			
-			return null;
-		}
-		
+
 		public ParForProgramBlock.PExecMode toParForExecMode() {
 			switch( this ) {
 				case CP: 	return ParForProgramBlock.PExecMode.LOCAL;
@@ -78,12 +71,13 @@ public class OptNode
 	}
 	
 	public enum ParamType{
-		OPTYPE,
 		OPSTRING,
 		TASK_PARTITIONER,
 		TASK_SIZE,
 		DATA_PARTITIONER,
 		DATA_PARTITION_FORMAT,
+		DATA_PARTITION_COND,
+		DATA_PARTITION_COND_MEM,
 		RESULT_MERGE,
 		NUM_ITERATIONS,
 		RECURSIVE_CALL
@@ -99,336 +93,203 @@ public class OptNode
 	private int                       _k       = -1;
 	private HashMap<ParamType,String> _params  = null;
 	
-	//node statistics (only present for physical plans and leaf nodes)
-	private OptNodeStatistics         _stats   = null;
-	
 	//line numbers (for explain)
 	private int                       _beginLine = -1;
 	private int                       _endLine = -1;
 	
-	public OptNode( NodeType type )
-	{
+	public OptNode( NodeType type ) {
 		this(type, null);
 	}
 
-	public OptNode( NodeType ntype, ExecType etype )
-	{
+	public OptNode( NodeType ntype, ExecType etype ) {
 		_ntype = ntype;
 		_etype = etype;
-		
 		_k = 1;
 	}
 	
 	///////
 	//getters and setters
 	
-	public NodeType getNodeType() 
-	{
+	public NodeType getNodeType() {
 		return _ntype;
 	}
 	
-	public void setNodeType(NodeType type) 
-	{
+	public void setNodeType(NodeType type) {
 		_ntype = type;
 	}
 	
-	public ExecType getExecType() 
-	{
+	public boolean isNodeType(NodeType... types) {
+		return ArrayUtils.contains(types, _ntype);
+	}
+	
+	public ExecType getExecType() {
 		return _etype;
 	}
 	
-	public void setExecType(ExecType type) 
-	{
+	public void setExecType(ExecType type) {
 		_etype = type;
 	}
 	
-	public void setID( long id )
-	{
+	public void setID( long id ) {
 		_id = id;
 	}
 	
-	public long getID( )
-	{
+	public long getID( ) {
 		return _id;
 	}
 	
-	public void addParam(ParamType ptype, String val)
-	{
+	public void addParam(ParamType ptype, String val) {
 		if( _params == null )
-			_params = new HashMap<ParamType, String>();
-		
+			_params = new HashMap<>();
 		_params.put(ptype, val);
 	}
 
-	public void setParams( HashMap<ParamType,String> params )
-	{
+	public void setParams( HashMap<ParamType,String> params ) {
 		_params = params;
 	}
 	
-	public String getParam( ParamType type )
-	{
-		String ret = null;
-		if( _params != null )
-			ret = _params.get(type);
-		return ret;
+	public String getParam( ParamType type ) {
+		return (_params != null) ?
+			_params.get(type) : null;
 	}
 	
-	public int getBeginLine()
-	{
+	public int getBeginLine() {
 		return _beginLine;
 	}
 	
-	public void setBeginLine( int line )
-	{
+	public void setBeginLine( int line ) {
 		_beginLine = line;
 	}
 	
-	public int getEndLine()
-	{
+	public int getEndLine() {
 		return _endLine;
 	}
 	
-	public void setEndLine( int line )
-	{
+	public void setEndLine( int line ) {
 		_endLine = line;
 	}
 
-	public void setLineNumbers( int begin, int end )
-	{
+	public void setLineNumbers( int begin, int end ) {
 		setBeginLine( begin );
 		setEndLine( end );
 	}
 	
-	public void addChild( OptNode child )
-	{
+	public void addChild( OptNode child ) {
 		if( _childs==null )
-			_childs = new ArrayList<OptNode>();
-		
+			_childs = new ArrayList<>();
 		_childs.add( child );
 	}
 	
-	public void addChilds( ArrayList<OptNode> childs )
-	{
+	public void addChilds( ArrayList<OptNode> childs ) {
 		if( _childs==null )
-			_childs = new ArrayList<OptNode>();
-		
-		_childs.addAll( childs );		
+			_childs = new ArrayList<>();
+		_childs.addAll( childs );
 	}
 	
-	public void setChilds(ArrayList<OptNode> childs) 
-	{
+	public void setChilds(ArrayList<OptNode> childs) {
 		_childs = childs;
 	}
 	
-	public ArrayList<OptNode> getChilds() 
-	{
+	public ArrayList<OptNode> getChilds() {
 		return _childs;
 	}
 	
-	
-	public int getK() 
-	{
+	public int getK() {
 		return _k;
 	}
 
-	public void setK(int k) 
-	{
+	public void setK(int k) {
 		_k = k;
 	}
-	
-	public OptNodeStatistics getStatistics()
-	{
-		return _stats;
-	}
-	
-	public void setStatistics(OptNodeStatistics stats)
-	{
-		_stats = stats;
-	}
-	
-	/**
-	 * 
-	 * @param oldNode
-	 * @param newNode
-	 * @return
-	 */
-	public boolean exchangeChild(OptNode oldNode, OptNode newNode) 
-	{
+
+	public boolean exchangeChild(OptNode oldNode, OptNode newNode) {
+		if( isLeaf() )
+			return false;
+		
 		boolean ret = false;
-		
-		if( _childs != null )
-			for( int i=0; i<_childs.size(); i++ )
-				if( _childs.get(i) == oldNode )
-				{
-					_childs.set(i, newNode);
-					ret = true;
-				}
-		
-		return ret;
-	}
-	
-	/**
-	 * 
-	 * @param qn
-	 * @return
-	 */
-	public boolean containsNode( OptNode qn )
-	{
-		boolean ret = (this == qn);
-		if( !ret && !isLeaf() )
-			for( OptNode n : _childs ) {
-				ret |= n.containsNode(qn);
-				if( ret ) break; //early abort
+		for( int i=0; i<_childs.size(); i++ )
+			if( _childs.get(i) == oldNode ) {
+				_childs.set(i, newNode);
+				ret = true;
 			}
-		
 		return ret;
 	}
-	
-	/**
-	 * 
-	 * @param type
-	 * @return
-	 */
-	public boolean containsNode( NodeType type )
-	{
-		boolean ret = (_ntype == type);
-		if( !ret && !isLeaf() )
-			for( OptNode n : _childs ) {
-				ret |= n.containsNode(type);
-				if( ret ) break; //early abort
-			}
-		
-		return ret;
-	}
-	
-	/**
-	 * 
-	 * @return
-	 */
-	public boolean isLeaf()
-	{
+
+	public boolean isLeaf() {
 		return ( _childs == null || _childs.isEmpty() );
 	}
-	
-	/**
-	 * 
-	 * @return
-	 */
-	public boolean hasOnlySimpleChilds()
-	{
-		boolean ret = true;
-		if( !isLeaf() )
-			for( OptNode n : _childs ) {
-				if( n.getNodeType()==NodeType.GENERIC )
-					ret &= n.hasOnlySimpleChilds();
-				//functions, loops, branches
-				else if( n.getNodeType()!=NodeType.HOP )
-					return false;
-			}
+
+	public boolean hasOnlySimpleChilds() {
+		if( isLeaf() )
+			return true;
 		
+		boolean ret = true;
+		for( OptNode n : _childs ) {
+			if( n.getNodeType()==NodeType.GENERIC )
+				ret &= n.hasOnlySimpleChilds();
+			//functions, loops, branches
+			else if( n.getNodeType()!=NodeType.HOP )
+				return false;
+		}
 		return ret;
 	}
-	
-	/**
-	 * 
-	 * @return
-	 */
-	public String getInstructionName() 
-	{
+
+	public String getInstructionName() {
 		return String.valueOf(_etype) + Lop.OPERAND_DELIMITOR + getParam(ParamType.OPSTRING);
 	}
-	
-	/**
-	 * 
-	 * @return
-	 */
-	public boolean isRecursive()
-	{
-		boolean ret = false;
+
+	public boolean isRecursive() {
 		String rec = getParam(ParamType.RECURSIVE_CALL);
-		if( rec != null )
-			ret = Boolean.parseBoolean(rec);
-		return ret;
+		return (rec != null) ?
+			Boolean.parseBoolean(rec) : false;
 	}
 	
 
 	///////
 	//recursive methods
-	
-	
-	/**
-	 * 
-	 * @return
-	 */
-	public Collection<OptNode> getNodeList()
-	{
-		Collection<OptNode> nodes = new LinkedList<OptNode>();
-		
+
+	public Collection<OptNode> getNodeList() {
+		Collection<OptNode> nodes = new ArrayList<>();
 		if(!isLeaf())
 			for( OptNode n : _childs )
 				nodes.addAll( n.getNodeList() );
 		nodes.add(this);
-		
 		return nodes;
 	}
-	
-	/**
-	 * 
-	 * @return
-	 */
-	public Collection<OptNode> getNodeList( ExecType et )
-	{
-		Collection<OptNode> nodes = new LinkedList<OptNode>();
-		
+
+	public Collection<OptNode> getNodeList( ExecType et ) {
+		Collection<OptNode> nodes = new ArrayList<>();
 		if(!isLeaf())
 			for( OptNode n : _childs )
 				nodes.addAll( n.getNodeList( et ) );
-		
 		if( _etype == et )
 			nodes.add(this);
-		
 		return nodes;
 	}
-	
-	/**
-	 * 
-	 * @return
-	 */
-	public Collection<OptNode> getRelevantNodeList()
-	{
-		Collection<OptNode> nodes = new LinkedList<OptNode>();
-		
+
+	public Collection<OptNode> getRelevantNodeList() {
+		Collection<OptNode> nodes = new ArrayList<>();
 		if( !isLeaf() )
-		{
 			for( OptNode n : _childs )
 				nodes.addAll( n.getRelevantNodeList() );
-		}
-		 
 		if( _ntype == NodeType.PARFOR || _ntype == NodeType.HOP )
-		{
 			nodes.add(this);
-		}
-		
 		return nodes;
 	}
 	
-	
-
 	
 	/**
 	 * Set the plan to a parallel degree of 1 (serial execution).
 	 */
-	public void setSerialParFor()
-	{
+	public void setSerialParFor() {
 		//process parfor nodes
-		if( _ntype == NodeType.PARFOR )
-		{
+		if( _ntype == NodeType.PARFOR ) {
 			_k = 1;
 			_etype = ExecType.CP;
 		}
 		
 		//process childs
-		if( _childs != null )
+		if( !isLeaf() )
 			for( OptNode n : _childs )
 				n.setSerialParFor();
 	}
@@ -436,49 +297,39 @@ public class OptNode
 	/**
 	 * Gets the number of plan nodes.
 	 * 
-	 * @return
+	 * @return number of plan nodes
 	 */
-	public int size() 
-	{
+	public int size() {
 		int count = 1; //self
-		if( _childs != null )
+		if( !isLeaf() )
 			for( OptNode n : _childs )
 				count += n.size();
 		return count;
 	}
 	
 	/**
-	 * Determines if all programblocks and instructions exhibit 
+	 * Determines if all program blocks and instructions exhibit 
 	 * the execution type CP. 
 	 * 
-	 * @return
+	 * @return true of all program blocks and instructions execute on CP
 	 */
-	public boolean isCPOnly()
-	{
-		boolean ret = (_etype == ExecType.CP);		
-		if( _childs != null )
-			for( OptNode n : _childs )
-			{
+	public boolean isCPOnly() {
+		boolean ret = (_etype == ExecType.CP);
+		if( !isLeaf() )
+			for( OptNode n : _childs ) {
 				if( !ret ) break; //early abort if already false
 				ret &= n.isCPOnly();
 			}
 		return ret;
 	}
-	
-	
-	/**
-	 * 
-	 * @return
-	 */
-	public int getTotalK()
-	{
-		int k = 1;		
-		if( _childs != null )
+
+	public int getTotalK() {
+		int k = 1;
+		if( !isLeaf() )
 			for( OptNode n : _childs )
 				k = Math.max(k, n.getTotalK() );
 		
-		if( _ntype == NodeType.PARFOR )
-		{
+		if( _ntype == NodeType.PARFOR ) {
 			if( _etype==ExecType.CP )
 				k = _k * k;
 			else //MR
@@ -487,129 +338,81 @@ public class OptNode
 		
 		return k;
 	}
-	
-	/**
-	 * 
-	 * @param N
-	 * @return
-	 */
-	public long getMaxC( long N )
-	{
+
+	public long getMaxC( long N ) {
 		long maxc = N;
-		if( _childs != null )
+		if( !isLeaf() )
 			for( OptNode n : _childs )
-				maxc = Math.min(maxc, n.getMaxC( N ) );
+				maxc = Math.min(maxc, n.getMaxC( N ));
 		
-		if( _ntype == NodeType.HOP )
-		{
-			String ts = getParam( ParamType.TASK_SIZE );
+		if( _ntype == NodeType.HOP ) {
+			String ts = getParam(ParamType.TASK_SIZE);
 			if( ts != null )
-				maxc = Math.min(maxc, Integer.parseInt(ts) );
+				maxc = Math.min(maxc, Integer.parseInt(ts));
 		}
 		
-		if(    _ntype == NodeType.PARFOR 
-		    && _etype == ExecType.CP    )
-		{
+		if( _ntype == NodeType.PARFOR && _etype == ExecType.CP)
 			maxc = maxc / _k; //intdiv
-		}
 		
 		return maxc;
 	}
 
-	
-	/**
-	 * 
-	 * @return
-	 */
-	public boolean hasNestedParallelism( boolean flagNested )
-	{
+	public boolean hasNestedParallelism( boolean flagNested ) {
 		boolean ret = false;
-		
-		if( _ntype == NodeType.PARFOR )
-		{
+		//check for parfor in nested context
+		if( _ntype == NodeType.PARFOR ) {
 			if( flagNested ) 
 				return true;
 			flagNested = true;
 		}
 		
-		if( _childs != null )
-			for( OptNode n : _childs )
-			{
-				if( ret ) break; //early abort if already true
-				ret |= n.hasNestedParallelism( flagNested );
-			}
-		
-			ret = true;
-			
+		//recursively process children
+		if( !isLeaf() )
+			for( int i=0; i<_childs.size() && !ret; i++ )
+				ret |= _childs.get(i).hasNestedParallelism( flagNested );
 		return ret;
 	}
 
-
-	/**
-	 * 
-	 * @param flagNested
-	 * @return
-	 */
-	public boolean hasNestedPartitionReads( boolean flagNested )
-	{
-		boolean ret = false;
-		if( isLeaf() )
-		{
+	public boolean hasNestedPartitionReads( boolean flagNested ) {
+		if( isLeaf() ) {
 			//partitioned read identified by selected partition format
 			String tmp = getParam(ParamType.DATA_PARTITION_FORMAT);
-			ret = ( tmp !=null 
-					&& PDataPartitionFormat.valueOf(tmp)!=PDataPartitionFormat.NONE 
-					&& flagNested );
-		}
-		else
-		{
-			for( OptNode n : _childs )
-			{
-				if( n._ntype == NodeType.PARFOR || n._ntype == NodeType.FOR || n._ntype == NodeType.WHILE )
-					flagNested = true;
-				
-				ret |= n.hasNestedPartitionReads( flagNested );
-				if( ret ) break; //early abort if already true
-			}
+			return ( tmp !=null && flagNested
+				&& PartitionFormat.valueOf(tmp)._dpf!=PDataPartitionFormat.NONE);
 		}
 		
+		boolean ret = false;
+		for( int i=0; i<_childs.size() && !ret; i++ ) {
+			OptNode n = _childs.get(i);
+			if( n._ntype.isLoop() )
+				flagNested = true;
+			ret |= n.hasNestedPartitionReads( flagNested );
+		}
 		return ret;
 	}
 
-	
-	/**
-	 * 
-	 */
-	public void checkAndCleanupLeafNodes() 
-	{
-		if( _childs != null )
-			for( int i=0; i<_childs.size(); i++ )
-			{
-				OptNode n = _childs.get(i);
-				n.checkAndCleanupLeafNodes();
-				if( n.isLeaf() && n._ntype != NodeType.HOP && n._ntype != NodeType.INST 
-					&& n._ntype != NodeType.FUNCCALL ) // && n._ntype != NodeType.PARFOR
-				{
-					_childs.remove(i);
-					i--;
-				}
+	public void checkAndCleanupLeafNodes() {
+		if( isLeaf() )
+			return;
+		Iterator<OptNode> iter = _childs.iterator();
+		while( iter.hasNext() ) {
+			OptNode n = iter.next();
+			n.checkAndCleanupLeafNodes();
+			if( n.isLeaf() && n._ntype != NodeType.HOP && n._ntype != NodeType.INST 
+				&& n._ntype != NodeType.FUNCCALL ) {
+				iter.remove();
 			}
+		}
 	}
-	
-	/**
-	 * @param stack 
-	 * 
-	 */
-	public void checkAndCleanupRecursiveFunc(Set<String> stack) 
-	{
+
+	public void checkAndCleanupRecursiveFunc(Set<String> stack) {
 		//recursive invocation
 		if( !isLeaf() )
 			for( OptNode n : _childs )
 				n.checkAndCleanupRecursiveFunc( stack );
 	
 		//collect and update func info
-		if(_ntype == NodeType.FUNCCALL)
-		{
+		if(_ntype == NodeType.FUNCCALL) {
 			String rec = getParam(ParamType.RECURSIVE_CALL);
 			String fname = getParam(ParamType.OPSTRING);
 			if( rec != null && Boolean.parseBoolean(rec) ) 
@@ -622,9 +425,9 @@ public class OptNode
 	/**
 	 * Explain tool: prints the hierarchical plan to <code>stdout</code>.
 	 * 
-	 * @param level
-	 * @param withDetails
-	 * @return
+	 * @param level depth to print?
+	 * @param withDetails if true, explain details
+	 * @return string explanation
 	 */
 	public String explain(int level, boolean withDetails) 
 	{
@@ -681,51 +484,24 @@ public class OptNode
 	}
 
 	/**
-	 * Determines the maximum problem size of all childs.
+	 * Determines the maximum problem size, in terms of the maximum
+	 * total number of inner loop iterations, of the entire subtree.
 	 * 
-	 * @return
+	 * @return maximum problem size
 	 */
-	public long getMaxProblemSize() 
-	{
-		long max = 0;
-		if( _childs != null )
+	public long getMaxProblemSize() {
+		//recursively process children
+		long max = 1;
+		if( !isLeaf() )
 			for( OptNode n : _childs )
-				max = Math.max(max, n.getMaxProblemSize());		
-		else
-			max = 1;
+				max = Math.max(max, n.getMaxProblemSize());
 		
-		if( _ntype == NodeType.PARFOR )
-			max = max * Long.parseLong(_params.get(ParamType.NUM_ITERATIONS));
-
+		//scale problem size by number of loop iterations
+		if( _ntype.isLoop() && !isLeaf() ) {
+			String numIter = getParam(ParamType.NUM_ITERATIONS);
+			max *= (numIter != null) ? Long.parseLong(numIter) :
+				CostEstimator.FACTOR_NUM_ITERATIONS;
+		}
 		return max;
 	}
-	
-	
-	/**
-	 * 
-	 * @return
-	 */
-	@SuppressWarnings("unchecked")
-	public OptNode createShallowClone()
-	{
-		OptNode n = new OptNode(_ntype,_etype);
-		n.setID(_id);
-		n.setK(_k);		
-		if( _childs != null )
-			n.setChilds( (ArrayList<OptNode>)_childs.clone() );
-		if( _params != null )
-			n.setParams((HashMap<ParamType,String>)_params.clone());
-		return n;
-	}
-	
-	/**
-	 * 
-	 * @return
-	 */
-	public OptNode createDeepClone()
-	{
-		throw new RuntimeException("not implemented yet");
-	}
-
-
 }

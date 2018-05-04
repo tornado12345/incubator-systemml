@@ -26,61 +26,20 @@ import org.apache.sysml.runtime.matrix.data.CSVFileFormatProperties;
 import org.apache.sysml.runtime.matrix.data.FileFormatProperties;
 import org.apache.sysml.runtime.matrix.data.InputInfo;
 
-/**
- * 
- * 
- */
 public class FrameReaderFactory 
 {
-	/**
-	 * 
-	 * @param iinfo
-	 * @return
-	 * @throws DMLRuntimeException
-	 */
-	public static FrameReader createFrameReader( InputInfo iinfo ) 
-		throws DMLRuntimeException
-	{
+
+	public static FrameReader createFrameReader( InputInfo iinfo ) {
 		FileFormatProperties props = (iinfo==InputInfo.CSVInputInfo) ?
-			new CSVFileFormatProperties() : null;		
-		
-		return createFrameReader(iinfo, props);
-	}
-	
-	/**
-	 * 
-	 * @param props
-	 * @return
-	 * @throws DMLRuntimeException
-	 */
-	public static FrameReader createFrameReader( ReadProperties rprops ) 
-		throws DMLRuntimeException
-	{
-		//check valid read properties
-		if( rprops == null )
-			throw new DMLRuntimeException("Failed to create frame reader with empty properties.");
-		
-		InputInfo iinfo = rprops.inputInfo;
-		FileFormatProperties props = (iinfo==InputInfo.CSVInputInfo) ? ((rprops.formatProperties!=null) ? 
-			(CSVFileFormatProperties)rprops.formatProperties : new CSVFileFormatProperties()) : null;		
-			
+			new CSVFileFormatProperties() : null;
 		return createFrameReader(iinfo, props);
 	}
 
-	
-	/**
-	 * 
-	 * @param props
-	 * @return
-	 * @throws DMLRuntimeException
-	 */
-	public static FrameReader createFrameReader( InputInfo iinfo, FileFormatProperties props ) 
-		throws DMLRuntimeException
-	{
+	public static FrameReader createFrameReader( InputInfo iinfo, FileFormatProperties props ) {
 		FrameReader reader = null;
 
 		if( iinfo == InputInfo.TextCellInputInfo ) {
-			if( ConfigurationManager.getCompilerConfigFlag(ConfigType.PARALLEL_CP_READ_BINARYFORMATS) )
+			if( ConfigurationManager.getCompilerConfigFlag(ConfigType.PARALLEL_CP_READ_TEXTFORMATS) )
 				reader = new FrameReaderTextCellParallel();
 			else	
 				reader = new FrameReaderTextCell();
@@ -88,7 +47,7 @@ public class FrameReaderFactory
 		else if( iinfo == InputInfo.CSVInputInfo ) {
 			if( props!=null && !(props instanceof CSVFileFormatProperties) )
 				throw new DMLRuntimeException("Wrong type of file format properties for CSV writer.");
-			if( ConfigurationManager.getCompilerConfigFlag(ConfigType.PARALLEL_CP_READ_BINARYFORMATS) )
+			if( ConfigurationManager.getCompilerConfigFlag(ConfigType.PARALLEL_CP_READ_TEXTFORMATS) )
 				reader = new FrameReaderTextCSVParallel( (CSVFileFormatProperties)props );
 			else
 				reader = new FrameReaderTextCSV( (CSVFileFormatProperties)props );
@@ -101,7 +60,7 @@ public class FrameReaderFactory
 		}
 		else {
 			throw new DMLRuntimeException("Failed to create frame reader for unknown input info: "
-		                                   + InputInfo.inputInfoToString(iinfo));
+				+ InputInfo.inputInfoToString(iinfo));
 		}
 		
 		return reader;

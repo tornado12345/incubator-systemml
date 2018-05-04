@@ -25,43 +25,16 @@ import org.apache.sysml.parser.LanguageException.LanguageErrorCodes;
 
 public abstract class Identifier extends Expression
 {
-	
 	protected DataType _dataType;
 	protected ValueType _valueType;
 	protected long _dim1;
 	protected long _dim2;
-	protected long _rows_in_block;
-	protected long _columns_in_block;
+	protected int _rows_in_block;
+	protected int _columns_in_block;
 	protected long _nnz;
 	protected FormatType _formatType;
-		
-	public Identifier(Identifier i)
-	{
-		_dataType = i.getDataType();
-		_valueType = i.getValueType();
-		if( i instanceof IndexedIdentifier ) {
-			IndexedIdentifier ixi = (IndexedIdentifier)i; 
-			_dim1 = ixi.getOrigDim1();
-			_dim2 = ixi.getOrigDim2();
-		}
-		else {
-			_dim1 = i.getDim1();
-			_dim2 = i.getDim2();
-		}
-		_rows_in_block = i.getRowsInBlock();
-		_columns_in_block = i.getColumnsInBlock();
-		_nnz = i.getNnz();
-		_formatType = i.getFormatType();
-		
-		// copy position information
-		setBeginLine(i.getBeginLine());
-		setBeginColumn(i.getBeginColumn());
-		setEndLine(i.getEndLine());
-		setEndColumn(i.getEndColumn());
-	}
-	
-	public Identifier()
-	{
+
+	public Identifier() {
 		_dim1 = -1;
 		_dim2 = -1;
 		_dataType = DataType.UNKNOWN;
@@ -73,11 +46,9 @@ public abstract class Identifier extends Expression
 		_formatType = null;
 	}
 	
-	public void setProperties(Identifier i)
-	{			
+	public void setProperties(Identifier i) {
 		if (i == null) 
 			return;
-		
 		_dataType = i.getDataType();
 		_valueType = i.getValueType();
 		if (i instanceof IndexedIdentifier) {
@@ -92,11 +63,9 @@ public abstract class Identifier extends Expression
 		_columns_in_block = i.getColumnsInBlock();
 		_nnz = i.getNnz();
 		_formatType = i.getFormatType();
-				
 	}
 	
-	public void setDimensionValueProperties(Identifier i)
-	{
+	public void setDimensionValueProperties(Identifier i) {
 		if (i instanceof IndexedIdentifier) {
 			IndexedIdentifier ixi = (IndexedIdentifier)i; 
 			_dim1 = ixi.getOrigDim1();
@@ -128,7 +97,7 @@ public abstract class Identifier extends Expression
 		_dim2 = dim2;
 	}
 		
-	public void setBlockDimensions(long dim1, long dim2){
+	public void setBlockDimensions(int dim1, int dim2){
 		 _rows_in_block = dim1;
 		 _columns_in_block = dim2;
 	}
@@ -157,11 +126,11 @@ public abstract class Identifier extends Expression
 		return _formatType;
 	}
 	
-	public long getRowsInBlock(){
+	public int getRowsInBlock(){
 		return _rows_in_block;
 	}
 	
-	public long getColumnsInBlock(){
+	public int getColumnsInBlock(){
 		return _columns_in_block;
 	}
 	
@@ -171,7 +140,6 @@ public abstract class Identifier extends Expression
 	
 	@Override
 	public void validateExpression(HashMap<String,DataIdentifier> ids, HashMap<String,ConstIdentifier> constVars, boolean conditional) 
-		throws LanguageException 
 	{
 		
 		if( getOutput() instanceof DataIdentifier ) {
@@ -278,6 +246,6 @@ public abstract class Identifier extends Expression
 	}
 	
 	public boolean dimsKnown(){
-		return ( _dim1 > 0 && _dim2 > 0);
+		return ( _dim1 >= 0 && _dim2 >= 0);
 	}
 }

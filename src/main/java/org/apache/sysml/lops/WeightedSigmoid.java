@@ -41,10 +41,8 @@ public class WeightedSigmoid extends Lop
 	
 	private WSigmoidType _wsigmoidType = null;
 	
-	public WeightedSigmoid(Lop input1, Lop input2, Lop input3, DataType dt, ValueType vt, WSigmoidType wt, ExecType et) 
-		throws LopsException 
-	{
-		super(Lop.Type.WeightedSigmoid, dt, vt);		
+	public WeightedSigmoid(Lop input1, Lop input2, Lop input3, DataType dt, ValueType vt, WSigmoidType wt, ExecType et) {
+		super(Lop.Type.WeightedSigmoid, dt, vt);
 		addInput(input1); //X
 		addInput(input2); //U
 		addInput(input3); //V
@@ -80,6 +78,7 @@ public class WeightedSigmoid extends Lop
 		}
 	}
 
+	@Override
 	public String toString() {
 		return "Operation = WeightedSigmoid";
 	}
@@ -132,21 +131,14 @@ public class WeightedSigmoid extends Lop
 	}
 	
 	@Override
-	public boolean usesDistributedCache() 
-	{
-		if( getExecType()==ExecType.MR )
-			return true;
-		else
-			return false;
+	public boolean usesDistributedCache() {
+		return (getExecType()==ExecType.MR);
 	}
 	
 	@Override
-	public int[] distributedCacheInputIndex() 
-	{
-		if( getExecType()==ExecType.MR )
-			return new int[]{2,3};
-		else
-			return new int[]{-1};
+	public int[] distributedCacheInputIndex() {
+		return (getExecType()==ExecType.MR) ?
+			new int[]{2,3} : new int[]{-1};
 	}
 	
 	public void setNumThreads(int k) {

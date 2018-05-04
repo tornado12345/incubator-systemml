@@ -40,10 +40,9 @@ import org.apache.sysml.runtime.controlprogram.parfor.ProgramConverter;
 import org.apache.sysml.runtime.instructions.cp.Data;
 import org.apache.sysml.runtime.matrix.JobReturn;
 import org.apache.sysml.runtime.matrix.MatrixCharacteristics;
-import org.apache.sysml.runtime.matrix.MatrixDimensionsMetaData;
-import org.apache.sysml.runtime.matrix.MatrixFormatMetaData;
+import org.apache.sysml.runtime.matrix.MetaDataFormat;
+import org.apache.sysml.runtime.matrix.MetaDataNumItemsByEachReducer;
 import org.apache.sysml.runtime.matrix.data.InputInfo;
-import org.apache.sysml.runtime.matrix.data.NumItemsByEachReducerMetaData;
 import org.apache.sysml.runtime.matrix.data.OutputInfo;
 import org.apache.sysml.runtime.matrix.mapred.MRJobConfiguration;
 import org.apache.sysml.runtime.util.UtilFunctions;
@@ -126,31 +125,23 @@ public class MRJobInstruction extends Instruction
 	// Indicates the data type of inputVars
 	private DataType[] inputDataTypes;
 
-	
-	/**
-	 * Constructor
-	 * @param instType
-	 * @param type
-	 */
-	
-	public MRJobInstruction(JobType type)
-	{
-		setType(Instruction.INSTRUCTION_TYPE.MAPREDUCE_JOB);
-		jobType = type;	
+	public MRJobInstruction(JobType type) {
+		jobType = type;
 		instOpcode = "MR-Job_"+getJobType();
 	}
 	
 	/**
 	 * (deep) Copy constructor, primarily used in parfor.
 	 * Additionally, replace all occurrences of <code>srcPattern</code> with <code>targetPattern</code>
-	 * @throws IllegalAccessException 
-	 * @throws IllegalArgumentException 
 	 * 
+	 * @param that MR job instruction
+	 * @throws IllegalArgumentException if IllegalArgumentException occurs
+	 * @throws IllegalAccessException if IllegalAccessException occurs
 	 */
 	public MRJobInstruction(MRJobInstruction that) 
 		throws IllegalArgumentException, IllegalAccessException 
 	{
-		this( that.jobType );
+		this(that.jobType);
 		
 		//copy basic variables
 		_randInstructions         = that._randInstructions;
@@ -187,16 +178,18 @@ public class MRJobInstruction extends Instruction
 		inputMatrices  = that.inputMatrices;
 		outputMatrices = that.outputMatrices;
 		inputDataTypes = that.inputDataTypes;
-
-	}	
+	}
 	
-	public JobType getJobType()
-	{
+	@Override
+	public IType getType() {
+		return IType.MAPREDUCE_JOB;
+	}
+	
+	public JobType getJobType() {
 		return jobType;
 	}
 
-	public String getIv_instructionsInMapper()
-	{
+	public String getIv_instructionsInMapper() {
 		return _mapperInstructions;
 	}
 	
@@ -298,7 +291,8 @@ public class MRJobInstruction extends Instruction
 
 	/**
 	 * Getter for MRJobInstructionslineNumbers
-	 * @return TreeMap containing all instructions indexed by line number   
+	 * 
+	 * @return list containing all instructions indexed by line number
 	 */
 	public ArrayList<Integer> getMRJobInstructionsLineNumbers()
 	{
@@ -308,8 +302,7 @@ public class MRJobInstruction extends Instruction
 	/**
 	 * Method to set outputs (output indices) for a MapReduce instruction.
 	 * 
-	 * @param outputIndices
-	 * @throws DMLRuntimeException
+	 * @param outputIndices output indices
 	 */
 	public void setOutputs(byte[] outputIndices) {
 		_resultIndices = outputIndices;
@@ -317,7 +310,7 @@ public class MRJobInstruction extends Instruction
 	
 	/**
 	 * Method to set the number of reducers for a MapReducer instruction.
-	 * @param numReducers
+	 * @param numReducers number of reducers
 	 */
 	public void setNumberOfReducers(int numReducers) {
 		iv_numReducers = numReducers;
@@ -326,7 +319,7 @@ public class MRJobInstruction extends Instruction
 	/**
 	 * Method to set the replication factor for outputs produced from a MapReduce instruction.
 	 * 
-	 * @param replication
+	 * @param replication replication factor
 	 */
 	public void setReplication(int replication) {
 		iv_replication = replication;
@@ -335,8 +328,8 @@ public class MRJobInstruction extends Instruction
 	/**
 	 * Method to set input and output labels for a MapReduce instruction.
 	 * 
-	 * @param inputLabels
-	 * @param outputLabels
+	 * @param inputLabels input labels
+	 * @param outputLabels output labels
 	 */
 	public void setInputOutputLabels(String[] inputLabels, String[] outputLabels) {
 		this.inputVars = inputLabels;
@@ -369,6 +362,7 @@ public class MRJobInstruction extends Instruction
 	
 	/**
 	 * Setter for MRJobInstructionslineNumbers field
+	 * 
 	 * @param MRJobLineNumbers Line numbers for each instruction in this MRJob  
 	 */
 	public void setMRJobInstructionsLineNumbers(ArrayList<Integer> MRJobLineNumbers) {
@@ -394,136 +388,6 @@ public class MRJobInstruction extends Instruction
 		setReplication(replication);
 	}	
 
-	public void setRandInstructions(long [] numRows, String[] inLabels,  
-			String randInstructions, String mapperInstructions, 
-			String aggInstructions, String otherInstructions, String [] outLabels, byte [] resultIndex, 
-			int numReducers, int replication)
-	{
-		setOutputs(resultIndex);
-			
-		setRecordReaderInstructions("");
-		setRandInstructions(randInstructions);
-		setMapperInstructions(mapperInstructions);
-		setShuffleInstructions("");
-		setAggregateInstructionsInReducer(aggInstructions);
-		setOtherInstructionsInReducer(otherInstructions);
-			
-		setInputOutputLabels(inLabels, outLabels);
-			
-		setNumberOfReducers(numReducers);
-		setReplication(replication);
-	}
-	
-
-	public void setMMCJInstructions(String[] inLabels, 
-			String mapperInstructions, String shuffleInstructions, 
-			String [] outLabels, byte [] resultIndex,  
-			int numReducers, int replication)
-	{
-		setOutputs(resultIndex);
-
-		setMapperInstructions(mapperInstructions);
-		setShuffleInstructions(shuffleInstructions);
-		setAggregateInstructionsInReducer("");
-		setOtherInstructionsInReducer("");
-
-		setInputOutputLabels(inLabels, outLabels);
-
-		setNumberOfReducers(numReducers);
-		setReplication(replication);
-	}
-
-	public void setMMRJInstructions(String[] inLabels, 
-			String mapperInstructions, String shuffleInstructions, String aggInstructions, String otherInstructions, 
-			String [] outLabels, byte [] resultIndex,  
-			int numReducers, int replication)
-	{
-		setOutputs(resultIndex);
-
-		setMapperInstructions(mapperInstructions);
-		setShuffleInstructions(shuffleInstructions);
-		setAggregateInstructionsInReducer(aggInstructions);
-		setOtherInstructionsInReducer(otherInstructions);
-
-		setInputOutputLabels(inLabels, outLabels);
-
-		setNumberOfReducers(numReducers);
-		setReplication(replication);
-	}
-	
-	// SortKeys Job does not have any instructions either in mapper or in reducer.
-	// It just has two inputs
-	public void setSORTKEYSInstructions(String [] inLabels,   
-			String mapperInstructions, String shuffleInstructions, 
-			String[] outLabels, byte [] resultIndex,  
-			int numReducers, int replication)
-	{
-		setOutputs(resultIndex);
-
-		setMapperInstructions(mapperInstructions);
-		setShuffleInstructions(shuffleInstructions);
-		setAggregateInstructionsInReducer("");
-		setOtherInstructionsInReducer("");
-
-		setInputOutputLabels(inLabels, outLabels);
-
-		setNumberOfReducers(numReducers);
-		setReplication(replication);
-	}
-
-	public void setCombineInstructions(String[] inLabels,  
-			String shuffleInstructions, String[] outLabels, byte[] resultIndex,  
-			int numReducers, int replication)
-	{
-		setOutputs(resultIndex);
-
-		setMapperInstructions("");
-		setShuffleInstructions(shuffleInstructions);
-		setAggregateInstructionsInReducer("");
-		setOtherInstructionsInReducer("");
-
-		setInputOutputLabels(inLabels, outLabels);
-
-		setNumberOfReducers(numReducers);
-		setReplication(replication);
-	}	
-	
-	public void setCentralMomentInstructions(String[] inLabels, 
-			String mapperInstructions, String shuffleInstructions, 
-			String[] outLabels, byte [] resultIndex,  
-			int numReducers, int replication)
-	{
-		setOutputs(resultIndex);
-
-		setMapperInstructions(mapperInstructions);
-		setShuffleInstructions(shuffleInstructions);
-		setAggregateInstructionsInReducer("");
-		setOtherInstructionsInReducer("");
-
-		setInputOutputLabels(inLabels, outLabels);
-
-		setNumberOfReducers(numReducers);
-		setReplication(replication);
-	}	
-	
-	public void setGroupedAggInstructions(String[] inLabels, 
-			String shuffleInstructions, String otherInstructions, 
-			String[] outLabels, byte [] resultIndex,  
-			int numReducers, int replication)
-	{
-		setOutputs(resultIndex);
-
-		setMapperInstructions("");
-		setShuffleInstructions(shuffleInstructions);
-		setAggregateInstructionsInReducer("");
-		setOtherInstructionsInReducer(otherInstructions);
-
-		setInputOutputLabels(inLabels, outLabels);
-
-		setNumberOfReducers(numReducers);
-		setReplication(replication);
-	}	
-	
 	public void setReBlockInstructions(String[] inLabels, 
 			String mapperInstructions, String reblockInstructions, String otherInstructions, 
 			String[] outLabels, byte [] resultIndex,  
@@ -544,7 +408,8 @@ public class MRJobInstruction extends Instruction
 	
 	/**
 	 * Search whether or not this MR job contains at least one 
-	 * MR instruction with specified line number parameter 
+	 * MR instruction with specified line number parameter
+	 * 
 	 * @param lineNum Line number in DML script
 	 * @return Return true if found, otherwise return false 
 	 */
@@ -571,91 +436,8 @@ public class MRJobInstruction extends Instruction
 		return sb.toString();
 	}
 	
-	public String getString(long [] arr)
-	{
-		StringBuilder sb = new StringBuilder();
-		for(int i = 0; i < arr.length; i++) {
-			sb.append(",");
-			sb.append(Long.toString(arr[i]));
-		}
-		
-		return sb.toString();
-	}
-	
-	public String getString(int [] arr)
-	{
-		StringBuilder sb = new StringBuilder();
-		for(int i = 0; i < arr.length; i++) {
-			sb.append(",");
-			sb.append(Integer.toString(arr[i]));
-		}
-		
-		return sb.toString();
-	}
-	
-	public String getString(OutputInfo[] iv_outputs) 
-	{
-		StringBuilder sb = new StringBuilder();
-		for(int i = 0 ; i < iv_outputs.length; i++) {
-			if(iv_outputs[i] == OutputInfo.BinaryBlockOutputInfo){
-				sb.append(", "); 
-				sb.append("BinaryBlockOutputInfo");
-			}
-			else if(iv_outputs[i] == OutputInfo.BinaryCellOutputInfo){
-				sb.append(", ");
-				sb.append("BinaryCellOutputInfo");
-			}
-			else if(iv_outputs[i] == OutputInfo.TextCellOutputInfo){
-				sb.append(", ");
-				sb.append("TextCellOutputInfo");
-			}
-			else {
-				sb.append(", (");
-				sb.append(iv_outputs[i].outputFormatClass);
-				sb.append(",");
-				sb.append(iv_outputs[i].outputKeyClass);
-				sb.append(",");
-				sb.append(iv_outputs[i].outputValueClass);
-				sb.append(")");
-			}
-		}
-		
-		return sb.toString();
-	}
-	
-	public String getString(InputInfo[] iv_inputs) 
-	{
-		StringBuilder sb = new StringBuilder();
-		for(int i = 0 ; i < iv_inputs.length; i++) {
-			if(iv_inputs[i] == InputInfo.BinaryBlockInputInfo){
-				sb.append(", ");
-				sb.append("BinaryBlockInputInfo");
-			}
-			else if(iv_inputs[i] == InputInfo.BinaryCellInputInfo){
-				sb.append(", ");
-				sb.append("BinaryCellInputInfo");
-			}
-			else if(iv_inputs[i] == InputInfo.TextCellInputInfo) {
-				sb.append(", ");
-				sb.append("TextCellInputInfo");
-			}
-			else {
-				sb.append(", (");
-				sb.append(iv_inputs[i].inputFormatClass);
-				sb.append(",");
-				sb.append(iv_inputs[i].inputKeyClass);
-				sb.append(",");
-				sb.append(iv_inputs[i].inputValueClass);
-				sb.append(")");
-			}
-		}
-		
-		return sb.toString();
-	}
-	
-	
-	public String toString()
-	{
+	@Override
+	public String toString() {
 		String instruction = "";
 		instruction += "jobtype = " + jobType + " \n";
 		instruction += "input labels = " + Arrays.toString(inputVars) + " \n";
@@ -676,8 +458,9 @@ public class MRJobInstruction extends Instruction
 	/**
 	 * Method for displaying MR instructions interspersed with source code 
 	 * ONLY USED IN DEBUG MODE
+	 * 
 	 * @param debug Flag for displaying instructions in debugger test integration
-	 * @return
+	 * @return MR string
 	 */
 	public String getMRString(boolean debug)
 	{
@@ -902,11 +685,12 @@ public class MRJobInstruction extends Instruction
 		return sb.toString();
 	}
 	
+	@Override
 	public void printMe() {
 		LOG.debug("\nMRInstructions: \n" + this.toString());
 	}
 
-	private String getOps(String inst) {
+	private static String getOps(String inst) {
 		StringBuilder sb = new StringBuilder();
 		for ( String i : inst.split(Lop.INSTRUCTION_DELIMITOR)) {
 			sb.append(",");
@@ -1016,10 +800,11 @@ public class MRJobInstruction extends Instruction
 	 * corresponding matrix objects in <code>inputMatrices</code>. Also, stores 
 	 * the data types in <code>inputDataTypes</code>.
 	 * 
-	 * @param pb
+	 * @param ec execution context
+	 * @return array of matrix objects
 	 */
 	public MatrixObject[] extractInputMatrices(ExecutionContext ec) {
-		ArrayList<MatrixObject> inputmat = new ArrayList<MatrixObject>();
+		ArrayList<MatrixObject> inputmat = new ArrayList<>();
 		inputDataTypes = new DataType[inputVars.length];
 		for ( int i=0; i < inputVars.length; i++ ) {
 			Data d = ec.getVariable(inputVars[i]);
@@ -1053,9 +838,10 @@ public class MRJobInstruction extends Instruction
 	 * of MATRIX data type, and stores them in <code>outputMatrices</code>. Also, 
 	 * populates auxiliary data structures.
 	 * 
-	 * @param pb
+	 * @param ec execution context
+	 * @return array of matrix objects
 	 */
-	public MatrixObject[] extractOutputMatrices(ExecutionContext ec) throws DMLRuntimeException {
+	public MatrixObject[] extractOutputMatrices(ExecutionContext ec) {
 		outputMatrices = new MatrixObject[getOutputVars().length];
 		int ind = 0;
 		for(String oo: getOutputVars()) {
@@ -1107,10 +893,10 @@ public class MRJobInstruction extends Instruction
 			clens[i] = mc.getCols();
 			brlens[i] = mc.getRowsPerBlock();
 			bclens[i] = mc.getColsPerBlock();
-			if ( inputMatrices[i].getMetaData() instanceof MatrixFormatMetaData ) {
-				inputInfos[i] = ((MatrixFormatMetaData) inputMatrices[i].getMetaData()).getInputInfo();
+			if ( inputMatrices[i].getMetaData() instanceof MetaDataFormat ) {
+				inputInfos[i] = ((MetaDataFormat) inputMatrices[i].getMetaData()).getInputInfo();
 			}
-			else if (inputMatrices[i].getMetaData() instanceof NumItemsByEachReducerMetaData ) {
+			else if (inputMatrices[i].getMetaData() instanceof MetaDataNumItemsByEachReducer ) {
 				inputInfos[i] = InputInfo.InputInfoForSortOutput;
 				inputInfos[i].metadata = inputMatrices[i].getMetaData();
 			}
@@ -1135,7 +921,7 @@ public class MRJobInstruction extends Instruction
 		// Populate information
 		for(int i=0; i < outputVars.length; i++) {
 			outputs[i] = outputMatrices[i].getFileName();
-			MatrixFormatMetaData md = (MatrixFormatMetaData) outputMatrices[i].getMetaData();
+			MetaDataFormat md = (MetaDataFormat) outputMatrices[i].getMetaData();
 			outputInfos[i] = md.getOutputInfo();
 		}
 	}
@@ -1155,7 +941,7 @@ public class MRJobInstruction extends Instruction
 		return tmp;
 	}
 	
-	public void printCompleteMRJobInstruction(MatrixCharacteristics[] resultStats) throws DMLRuntimeException {
+	public void printCompleteMRJobInstruction(MatrixCharacteristics[] resultStats) {
 		LOG.trace("jobtype" + jobType);
 		LOG.trace("Inputs: \n");
 		for(int i=0, mi=0; i < inputVars.length; i++ ) {
@@ -1205,8 +991,7 @@ public class MRJobInstruction extends Instruction
 	}
 	
 	@Override
-	public void updateInstructionThreadID(String pattern, String replace) 
-		throws DMLRuntimeException
+	public void updateInstructionThreadID(String pattern, String replace)
 	{
 		if( dimsUnknownFilePrefix!=null )
 			dimsUnknownFilePrefix = dimsUnknownFilePrefix.replaceAll(pattern, replace);
@@ -1255,11 +1040,6 @@ public class MRJobInstruction extends Instruction
 		}
 	}
 
-	/**
-	 * 
-	 * @param that
-	 * @return
-	 */
 	public boolean isMergableMRJobInstruction( MRJobInstruction that )
 	{
 		boolean ret = true;
@@ -1298,11 +1078,7 @@ public class MRJobInstruction extends Instruction
 			
 		return ret;
 	}
-	
-	/**
-	 * 
-	 * @param that
-	 */
+
 	public void mergeMRJobInstruction( MRJobInstruction that )
 	{	
 		if( LOG.isDebugEnabled() ){
@@ -1316,7 +1092,7 @@ public class MRJobInstruction extends Instruction
 		byte sharedIx = 0;
 		
 		//compute input index map (based on distinct filenames)
-		HashMap<String, Byte> inMap = new HashMap<String, Byte>();
+		HashMap<String, Byte> inMap = new HashMap<>();
 		for( int i=0; i<inputs.length; i++ )
 			inMap.put(inputs[i], (byte) i);
 		
@@ -1328,7 +1104,7 @@ public class MRJobInstruction extends Instruction
 		byte lenInputs = (byte)(inputs.length + that.inputs.length - sharedIx);
 		
 		//compute transition index map for instruction 1
-		HashMap<Byte, Byte> transMap1 = new HashMap<Byte,Byte>();
+		HashMap<Byte, Byte> transMap1 = new HashMap<>();
 		for( int i=0; i<inputs.length; i++ )
 			transMap1.put((byte)i, (byte)i);
 		for( int i=inputs.length; i<=maxIxInst1; i++ ) //remap intermediates and 
@@ -1337,7 +1113,7 @@ public class MRJobInstruction extends Instruction
 		}
 			
 		//compute transition index max for instruction 2
-		HashMap<Byte, Byte> transMap2 = new HashMap<Byte,Byte>();
+		HashMap<Byte, Byte> transMap2 = new HashMap<>();
 		byte nextIX = (byte)inputs.length;
 		for( int i=0; i<that.inputs.length; i++ ) {
 			if( !inMap.containsKey(that.inputs[i]) )
@@ -1432,13 +1208,13 @@ public class MRJobInstruction extends Instruction
 	
 	/**
 	 * Safe replacement of mr indexes based on transition map. Multiple string replacements
-	 * would fail for crossing transitions: e.g., 1->2, 2->1.
+	 * would fail for crossing transitions: e.g., 1-&gt;2, 2-&gt;1.
 	 * 
-	 * @param inst
-	 * @param transMap
-	 * @return
+	 * @param inst instruction string
+	 * @param transMap transition map
+	 * @return result string
 	 */
-	private String replaceInstructionStringWithTransMap( String inst, HashMap<Byte,Byte> transMap )
+	private static String replaceInstructionStringWithTransMap( String inst, HashMap<Byte,Byte> transMap )
 	{
 		//prevent unnecessary parsing and reconstruction
 		if( inst == null || inst.isEmpty() || transMap.isEmpty() )
@@ -1475,13 +1251,7 @@ public class MRJobInstruction extends Instruction
 		return instOut.toString();
 	}
 
-	/**
-	 * 
-	 * @param inst1
-	 * @param inst2
-	 * @return
-	 */
-	private String concatenateInstructions(String inst1, String inst2)
+	private static String concatenateInstructions(String inst1, String inst2)
 	{
 		boolean emptyInst1 = (inst1 == null || inst1.length()==0);
 		boolean emptyInst2 = (inst2 == null || inst2.length()==0);
@@ -1498,9 +1268,7 @@ public class MRJobInstruction extends Instruction
 	}
 
 	@Override
-	public void processInstruction(ExecutionContext ec)
-		throws DMLRuntimeException 
-	{
+	public void processInstruction(ExecutionContext ec) {
 		if ( DMLScript.rtplatform == RUNTIME_PLATFORM.SINGLE_NODE)
 			throw new DMLRuntimeException("MapReduce jobs cannot be executed when execution mode = singlenode");
 		
@@ -1521,7 +1289,7 @@ public class MRJobInstruction extends Instruction
 			/* Populate returned stats into symbol table of matrices */
 			for ( int index=0; index < jb.getMetaData().length; index++) {
 				String varname = getOutputVars()[index];
-				MatrixCharacteristics mc = ((MatrixDimensionsMetaData)jb.getMetaData(index)).getMatrixCharacteristics();
+				MatrixCharacteristics mc = jb.getMetaData(index).getMatrixCharacteristics();
 				ec.getVariable(varname).updateMatrixCharacteristics(mc);
 			}
 		}

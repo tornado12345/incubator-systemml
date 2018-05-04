@@ -28,14 +28,12 @@ import org.apache.commons.logging.LogFactory;
 import org.apache.sysml.hops.DataOp;
 import org.apache.sysml.hops.Hop;
 import org.apache.sysml.hops.Hop.DataOpTypes;
-import org.apache.sysml.hops.Hop.VisitStatus;
-import org.apache.sysml.hops.HopsException;
 import org.apache.sysml.parser.Expression.DataType;
 import org.apache.sysml.runtime.controlprogram.LocalVariableMap;
 import org.apache.sysml.runtime.controlprogram.caching.CacheableData;
 import org.apache.sysml.runtime.instructions.cp.Data;
 import org.apache.sysml.runtime.matrix.MatrixCharacteristics;
-import org.apache.sysml.runtime.matrix.MatrixFormatMetaData;
+import org.apache.sysml.runtime.matrix.MetaDataFormat;
 import org.apache.sysml.runtime.matrix.MetaData;
 import org.apache.sysml.runtime.matrix.data.InputInfo;
 
@@ -60,15 +58,15 @@ public class RewriteRemovePersistentReadWrite extends HopRewriteRule
 	public RewriteRemovePersistentReadWrite( String[] in, String[] out, LocalVariableMap vars )
 	{
 		//store input and output names
-		_inputs = new HashSet<String>();
+		_inputs = new HashSet<>();
 		for( String var : in )
 			_inputs.add( var );
-		_outputs = new HashSet<String>();
+		_outputs = new HashSet<>();
 		for( String var : out )
 			_outputs.add( var );
 		
 		//store input meta data
-		_inputsMeta = new HashMap<String, MetaData>();
+		_inputsMeta = new HashMap<>();
 		if( vars != null ) {
 			for( String varname : in ) {
 				Data dat = vars.get(varname);
@@ -79,35 +77,25 @@ public class RewriteRemovePersistentReadWrite extends HopRewriteRule
 	}
 	
 	@Override
-	public ArrayList<Hop> rewriteHopDAGs(ArrayList<Hop> roots, ProgramRewriteStatus state)
-		throws HopsException
-	{
+	public ArrayList<Hop> rewriteHopDAGs(ArrayList<Hop> roots, ProgramRewriteStatus state) {
 		if( roots == null )
 			return null;
-		
 		for( Hop h : roots ) 
 			rule_RemovePersistentDataOp( h );
-		
 		return roots;
 	}
 
 	@Override
-	public Hop rewriteHopDAG(Hop root, ProgramRewriteStatus state) 
-		throws HopsException
-	{
+	public Hop rewriteHopDAG(Hop root, ProgramRewriteStatus state) {
 		if( root == null )
 			return root;
-		
 		rule_RemovePersistentDataOp( root );
-		
 		return root;
 	}
 	
-	private void rule_RemovePersistentDataOp( Hop hop ) 
-		throws HopsException
-	{
+	private void rule_RemovePersistentDataOp( Hop hop ) {
 		//check mark processed
-		if( hop.getVisited() == VisitStatus.DONE )
+		if( hop.isVisited() )
 			return;
 		
 		//recursively process childs
@@ -132,8 +120,8 @@ public class RewriteRemovePersistentReadWrite extends HopRewriteRule
 						
 						//disable unnecessary reblock of binary block w/ equal block sizes
 						if( dop.requiresReblock() && _inputsMeta.containsKey(dop.getName()) 
-							&& _inputsMeta.get(dop.getName()) instanceof MatrixFormatMetaData) {
-							MatrixFormatMetaData meta = (MatrixFormatMetaData)_inputsMeta.get(dop.getName());
+							&& _inputsMeta.get(dop.getName()) instanceof MetaDataFormat) {
+							MetaDataFormat meta = (MetaDataFormat)_inputsMeta.get(dop.getName());
 							MatrixCharacteristics mc = meta.getMatrixCharacteristics();
 							boolean matchingBlksz = mc.getRowsPerBlock() == dop.getRowsInBlock() 
 									&& mc.getColsPerBlock() == dop.getColsInBlock();
@@ -151,6 +139,8 @@ public class RewriteRemovePersistentReadWrite extends HopRewriteRule
 				case PERSISTENTWRITE:
 					if( _outputs.contains(dop.getName()) ) {
 						dop.setDataOpType(DataOpTypes.TRANSIENTWRITE);
+						dop.setRowsInBlock(dop.getInput().get(0).getRowsInBlock());
+						dop.setColsInBlock(dop.getInput().get(0).getColsInBlock());
 						if (hop.getDataType() == DataType.SCALAR) {
 							dop.removeInput("iofilename");
 						}
@@ -164,6 +154,6 @@ public class RewriteRemovePersistentReadWrite extends HopRewriteRule
 		}
 		
 		//mark processed
-		hop.setVisited( VisitStatus.DONE );
+		hop.setVisited();
 	}
 }

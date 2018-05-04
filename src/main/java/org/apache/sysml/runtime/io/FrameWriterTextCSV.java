@@ -49,16 +49,7 @@ public class FrameWriterTextCSV extends FrameWriter
 	public FrameWriterTextCSV( CSVFileFormatProperties props ) {
 		_props = props;
 	}
-	
-	/**
-	 * @param src
-	 * @param fname
-	 * @param rlen
-	 * @param clen
-	 * @return
-	 * @throws IOException 
-	 * @throws DMLRuntimeException  
-	 */
+
 	@Override
 	public final void writeFrameToHDFS(FrameBlock src, String fname, long rlen, long clen) 
 		throws IOException, DMLRuntimeException 
@@ -80,37 +71,17 @@ public class FrameWriterTextCSV extends FrameWriter
 		writeCSVFrameToHDFS(path, job, src, rlen, clen, _props);
 	}
 
-	/**
-	 * 
-	 * @param path
-	 * @param job
-	 * @param src
-	 * @param rlen
-	 * @param clen
-	 * @param csvprops
-	 * @throws IOException
-	 */
 	protected void writeCSVFrameToHDFS( Path path, JobConf job, FrameBlock src, long rlen, long clen, CSVFileFormatProperties csvprops ) 
 		throws IOException
 	{
-		FileSystem fs = FileSystem.get(job);
-        
+		FileSystem fs = IOUtilFunctions.getFileSystem(path, job);
+		
 		//sequential write to single text file
-		writeCSVFrameToFile(path, job, fs, src, 0, (int)rlen, csvprops);	
+		writeCSVFrameToFile(path, job, fs, src, 0, (int)rlen, csvprops);
+		IOUtilFunctions.deleteCrcFilesFromLocalFileSystem(fs, path);
 	}
-	
-	/**
-	 * 
-	 * @param path
-	 * @param job
-	 * @param src
-	 * @param rlen
-	 * @param clen
-	 * @param props
-	 * @return
-	 * @throws IOException
-	 */
-	protected final void writeCSVFrameToFile( Path path, JobConf job, FileSystem fs, FrameBlock src, int rl, int ru, CSVFileFormatProperties props )
+
+	protected static void writeCSVFrameToFile( Path path, JobConf job, FileSystem fs, FrameBlock src, int rl, int ru, CSVFileFormatProperties props )
 		throws IOException
 	{
     	//create buffered writer

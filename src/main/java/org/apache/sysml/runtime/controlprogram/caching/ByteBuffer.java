@@ -36,10 +36,10 @@ import org.apache.sysml.runtime.util.LocalFileUtils;
  */
 public class ByteBuffer
 {
-	private boolean _serialized;	
-	private boolean _shallow;
-	private boolean _matrix;
-	private long _size;
+	private volatile boolean _serialized;	
+	private volatile boolean _shallow;
+	private volatile boolean _matrix;
+	private final long _size;
 	
 	protected byte[]     _bdata = null; //sparse matrix
 	protected CacheBlock _cdata = null; //dense matrix/frame
@@ -48,16 +48,11 @@ public class ByteBuffer
 		_size = size;
 		_serialized = false;
 	}
-	
-	/**
-	 * 
-	 * @param mb
-	 * @throws IOException
-	 */
+
 	public void serializeBlock( CacheBlock cb ) 
 		throws IOException
 	{	
-		_shallow = cb.isShallowSerialize();
+		_shallow = cb.isShallowSerialize(true);
 		_matrix = (cb instanceof MatrixBlock);
 		
 		try
@@ -74,6 +69,10 @@ public class ByteBuffer
 			}
 			else //SPARSE/DENSE -> DENSE
 			{
+				//convert to shallow serialize block if necessary
+				if( !cb.isShallowSerialize() )
+					cb.toShallowSerializeBlock();
+				
 				//shallow serialize
 				_cdata = cb;
 			}
@@ -84,12 +83,7 @@ public class ByteBuffer
 		
 		_serialized = true;
 	}
-	
-	/**
-	 * 
-	 * @return
-	 * @throws IOException
-	 */
+
 	public CacheBlock deserializeBlock() 
 		throws IOException
 	{
@@ -107,12 +101,7 @@ public class ByteBuffer
 		
 		return ret;
 	}
-	
-	/**
-	 * 
-	 * @param fname
-	 * @throws IOException
-	 */
+
 	public void evictBuffer( String fname ) 
 		throws IOException
 	{
@@ -129,16 +118,12 @@ public class ByteBuffer
 	/**
 	 * Returns the buffer size in bytes.
 	 * 
-	 * @return
+	 * @return buffer size in bytes
 	 */
 	public long getSize() {
 		return _size;
 	}
-	
-	/**
-	 * 
-	 * @return
-	 */
+
 	public boolean isShallow() {
 		return _shallow;
 	}
@@ -155,10 +140,7 @@ public class ByteBuffer
 			_cdata = null;
 		}
 	}
-	
-	/**
-	 * 
-	 */
+
 	public void checkSerialized()
 	{
 		//check if already serialized
@@ -176,20 +158,21 @@ public class ByteBuffer
 	 * This call is consistent with 'serializeBlock' and allows for internal optimization
 	 * according to dense/sparse representation.
 	 * 
-	 * @param size
-	 * @param mb
-	 * @return
+	 * @param size the size
+	 * @param cb cache block
+	 * @return true if valid capacity
 	 */
 	public static boolean isValidCapacity( long size, CacheBlock cb )
 	{
-		if( !cb.isShallowSerialize() ) { //SPARSE matrix blocks
+		if( !cb.isShallowSerialize(true) ) { //SPARSE matrix blocks
 			// since cache blocks are serialized into a byte representation
 			// the buffer buffer can hold at most 2GB in size 
-			return ( size <= Integer.MAX_VALUE );	
+			return ( size <= Integer.MAX_VALUE );
 		}
-		else {//DENSE matrix / frame blocks
-			// since for dense matrix blocks we use a shallow serialize (strong reference), 
-			// the byte buffer can hold any size (currently upper bounded by 16GB) 
+		else {//DENSE/SPARSE matrix / frame blocks
+			// for dense and under special conditions also sparse matrix blocks 
+			// we use a shallow serialize (strong reference), there is no additional
+			// capacity constraint for serializing these blocks into byte arrays
 			return true;
 		}
 	}

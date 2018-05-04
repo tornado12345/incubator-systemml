@@ -36,9 +36,8 @@ import org.apache.sysml.runtime.util.MapReduceTool;
 
 public class WriterBinaryCell extends MatrixWriter
 {
-
 	@Override
-	public void writeMatrixToHDFS(MatrixBlock src, String fname, long rlen, long clen, int brlen, int bclen, long nnz) 
+	public void writeMatrixToHDFS(MatrixBlock src, String fname, long rlen, long clen, int brlen, int bclen, long nnz, boolean diag) 
 		throws IOException, DMLRuntimeException 
 	{
 		//prepare file access
@@ -51,7 +50,7 @@ public class WriterBinaryCell extends MatrixWriter
 		//core write
 		writeBinaryCellMatrixToHDFS(path, job, src, rlen, clen, brlen, bclen);
 
-		FileSystem fs = FileSystem.get(job);
+		FileSystem fs = IOUtilFunctions.getFileSystem(path, job);
 		IOUtilFunctions.deleteCrcFilesFromLocalFileSystem(fs, path);
 	}
 
@@ -62,37 +61,31 @@ public class WriterBinaryCell extends MatrixWriter
 	{
 		JobConf job = new JobConf(ConfigurationManager.getCachedJobConf());
 		Path path = new Path( fname );
-		FileSystem fs = FileSystem.get(job);
-
-		SequenceFile.Writer writer = new SequenceFile.Writer(fs, job, path,
+		FileSystem fs = IOUtilFunctions.getFileSystem(path, job);
+		
+		SequenceFile.Writer writer = null;
+		try {
+			writer = new SequenceFile.Writer(fs, job, path,
                 MatrixIndexes.class, MatrixCell.class);
 		
-		MatrixIndexes index = new MatrixIndexes(1, 1);
-		MatrixCell cell = new MatrixCell(0);
-		writer.append(index, cell);
-		writer.close();
-
+			MatrixIndexes index = new MatrixIndexes(1, 1);
+			MatrixCell cell = new MatrixCell(0);
+			writer.append(index, cell);
+		}
+		finally {
+			IOUtilFunctions.closeSilently(writer);
+		}
+		
 		IOUtilFunctions.deleteCrcFilesFromLocalFileSystem(fs, path);
 	}
 
-	/**
-	 * 
-	 * @param path
-	 * @param job
-	 * @param src
-	 * @param rlen
-	 * @param clen
-	 * @param brlen
-	 * @param bclen
-	 * @throws IOException
-	 */
 	@SuppressWarnings("deprecation")
 	protected void writeBinaryCellMatrixToHDFS( Path path, JobConf job, MatrixBlock src, long rlen, long clen, int brlen, int bclen )
 		throws IOException
 	{
 		boolean sparse = src.isInSparseFormat();
 		boolean entriesWritten = false;
-		FileSystem fs = FileSystem.get(job);
+		FileSystem fs = IOUtilFunctions.getFileSystem(path, job);
 		SequenceFile.Writer writer = new SequenceFile.Writer(fs, job, path, MatrixIndexes.class, MatrixCell.class);
 		
 		MatrixIndexes indexes = new MatrixIndexes();

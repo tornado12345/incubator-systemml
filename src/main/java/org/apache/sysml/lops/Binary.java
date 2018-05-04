@@ -32,13 +32,13 @@ import org.apache.sysml.parser.Expression.*;
 
 public class Binary extends Lop 
 {
-	
 	public enum OperationTypes {
 		ADD, SUBTRACT, MULTIPLY, DIVIDE, MINUS1_MULTIPLY, MODULUS, INTDIV, MATMULT, 
 		LESS_THAN, LESS_THAN_OR_EQUALS, GREATER_THAN, GREATER_THAN_OR_EQUALS, EQUALS, NOT_EQUALS,
-		AND, OR, 
-		MAX, MIN, POW, SOLVE, NOTSUPPORTED
-	};	
+		AND, OR, XOR,
+		MAX, MIN, POW, SOLVE, NOTSUPPORTED,
+		BW_AND, BW_OR, BW_XOR, BW_SHIFTL, BW_SHIFTR, //Bitwise operations
+	}
 
 	private OperationTypes operation;
 	private int numThreads = -1;
@@ -152,13 +152,26 @@ public class Binary extends Lop
 		case NOT_EQUALS:
 			return "!=";
 		
-			/* Boolean */
+		/* Boolean */
 		case AND:
 			return "&&";
 		case OR:
 			return "||";
-		
-		
+
+		/* Binary Builtin Function */
+		case XOR:
+			return "xor";
+		case BW_AND:
+			return "bitwAnd";
+		case BW_OR:
+			return "bitwOr";
+		case BW_XOR:
+			return "bitwXor";
+		case BW_SHIFTL:
+			return "bitwShiftL";
+		case BW_SHIFTR:
+			return "bitwShiftR";
+
 		/* Builtin Functions */
 		case MIN:
 			return "min";
@@ -175,10 +188,17 @@ public class Binary extends Lop
 		}
 	}
 	
+	
 	@Override
-	public String getInstructions(String input1, String input2, String output) 
-		throws LopsException 
-	{
+	public String getInstructions(int input_index1, int input_index2, int output_index) {
+		return getInstructions(
+				String.valueOf(input_index1), 
+				String.valueOf(input_index2), 
+				String.valueOf(output_index));
+	}
+	
+	@Override
+	public String getInstructions(String input1, String input2, String output) {
 		StringBuilder sb = new StringBuilder();
 		sb.append( getExecType() );
 		sb.append( OPERAND_DELIMITOR );
@@ -206,11 +226,5 @@ public class Binary extends Lop
 		}
 		
 		return sb.toString();
-	}
-	
-	@Override
-	public String getInstructions(int input_index1, int input_index2, int output_index) throws LopsException
-	{
-		return getInstructions(input_index1+"", input_index2+"", output_index+"");
 	}
 }

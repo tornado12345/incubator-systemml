@@ -21,26 +21,28 @@ package org.apache.sysml.runtime.instructions.spark;
 
 import org.apache.sysml.runtime.DMLRuntimeException;
 import org.apache.sysml.runtime.controlprogram.context.SparkExecutionContext;
+import org.apache.sysml.runtime.functionobjects.IndexFunction;
+import org.apache.sysml.runtime.functionobjects.ReduceAll;
+import org.apache.sysml.runtime.functionobjects.ReduceCol;
+import org.apache.sysml.runtime.functionobjects.ReduceRow;
 import org.apache.sysml.runtime.instructions.cp.CPOperand;
 import org.apache.sysml.runtime.matrix.MatrixCharacteristics;
 import org.apache.sysml.runtime.matrix.operators.Operator;
 
 public abstract class ComputationSPInstruction extends SPInstruction {
-	
-
 	public CPOperand output;
 	public CPOperand input1, input2, input3;
-	
-	public ComputationSPInstruction ( Operator op, CPOperand in1, CPOperand in2, CPOperand out, String opcode, String istr ) {
-		super(op, opcode, istr);
+
+	protected ComputationSPInstruction(SPType type, Operator op, CPOperand in1, CPOperand in2, CPOperand out, String opcode, String istr) {
+		super(type, op, opcode, istr);
 		input1 = in1;
 		input2 = in2;
 		input3 = null;
 		output = out;
 	}
 
-	public ComputationSPInstruction ( Operator op, CPOperand in1, CPOperand in2, CPOperand in3, CPOperand out, String opcode, String istr ) {
-		super(op, opcode, istr);
+	protected ComputationSPInstruction(SPType type, Operator op, CPOperand in1, CPOperand in2, CPOperand in3, CPOperand out, String opcode, String istr) {
+		super(type, op, opcode, istr);
 		input1 = in1;
 		input2 = in2;
 		input3 = in3;
@@ -51,27 +53,11 @@ public abstract class ComputationSPInstruction extends SPInstruction {
 		return output.getName();
 	}
 
-	/**
-	 * 
-	 * @param sec
-	 * @throws DMLRuntimeException 
-	 */
-	protected void updateUnaryOutputMatrixCharacteristics(SparkExecutionContext sec) 
-		throws DMLRuntimeException
-	{
+	protected void updateUnaryOutputMatrixCharacteristics(SparkExecutionContext sec) {
 		updateUnaryOutputMatrixCharacteristics(sec, input1.getName(), output.getName());
 	}
-	
-	/**
-	 * 
-	 * @param sec
-	 * @param nameIn
-	 * @param nameOut
-	 * @throws DMLRuntimeException
-	 */
-	protected void updateUnaryOutputMatrixCharacteristics(SparkExecutionContext sec, String nameIn, String nameOut) 
-		throws DMLRuntimeException
-	{
+
+	protected void updateUnaryOutputMatrixCharacteristics(SparkExecutionContext sec, String nameIn, String nameOut) {
 		MatrixCharacteristics mc1 = sec.getMatrixCharacteristics(nameIn);
 		MatrixCharacteristics mcOut = sec.getMatrixCharacteristics(nameOut);
 		if(!mcOut.dimsKnown()) {
@@ -81,15 +67,8 @@ public abstract class ComputationSPInstruction extends SPInstruction {
 				mcOut.set(mc1.getRows(), mc1.getCols(), mc1.getRowsPerBlock(), mc1.getColsPerBlock());
 		}
 	}
-	
-	/**
-	 * 
-	 * @param sec
-	 * @throws DMLRuntimeException
-	 */
-	protected void updateBinaryOutputMatrixCharacteristics(SparkExecutionContext sec) 
-		throws DMLRuntimeException
-	{
+
+	protected void updateBinaryOutputMatrixCharacteristics(SparkExecutionContext sec) {
 		MatrixCharacteristics mcIn1 = sec.getMatrixCharacteristics(input1.getName());
 		MatrixCharacteristics mcIn2 = sec.getMatrixCharacteristics(input2.getName());
 		MatrixCharacteristics mcOut = sec.getMatrixCharacteristics(output.getName());
@@ -102,6 +81,27 @@ public abstract class ComputationSPInstruction extends SPInstruction {
 				sec.getMatrixCharacteristics(output.getName()).set(mcIn1.getRows(), mcIn2.getCols(), mcIn1.getRowsPerBlock(), mcIn2.getColsPerBlock());
 			else
 				sec.getMatrixCharacteristics(output.getName()).set(mcIn1.getRows(), mcIn1.getCols(), mcIn1.getRowsPerBlock(), mcIn1.getRowsPerBlock());
+		}
+	}
+	
+	protected void updateUnaryAggOutputMatrixCharacteristics(SparkExecutionContext sec, IndexFunction ixFn) {
+		MatrixCharacteristics mc1 = sec.getMatrixCharacteristics(input1.getName());
+		MatrixCharacteristics mcOut = sec.getMatrixCharacteristics(output.getName());
+		if( mcOut.dimsKnown() )
+			return;
+		
+		if(!mc1.dimsKnown()) {
+			throw new DMLRuntimeException("The output dimensions are not specified and "
+				+ "cannot be inferred from input:" + mc1.toString() + " " + mcOut.toString());
+		}
+		else {
+			//infer statistics from input based on operator
+			if( ixFn instanceof ReduceAll )
+				mcOut.set(1, 1, mc1.getRowsPerBlock(), mc1.getColsPerBlock());
+			else if( ixFn instanceof ReduceCol )
+				mcOut.set(mc1.getRows(), 1, mc1.getRowsPerBlock(), mc1.getColsPerBlock());
+			else if( ixFn instanceof ReduceRow )
+				mcOut.set(1, mc1.getCols(), mc1.getRowsPerBlock(), mc1.getColsPerBlock());
 		}
 	}
 }

@@ -36,16 +36,13 @@ import org.apache.hadoop.mapred.Reporter;
 import org.apache.hadoop.mapred.TextInputFormat;
 
 import org.apache.sysml.conf.ConfigurationManager;
+import org.apache.sysml.runtime.io.IOUtilFunctions;
 import org.apache.sysml.runtime.util.MapReduceTool;
 import org.apache.sysml.udf.FunctionParameter;
 import org.apache.sysml.udf.Matrix;
 import org.apache.sysml.udf.PackageFunction;
 import org.apache.sysml.udf.Matrix.ValueType;
 
-/**
- * 
- *
- */
 @Deprecated
 public class RemoveEmptyRows extends PackageFunction 
 {	
@@ -74,14 +71,14 @@ public class RemoveEmptyRows extends PackageFunction
 		Matrix mat = (Matrix) this.getFunctionInput(0);
 		String fnameOld = mat.getFilePath(); 
 		
-		HashMap<Long,Long> keyMap = new HashMap<Long,Long>(); //old,new rowID
+		HashMap<Long,Long> keyMap = new HashMap<>(); //old,new rowID
 			
 		try
 		{		
 			//prepare input
 			JobConf job = new JobConf(ConfigurationManager.getCachedJobConf());	
 			Path path = new Path(fnameOld);
-			FileSystem fs = FileSystem.get(job);
+			FileSystem fs = IOUtilFunctions.getFileSystem(path, job);
 			if( !fs.exists(path) )	
 				throw new IOException("File "+fnameOld+" does not exist on HDFS.");
 			FileInputFormat.addInputPath(job, path); 

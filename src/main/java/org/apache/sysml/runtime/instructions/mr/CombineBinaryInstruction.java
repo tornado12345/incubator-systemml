@@ -26,34 +26,27 @@ import org.apache.sysml.runtime.matrix.mapred.CachedValueMap;
 import org.apache.sysml.runtime.matrix.mapred.IndexedMatrixValue;
 import org.apache.sysml.runtime.matrix.operators.Operator;
 
-
-public class CombineBinaryInstruction extends BinaryMRInstructionBase
-{
-	
+public class CombineBinaryInstruction extends BinaryMRInstructionBase {
 	/*
 	 * combinebinary:::0:DOUBLE:::1:INT:::2:INT
 	 */
-	private boolean secondInputIsWeight=true;
-	public CombineBinaryInstruction(Operator op, boolean isWeight, byte in1, byte in2, byte out, String istr) {
-		super(op, in1, in2, out);
-		secondInputIsWeight=isWeight;
-		mrtype = MRINSTRUCTION_TYPE.CombineBinary;
+	private boolean secondInputIsWeight = true;
+
+	private CombineBinaryInstruction(Operator op, boolean isWeight, byte in1, byte in2, byte out, String istr) {
+		super(MRType.CombineBinary, op, in1, in2, out);
+		secondInputIsWeight = isWeight;
 		instString = istr;
 	}
 
-	public static CombineBinaryInstruction parseInstruction ( String str ) throws DMLRuntimeException {
-		
+	public static CombineBinaryInstruction parseInstruction ( String str ) {
 		InstructionUtils.checkNumFields ( str, 4 );
-		
 		String[] parts = InstructionUtils.getInstructionParts ( str );
-		
 		byte in1, in2, out;
 		String opcode = parts[0];
 		boolean isWeight=Boolean.parseBoolean(parts[1]);
 		in1 = Byte.parseByte(parts[2]);
 		in2 = Byte.parseByte(parts[3]);
 		out = Byte.parseByte(parts[4]);
-		
 		if ( opcode.equalsIgnoreCase("combinebinary") ) {
 			return new CombineBinaryInstruction(null, isWeight, in1, in2, out, str);
 		}else
@@ -68,8 +61,7 @@ public class CombineBinaryInstruction extends BinaryMRInstructionBase
 	@Override
 	public void processInstruction(Class<? extends MatrixValue> valueClass,
 			CachedValueMap cachedValues, IndexedMatrixValue tempValue,
-			IndexedMatrixValue zeroInput, int blockRowFactor, int blockColFactor)
-			throws DMLRuntimeException {
+			IndexedMatrixValue zeroInput, int blockRowFactor, int blockColFactor) {
 		throw new DMLRuntimeException("CombineInstruction.processInstruction should never be called!");
 		
 	}

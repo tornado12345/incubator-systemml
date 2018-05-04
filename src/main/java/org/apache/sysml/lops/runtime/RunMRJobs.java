@@ -22,7 +22,6 @@ package org.apache.sysml.lops.runtime;
 import java.io.IOException;
 
 import org.apache.hadoop.fs.Path;
-import org.apache.wink.json4j.JSONException;
 
 import org.apache.sysml.api.DMLScript;
 import org.apache.sysml.api.DMLScript.RUNTIME_PLATFORM;
@@ -60,8 +59,7 @@ import org.apache.sysml.runtime.matrix.JobReturn;
 import org.apache.sysml.runtime.matrix.MMCJMR;
 import org.apache.sysml.runtime.matrix.MMRJMR;
 import org.apache.sysml.runtime.matrix.MatrixCharacteristics;
-import org.apache.sysml.runtime.matrix.MatrixDimensionsMetaData;
-import org.apache.sysml.runtime.matrix.MatrixFormatMetaData;
+import org.apache.sysml.runtime.matrix.MetaDataFormat;
 import org.apache.sysml.runtime.matrix.ReblockMR;
 import org.apache.sysml.runtime.matrix.SortMR;
 import org.apache.sysml.runtime.matrix.WriteCSVMR;
@@ -69,7 +67,6 @@ import org.apache.sysml.runtime.matrix.data.LibMatrixDatagen;
 import org.apache.sysml.runtime.matrix.data.MatrixBlock;
 import org.apache.sysml.runtime.matrix.data.OutputInfo;
 import org.apache.sysml.runtime.matrix.data.RandomMatrixGenerator;
-import org.apache.sysml.runtime.transform.DataTransform;
 import org.apache.sysml.runtime.util.MapReduceTool;
 import org.apache.sysml.utils.Statistics;
 
@@ -89,10 +86,8 @@ public class RunMRJobs
 	 * @param inst instruction
 	 * @param ec execution context
 	 * @return job status
-	 * @throws DMLRuntimeException if DMLRuntimeException occurs
 	 */
 	public static JobReturn prepareAndSubmitJob( MRJobInstruction inst, ExecutionContext ec )
-		throws DMLRuntimeException 
 	{
 		// Obtain references to all input matrices 
 		MatrixObject[] inputMatrices = inst.extractInputMatrices(ec);
@@ -108,7 +103,7 @@ public class RunMRJobs
 			}
 
 			//check input files
-			checkEmptyInputs( inst, inputMatrices );	
+			checkEmptyInputs( inst, inputMatrices );
 		}
 		
 		// Obtain references to all output matrices
@@ -157,12 +152,10 @@ public class RunMRJobs
 	 * 
 	 * @param inst instruction
 	 * @return job status
-	 * @throws DMLRuntimeException if DMLRuntimeException occurs
 	 */
 	public static JobReturn submitJob(MRJobInstruction inst ) 
-		throws DMLRuntimeException 
 	{
-		JobReturn ret = new JobReturn();		
+		JobReturn ret = new JobReturn();
 		MatrixObject[] inputMatrices = inst.getInputMatrices();
 		MatrixObject[] outputMatrices = inst.getOutputMatrices();
 		boolean execCP = false;
@@ -305,25 +298,7 @@ public class RunMRJobs
 			case DATA_PARTITION:
 				ret = DataPartitionMR.runJob(inst, inputMatrices, shuffleInst, inst.getIv_resultIndices(), outputMatrices, inst.getIv_numReducers(), inst.getIv_replication());
 				break;
-				
-			case TRANSFORM:
-				
-				if(    ConfigurationManager.isDynamicRecompilation()
-						&& OptimizerUtils.ALLOW_TRANSFORM_RECOMPILE
-						&& DMLScript.rtplatform != RUNTIME_PLATFORM.HADOOP 
-						&& Recompiler.checkCPTransform( inst, inputMatrices ) ) 
-					{
-						// transform the data and generate output in CSV format
-						ret = executeInMemoryTransform(inst, inputMatrices, outputMatrices);
-						Statistics.decrementNoOfExecutedMRJobs();
-						execCP = true;
-					}
-					else 
-					{
-						ret = DataTransform.mrDataTransform(inst, inputMatrices, shuffleInst, otherInst, inst.getIv_resultIndices(), outputMatrices, inst.getIv_numReducers(), inst.getIv_replication());
-					}
-				break;
-				
+			
 			default:
 				throw new DMLRuntimeException("Invalid jobtype: " + inst.getJobType());
 			}
@@ -344,7 +319,7 @@ public class RunMRJobs
 				{
 					for (int i = 0; i < outputMatrices.length; i++) {
 						//get output meta data
-						MatrixFormatMetaData meta = (MatrixFormatMetaData)outputMatrices[i].getMetaData();
+						MetaDataFormat meta = (MetaDataFormat)outputMatrices[i].getMetaData();
 						MatrixCharacteristics mc = meta.getMatrixCharacteristics();
 						OutputInfo outinfo = meta.getOutputInfo();
 						String fname = outputMatrices[i].getFileName();
@@ -360,11 +335,12 @@ public class RunMRJobs
 						
 						outputMatrices[i].setHDFSFileExists(true);
 						
-						if ( inst.getJobType() != JobType.CSV_WRITE && inst.getJobType() != JobType.TRANSFORM) {
+						if ( inst.getJobType() != JobType.CSV_WRITE ) {
 							// write out metadata file
 							// Currently, valueType information in not stored in MR instruction, 
 							// since only DOUBLE matrices are supported ==> hard coded the value type information for now
-							MapReduceTool.writeMetaDataFile(fname + ".mtd", ValueType.DOUBLE,  ((MatrixDimensionsMetaData)ret.getMetaData(i)).getMatrixCharacteristics(), outinfo);
+							MapReduceTool.writeMetaDataFile(fname + ".mtd", ValueType.DOUBLE,  
+								ret.getMetaData(i).getMatrixCharacteristics(), outinfo);
 						}
 					}
 				}
@@ -378,9 +354,7 @@ public class RunMRJobs
 		throw new DMLRuntimeException("Unexpected Job Type: " + inst.getJobType());
 	}
 
-	private static void checkEmptyInputs( MRJobInstruction inst, MatrixObject[] inputMatrices ) 
-		throws DMLRuntimeException
-	{
+	private static void checkEmptyInputs( MRJobInstruction inst, MatrixObject[] inputMatrices ) {
 		// Check if any of the input files are empty.. only for those job types
 		// for which empty inputs are NOT allowed
 		if (!inst.getJobType().areEmptyInputsAllowed()) {
@@ -405,9 +379,8 @@ public class RunMRJobs
 	 * @param varName variable name
 	 * @param map local variable map
 	 * @return string variable name
-	 * @throws DMLRuntimeException if DMLRuntimeException occurs
 	 */
-	private static String getVarNameReplacement(String inst, String varName, LocalVariableMap map) throws DMLRuntimeException {
+	private static String getVarNameReplacement(String inst, String varName, LocalVariableMap map) {
 		Data val = map.get(varName);
 		if ( val != null ) {
 			String replacement = null;
@@ -430,9 +403,8 @@ public class RunMRJobs
 	 * @param inst string instruction
 	 * @param map local variable map
 	 * @return string instruction after replacement
-	 * @throws DMLRuntimeException if DMLRuntimeException occurs
 	 */
-	private static String updateInstLabels(String inst, LocalVariableMap map) throws DMLRuntimeException {
+	private static String updateInstLabels(String inst, LocalVariableMap map) {
 		if ( inst.contains(Lop.VARIABLE_NAME_PLACEHOLDER) ) {
 			int skip = Lop.VARIABLE_NAME_PLACEHOLDER.toString().length();
 			while ( inst.contains(Lop.VARIABLE_NAME_PLACEHOLDER) ) {
@@ -452,9 +424,8 @@ public class RunMRJobs
 	 * @param instList instruction list as string
 	 * @param labelValueMapping local variable map
 	 * @return instruction list after replacement
-	 * @throws DMLRuntimeException if DMLRuntimeException occurs
 	 */
-	public static String updateLabels (String instList, LocalVariableMap labelValueMapping) throws DMLRuntimeException {
+	public static String updateLabels (String instList, LocalVariableMap labelValueMapping) {
 
 		if ( !instList.contains(Lop.VARIABLE_NAME_PLACEHOLDER) )
 			return instList;
@@ -472,9 +443,7 @@ public class RunMRJobs
 	}
 
 	
-	private static long[] getNNZ( MatrixObject[] inputMatrices ) 
-		throws DMLRuntimeException
-	{
+	private static long[] getNNZ( MatrixObject[] inputMatrices ) {
 		int len = inputMatrices.length;
 		long[] ret = new long[len];
 		for( int i=0; i<len; i++ )
@@ -490,7 +459,6 @@ public class RunMRJobs
 	}
 	
 	private static JobReturn executeInMemoryReblockOperations( MRJobInstruction inst, String shuffleInst, MatrixObject[] inputMatrices, MatrixObject[] outputMatrices ) 
-		throws DMLRuntimeException
 	{
 		MatrixCharacteristics[] mc = new MatrixCharacteristics[outputMatrices.length];
 		ReblockInstruction[] rblkSet = MRInstructionParser.parseReblockInstructions(shuffleInst);
@@ -513,7 +481,6 @@ public class RunMRJobs
 	}
 	
 	private static JobReturn executeInMemoryDataGenOperations( MRJobInstruction inst, String randInst, MatrixObject[] outputMatrices ) 
-		throws DMLRuntimeException
 	{
 		MatrixCharacteristics[] mc = new MatrixCharacteristics[outputMatrices.length];
 		DataGenMRInstruction[] dgSet = MRInstructionParser.parseDataGenInstructions(randInst);
@@ -557,12 +524,5 @@ public class RunMRJobs
 		}
 		
 		return  new JobReturn( mc, inst.getOutputInfos(), true);
-	}
-	
-	private static JobReturn executeInMemoryTransform( MRJobInstruction inst, MatrixObject[] inputMatrices, MatrixObject[] outputMatrices) throws IOException, DMLRuntimeException, IllegalArgumentException, JSONException {
-		return DataTransform.cpDataTransform(
-				inst.getIv_shuffleInstructions(), 
-				inputMatrices, 
-				outputMatrices);
 	}
 }

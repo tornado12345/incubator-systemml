@@ -21,7 +21,7 @@ package org.apache.sysml.hops;
 
 import java.util.ArrayList;
 
-import org.apache.sysml.conf.ConfigurationManager;
+import org.apache.sysml.api.DMLScript;
 import org.apache.sysml.hops.Hop.MultiThreadedHop;
 import org.apache.sysml.lops.Aggregate;
 import org.apache.sysml.lops.Aggregate.OperationTypes;
@@ -33,7 +33,6 @@ import org.apache.sysml.lops.Data;
 import org.apache.sysml.lops.Group;
 import org.apache.sysml.lops.Lop;
 import org.apache.sysml.lops.LopProperties.ExecType;
-import org.apache.sysml.lops.LopsException;
 import org.apache.sysml.lops.PartialAggregate;
 import org.apache.sysml.lops.PartialAggregate.CorrectionLocationType;
 import org.apache.sysml.lops.PickByCount;
@@ -60,36 +59,25 @@ public class UnaryOp extends Hop implements MultiThreadedHop
 		//default constructor for clone
 	}
 	
-	public UnaryOp(String l, DataType dt, ValueType vt, OpOp1 o, Hop inp)
-			throws HopsException 
-	{
+	public UnaryOp(String l, DataType dt, ValueType vt, OpOp1 o, Hop inp) {
 		super(l, dt, vt);
 
 		getInput().add(0, inp);
 		inp.getParent().add(this);
-
 		_op = o;
 		
 		//compute unknown dims and nnz
 		refreshSizeInformation();
 	}
 
+	@Override
+	public void checkArity() {
+		HopsException.check(_input.size() == 1, this, "should have arity 1 but has arity %d", _input.size());
+	}
+
 	// this is for OpOp1, e.g. A = -B (0-B); and a=!b
 	public OpOp1 getOp() {
 		return _op;
-	}
-	
-	public void printMe() throws HopsException {
-		if (LOG.isDebugEnabled()){
-			if (getVisited() != VisitStatus.DONE) {
-				super.printMe();
-				LOG.debug("  Operation: " + _op);
-				for (Hop h : getInput()) {
-					h.printMe();
-				}
-			}
-			setVisited(VisitStatus.DONE);
-		}
 	}
 
 	@Override
@@ -110,9 +98,34 @@ public class UnaryOp extends Hop implements MultiThreadedHop
 	}
 	
 	@Override
+	public boolean isGPUEnabled() {
+		if(!DMLScript.USE_ACCELERATOR)
+			return false;
+		boolean isScalar = (    getDataType() == DataType.SCALAR //value type casts or matrix to scalar
+				|| (_op == OpOp1.CAST_AS_MATRIX && getInput().get(0).getDataType()==DataType.SCALAR)
+				|| (_op == OpOp1.CAST_AS_FRAME && getInput().get(0).getDataType()==DataType.SCALAR));
+		if(!isScalar) {
+			switch(_op) {
+				case EXP:case SQRT:case LOG:case ABS:
+				case ROUND:case FLOOR:case CEIL:
+				case SIN:case COS: case TAN:
+				case ASIN:case ACOS:case ATAN:
+				case SINH:case COSH: case TANH:
+				case SIGN:
+				case SIGMOID:
+					return true;
+				default:
+					return false;
+			}
+		}
+		else  {
+			return false;
+		}
+	}
+	
+	@Override
 	public Lop constructLops()
-		throws HopsException, LopsException 
-	{		
+	{
 		//reuse existing lop
 		if( getLops() != null )
 			return getLops();
@@ -152,7 +165,7 @@ public class UnaryOp extends Hop implements MultiThreadedHop
 				ExecType et = optFindExecType();
 				
 				//special handling cumsum/cumprod/cummin/cumsum
-				if( isCumulativeUnaryOperation() && et != ExecType.CP )  
+				if( isCumulativeUnaryOperation() && !(et == ExecType.CP || et == ExecType.GPU) )  
 				{
 					//TODO additional physical operation if offsets fit in memory
 					Lop cumsumLop = null;
@@ -164,9 +177,10 @@ public class UnaryOp extends Hop implements MultiThreadedHop
 				}
 				else //default unary 
 				{
-					int k = isCumulativeUnaryOperation() ? OptimizerUtils.getConstrainedNumThreads( _maxNumThreads ) : 1;					
-					Unary unary1 = new Unary(input.constructLops(), HopsOpOp1LopsU.get(_op), 
-							                 getDataType(), getValueType(), et, k);
+					int k = isCumulativeUnaryOperation() || isExpensiveUnaryOperation() ?
+						OptimizerUtils.getConstrainedNumThreads( _maxNumThreads ) : 1;
+					Unary unary1 = new Unary(input.constructLops(),
+						HopsOpOp1LopsU.get(_op), getDataType(), getValueType(), et, k);
 					setOutputDimensions(unary1);
 					setLineNumbers(unary1);
 					setLops(unary1);
@@ -186,7 +200,6 @@ public class UnaryOp extends Hop implements MultiThreadedHop
 	
 
 	private Lop constructLopsMedian() 
-		throws HopsException, LopsException 
 	{
 		ExecType et = optFindExecType();
 
@@ -254,7 +267,6 @@ public class UnaryOp extends Hop implements MultiThreadedHop
 	}
 	
 	private Lop constructLopsIQM() 
-		throws HopsException, LopsException
 	{
 
 		ExecType et = optFindExecType();
@@ -284,7 +296,7 @@ public class UnaryOp extends Hop implements MultiThreadedHop
 
 			Data lit = Data.createLiteralLop(ValueType.DOUBLE, Double.toString(0.25));
 			
-			lit.setAllPositions(this.getBeginLine(), this.getBeginColumn(), this.getEndLine(), this.getEndColumn());
+			lit.setAllPositions(this.getFilename(), this.getBeginLine(), this.getBeginColumn(), this.getEndLine(), this.getEndColumn());
             			
 			PickByCount pick = new PickByCount(
 					sort, lit, DataType.MATRIX, getValueType(),
@@ -365,11 +377,8 @@ public class UnaryOp extends Hop implements MultiThreadedHop
 	 * fit into the map task memory budget) or by creating custom job types.
 	 * 
 	 * @return low-level operator
-	 * @throws HopsException if HopsException occurs
-	 * @throws LopsException if LopsException occurs
 	 */
 	private Lop constructLopsMRCumulativeUnary() 
-		throws HopsException, LopsException 
 	{
 		Hop input = getInput().get(0);
 		long rlen = input.getDim1();
@@ -381,7 +390,7 @@ public class UnaryOp extends Hop implements MultiThreadedHop
 		
 		Lop X = input.constructLops();
 		Lop TEMP = X;
-		ArrayList<Lop> DATA = new ArrayList<Lop>();
+		ArrayList<Lop> DATA = new ArrayList<>();
 		int level = 0;
 		
 		//recursive preaggregation until aggregates fit into CP memory budget
@@ -445,7 +454,6 @@ public class UnaryOp extends Hop implements MultiThreadedHop
 	}
 
 	private Lop constructLopsSparkCumulativeUnary() 
-		throws HopsException, LopsException 
 	{
 		Hop input = getInput().get(0);
 		long rlen = input.getDim1();
@@ -457,7 +465,7 @@ public class UnaryOp extends Hop implements MultiThreadedHop
 		
 		Lop X = input.constructLops();
 		Lop TEMP = X;
-		ArrayList<Lop> DATA = new ArrayList<Lop>();
+		ArrayList<Lop> DATA = new ArrayList<>();
 		int level = 0;
 		
 		//recursive preaggregation until aggregates fit into CP memory budget
@@ -514,14 +522,13 @@ public class UnaryOp extends Hop implements MultiThreadedHop
 		}
 	}
 
-	private double getCumulativeInitValue()
-	{
+	private double getCumulativeInitValue() {
 		switch( _op ) {
-			case CUMSUM: 	return 0;
-			case CUMPROD: 	return 1;
-			case CUMMIN: 	return Double.MAX_VALUE;
-			case CUMMAX: 	return -Double.MAX_VALUE;
-			default: 		return Double.NaN;
+			case CUMSUM:  return 0;
+			case CUMPROD: return 1;
+			case CUMMIN:  return Double.POSITIVE_INFINITY;
+			case CUMMAX:  return Double.NEGATIVE_INFINITY;
+			default:      return Double.NaN;
 		}
 	}
 	
@@ -531,7 +538,7 @@ public class UnaryOp extends Hop implements MultiThreadedHop
 	{
 		//overwrites default hops behavior
 		super.computeMemEstimate(memo);
-		
+
 		if( _op == Hop.OpOp1.NROW || _op == Hop.OpOp1.NCOL ) //specific case for meta data ops
 		{
 			_memEstimate = OptimizerUtils.INT_SIZE;
@@ -542,8 +549,13 @@ public class UnaryOp extends Hop implements MultiThreadedHop
 
 	@Override
 	protected double computeOutputMemEstimate( long dim1, long dim2, long nnz )
-	{		
-		double sparsity = OptimizerUtils.getSparsity(dim1, dim2, nnz);
+	{
+		double sparsity = -1;
+		if (isGPUEnabled()) {
+			sparsity = 1.0; // Output is always dense (for now) on the GPU
+		} else {
+			sparsity = OptimizerUtils.getSparsity(dim1, dim2, nnz);
+		}
 		return OptimizerUtils.estimateSizeExactSparsity(dim1, dim2, sparsity);
 	}
 	
@@ -552,10 +564,15 @@ public class UnaryOp extends Hop implements MultiThreadedHop
 	{
 		double ret = 0;
 		
-		if ( _op == OpOp1.IQM  || _op == OpOp1.MEDIAN) {
+		if ( _op == OpOp1.IQM || _op == OpOp1.MEDIAN) {
 			// buffer (=2*input_size) and output (=input_size) for SORT operation
 			// getMemEstimate works for both cases of known dims and worst-case stats
 			ret = getInput().get(0).getMemEstimate() * 3; 
+		}
+
+		if (isGPUEnabled()) {
+			// Intermediate memory required to convert sparse to dense
+			ret += OptimizerUtils.estimateSize(dim1, dim2); 
 		}
 		
 		return ret;
@@ -571,13 +588,14 @@ public class UnaryOp extends Hop implements MultiThreadedHop
 		if( mc.dimsKnown() ) {
 			if( _op==OpOp1.ABS || _op==OpOp1.COS || _op==OpOp1.SIN || _op==OpOp1.TAN 
 				|| _op==OpOp1.ACOS || _op==OpOp1.ASIN || _op==OpOp1.ATAN  
+				|| _op==OpOp1.COSH || _op==OpOp1.SINH || _op==OpOp1.TANH 
 				|| _op==OpOp1.SQRT || _op==OpOp1.ROUND  
-				|| _op==OpOp1.SPROP || _op==OpOp1.SELP ) //sparsity preserving
+				|| _op==OpOp1.SPROP ) //sparsity preserving
 			{
 				ret = new long[]{mc.getRows(), mc.getCols(), mc.getNonZeros()};
 			}
 			else 
-				ret = new long[]{mc.getRows(), mc.getCols(), -1};	
+				ret = new long[]{mc.getRows(), mc.getCols(), -1};
 		}
 		
 		return ret;
@@ -595,35 +613,38 @@ public class UnaryOp extends Hop implements MultiThreadedHop
 		return ( _op == OpOp1.INVERSE );
 	}
 
-	public boolean isCumulativeUnaryOperation() 
-	{
-		return (   _op == OpOp1.CUMSUM 
-				|| _op == OpOp1.CUMPROD
-				|| _op == OpOp1.CUMMIN
-				|| _op == OpOp1.CUMMAX  );
+	public boolean isCumulativeUnaryOperation()  {
+		return (_op == OpOp1.CUMSUM 
+			|| _op == OpOp1.CUMPROD
+			|| _op == OpOp1.CUMMIN
+			|| _op == OpOp1.CUMMAX);
 	}
 
-	public boolean isCastUnaryOperation() 
-	{
-		return (   _op == OpOp1.CAST_AS_MATRIX
-				|| _op == OpOp1.CAST_AS_SCALAR
-				|| _op == OpOp1.CAST_AS_FRAME
-				|| _op == OpOp1.CAST_AS_BOOLEAN
-				|| _op == OpOp1.CAST_AS_DOUBLE
-				|| _op == OpOp1.CAST_AS_INT    );
+	public boolean isCastUnaryOperation() {
+		return (_op == OpOp1.CAST_AS_MATRIX
+			|| _op == OpOp1.CAST_AS_SCALAR
+			|| _op == OpOp1.CAST_AS_FRAME
+			|| _op == OpOp1.CAST_AS_BOOLEAN
+			|| _op == OpOp1.CAST_AS_DOUBLE
+			|| _op == OpOp1.CAST_AS_INT);
+	}
+	
+	public boolean isExpensiveUnaryOperation()  {
+		return (_op == OpOp1.EXP 
+			|| _op == OpOp1.LOG
+			|| _op == OpOp1.SIGMOID);
 	}
 	
 	@Override
 	protected ExecType optFindExecType() 
-		throws HopsException 
-	{		
+	{
 		checkAndSetForcedPlatform();
 	
 		ExecType REMOTE = OptimizerUtils.isSparkExecutionMode() ? ExecType.SPARK : ExecType.MR;
 		
-		if( _etypeForced != null ) 			
+		if( _etypeForced != null )
 		{
-			_etype = _etypeForced;		
+			_etype = _etypeForced;
 		}
 		else 
 		{
@@ -661,12 +682,11 @@ public class UnaryOp extends Hop implements MultiThreadedHop
 		}
 		
 		//mark for recompile (forever)
-		if( ConfigurationManager.isDynamicRecompilation() && !dimsKnown(true) && _etype==REMOTE )
-			setRequiresRecompile();
-
+		setRequiresRecompileIfNecessary();
+		
 		//ensure cp exec type for single-node operations
-		if( _op == OpOp1.PRINT || _op == OpOp1.STOP 
-			|| _op == OpOp1.INVERSE || _op == OpOp1.EIGEN || _op == OpOp1.CHOLESKY )
+		if( _op == OpOp1.PRINT || _op == OpOp1.ASSERT || _op == OpOp1.STOP 
+			|| _op == OpOp1.INVERSE || _op == OpOp1.EIGEN || _op == OpOp1.CHOLESKY || _op == OpOp1.SVD)
 		{
 			_etype = ExecType.CP;
 		}
@@ -681,7 +701,8 @@ public class UnaryOp extends Hop implements MultiThreadedHop
 		{
 			//do nothing always known
 		}
-		else if( _op == OpOp1.CAST_AS_MATRIX && getInput().get(0).getDataType()==DataType.SCALAR )
+		else if( (_op == OpOp1.CAST_AS_MATRIX || _op == OpOp1.CAST_AS_FRAME)
+			&& getInput().get(0).getDataType()==DataType.SCALAR )
 		{
 			//prevent propagating 0 from scalar (which would be interpreted as unknown)
 			setDim1( 1 );
@@ -694,8 +715,10 @@ public class UnaryOp extends Hop implements MultiThreadedHop
 			Hop input = getInput().get(0);
 			setDim1( input.getDim1() );
 			setDim2( input.getDim2() );
-			if( _op==OpOp1.ABS || _op==OpOp1.COS || _op==OpOp1.SIN || _op==OpOp1.TAN  
-				|| _op==OpOp1.ACOS || _op==OpOp1.ASIN || _op==OpOp1.ATAN
+			// cosh(0)=cos(0)=1, acos(0)=1.5707963267948966
+			if( _op==OpOp1.ABS || _op==OpOp1.SIN || _op==OpOp1.TAN  
+				|| _op==OpOp1.SINH || _op==OpOp1.TANH
+				|| _op==OpOp1.ASIN || _op==OpOp1.ATAN
 				|| _op==OpOp1.SQRT || _op==OpOp1.ROUND || _op==OpOp1.SPROP ) //sparsity preserving
 			{
 				setNnz( input.getNnz() );

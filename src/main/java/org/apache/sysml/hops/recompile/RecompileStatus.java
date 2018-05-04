@@ -19,45 +19,36 @@
 
 package org.apache.sysml.hops.recompile;
 
-import java.util.ArrayList;
 import java.util.HashMap;
 
-import org.apache.sysml.parser.VariableSet;
 import org.apache.sysml.runtime.matrix.MatrixCharacteristics;
 
 public class RecompileStatus 
 {
+	private final HashMap<String, MatrixCharacteristics> _lastTWrites; 
+	private final boolean _initialCodegen;
 	
-	private HashMap<String, MatrixCharacteristics> _lastTWrites = null; 
-	
-	public RecompileStatus()
-	{
-		_lastTWrites = new HashMap<String,MatrixCharacteristics>();
+	public RecompileStatus() {
+		this(false);
 	}
 	
-	public HashMap<String, MatrixCharacteristics> getTWriteStats()
-	{
+	public RecompileStatus(boolean initialCodegen) {
+		_lastTWrites = new HashMap<>();
+		_initialCodegen = initialCodegen;
+	}
+	
+	public HashMap<String, MatrixCharacteristics> getTWriteStats() {
 		return _lastTWrites;
 	}
 	
-	public void clearStatus()
-	{
-		_lastTWrites.clear();
+	public boolean isInitialCodegen() {
+		return _initialCodegen;
 	}
-	
-	public void clearStatus(VariableSet vars)
-	{
-		ArrayList<String> lvars = new ArrayList<String>(vars.getVariableNames());
-		for( String var : lvars ) {
-			_lastTWrites.remove(var);
-		}
-	}
-	
+
 	@Override
-	public Object clone()
-	{
+	public Object clone() {
 		RecompileStatus ret = new RecompileStatus();
-		ret._lastTWrites.putAll(this._lastTWrites);
+		ret._lastTWrites.putAll(_lastTWrites);
 		return ret;
 	}
 }

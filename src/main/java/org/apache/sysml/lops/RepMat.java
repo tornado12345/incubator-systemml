@@ -28,7 +28,6 @@ import org.apache.sysml.parser.Expression.ValueType;
 
 public class RepMat extends Lop 
 {
-	
 	public static final String OPCODE = "rep";
 	
 	private boolean _repCols = true;
@@ -41,12 +40,9 @@ public class RepMat extends Lop
 	 * @param repCols ?
 	 * @param dt data type
 	 * @param vt value type
-	 * @throws LopsException if LopsException occurs
 	 */
-	public RepMat(Lop input1, Lop input2, boolean repCols, DataType dt, ValueType vt) 
-		throws LopsException 
-	{
-		super(Lop.Type.RepMat, dt, vt);		
+	public RepMat(Lop input1, Lop input2, boolean repCols, DataType dt, ValueType vt) {
+		super(Lop.Type.RepMat, dt, vt);
 		this.addInput(input1);
 		this.addInput(input2);
 		input1.addOutput(this);
@@ -63,7 +59,7 @@ public class RepMat extends Lop
 		lps.setProperties( inputs, ExecType.MR, ExecLocation.Map, breaksAlignment, aligner, definesMRJob );
 	}
 
-
+	@Override
 	public String toString() {
 		return "Operation = RepMat";
 	}
@@ -88,7 +84,7 @@ public class RepMat extends Lop
 		sb.append( getInputs().get(1).prepScalarInputOperand(getExecType()));
 		
 		sb.append(Lop.OPERAND_DELIMITOR);
-		sb.append( this.prepOutputOperand(output_index));
+		sb.append( prepOutputOperand(output_index));
 		
 		return sb.toString();
 	}

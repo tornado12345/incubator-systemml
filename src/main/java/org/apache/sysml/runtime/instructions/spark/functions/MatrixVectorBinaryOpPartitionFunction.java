@@ -48,7 +48,7 @@ public class MatrixVectorBinaryOpPartitionFunction implements PairFlatMapFunctio
 	}
 
 	@Override
-	public Iterable<Tuple2<MatrixIndexes, MatrixBlock>> call(Iterator<Tuple2<MatrixIndexes, MatrixBlock>> arg0) 
+	public LazyIterableIterator<Tuple2<MatrixIndexes, MatrixBlock>> call(Iterator<Tuple2<MatrixIndexes, MatrixBlock>> arg0) 
 		throws Exception 
 	{
 		return new MapBinaryPartitionIterator( arg0 );
@@ -80,7 +80,7 @@ public class MatrixVectorBinaryOpPartitionFunction implements PairFlatMapFunctio
 				
 			//execute the binary operation
 			MatrixBlock ret = (MatrixBlock) (in1.binaryOperations (_op, in2, new MatrixBlock()));
-			return new Tuple2<MatrixIndexes, MatrixBlock>(ix, ret);	
+			return new Tuple2<>(ix, ret);	
 		}			
 	}
 }

@@ -40,7 +40,7 @@ import org.apache.sysml.parser.Expression.ValueType;
 public class Data extends Lop  
 {
 	
-	public enum OperationTypes {READ,WRITE};
+	public enum OperationTypes {READ,WRITE}
 	
 	FileFormatTypes formatType = FileFormatTypes.BINARY;
 	OperationTypes operation;
@@ -55,9 +55,8 @@ public class Data extends Lop
 	 * @param vt value type
 	 * @param literalValue literal value
 	 * @return literal low-level operator
-	 * @throws LopsException if LopsException occurs
 	 */
-	public static Data createLiteralLop(ValueType vt, String literalValue) throws LopsException {
+	public static Data createLiteralLop(ValueType vt, String literalValue) {
 		// All literals have default format type of TEXT
 		return new Data(OperationTypes.READ, null, null, null, literalValue, DataType.SCALAR, vt, false, FileFormatTypes.BINARY);
 	}
@@ -76,10 +75,9 @@ public class Data extends Lop
 	 * @param vt value type
 	 * @param isTransient true if transient
 	 * @param fmt file format
-	 * @throws LopsException if LopsException occurs
 	 */
 	public Data(Data.OperationTypes op, Lop input, HashMap<String, Lop> 
-	inputParametersLops, String name, String literal, DataType dt, ValueType vt, boolean isTransient, FileFormatTypes fmt) throws LopsException 
+	inputParametersLops, String name, String literal, DataType dt, ValueType vt, boolean isTransient, FileFormatTypes fmt) 
 	{
 		super(Lop.Type.Data, dt, vt);	
 		
@@ -139,18 +137,9 @@ public class Data extends Lop
 		
 
 		if ( getFileFormatType() == FileFormatTypes.CSV ) {
-			Lop input = getInputs().get(0);
-			// If the input is data transform, then csv write can be piggybacked onto TRANSFORM job.
-			// Otherwise, the input must be converted to csv format via WriteCSV MR job.
-			if ( input instanceof ParameterizedBuiltin 
-					&& ((ParameterizedBuiltin)input).getOp() == org.apache.sysml.lops.ParameterizedBuiltin.OperationTypes.TRANSFORM ) {
-				lps.addCompatibility(JobType.TRANSFORM);
-				definesMRJob = false;
-			}
-			else {
-				lps.addCompatibility(JobType.CSV_WRITE);
-				definesMRJob = true;
-			}
+			// The input must be converted to csv format via WriteCSV MR job.
+			lps.addCompatibility(JobType.CSV_WRITE);
+			definesMRJob = true;
 		}
 		else {
 			/*
@@ -189,9 +178,8 @@ public class Data extends Lop
 	/**
 	 * Method to set format types for input, output files. 
 	 * @param type file format
-	 * @throws LopsException if LopsException occurs
 	 */
-	public void setFileFormatAndProperties(FileFormatTypes type) throws LopsException 
+	public void setFileFormatAndProperties(FileFormatTypes type) 
 	{
 		this.formatType = type ;
 		if(type == FileFormatTypes.BINARY)
@@ -247,8 +235,7 @@ public class Data extends Lop
 		return _inputParams.get(name);
 	}
 	
-	public Lop getNamedInputLop(String name, String defaultVal) 
-		throws LopsException {
+	public Lop getNamedInputLop(String name, String defaultVal) {
 		if( _inputParams.containsKey(name) )
 			return _inputParams.get(name);
 		else
@@ -259,14 +246,11 @@ public class Data extends Lop
 	 * method to check if this data lop represents a literal.
 	 * @return true if data lop is a literal
 	 */
-	
-	public boolean isLiteral()
-	{
+	public boolean isLiteral() {
 		return literal_var;
-
 	}
 	
-	public boolean getBooleanValue() throws LopsException {
+	public boolean getBooleanValue() {
 		if(literal_var) {
 			return Boolean.parseBoolean(getOutputParameters().getLabel());
 		}
@@ -274,7 +258,7 @@ public class Data extends Lop
 			throw new LopsException("Cannot obtain the value of a non-literal variable at compile time.");
 	}
 	
-	public double getDoubleValue() throws LopsException {
+	public double getDoubleValue() {
 		if(literal_var) {
 			return Double.parseDouble(getOutputParameters().getLabel());
 		}
@@ -282,7 +266,7 @@ public class Data extends Lop
 			throw new LopsException("Cannot obtain the value of a non-literal variable at compile time.");
 	}
 	
-	public long getLongValue() throws LopsException {
+	public long getLongValue() {
 		if(literal_var) {
 			ValueType vt = getValueType();
 			switch(vt) {
@@ -299,7 +283,7 @@ public class Data extends Lop
 			throw new LopsException("Can not obtain the value of a non-literal variable at compile time.");
 	}
 	
-	public String getStringValue() throws LopsException {
+	public String getStringValue() {
 		if(literal_var) {
 			return getOutputParameters().getLabel();
 		}
@@ -328,7 +312,7 @@ public class Data extends Lop
 	 * 
 	 */
 	@Override
-	public String getInstructions(int input_index, int output_index) throws LopsException {
+	public String getInstructions(int input_index, int output_index) {
 		
 		OutputParameters oparams = getOutputParameters();
 
@@ -393,8 +377,7 @@ public class Data extends Lop
 	 */
 	@Override
 	public String getInstructions(String input1, String input2) 
-		throws LopsException 
-	{	
+	{
 		if ( getOutputParameters().getFile_name() == null && operation == OperationTypes.READ ) 
 			throw new LopsException(this.printErrorLocation() + "Data.getInstructions(): Exepecting a SCALAR data type, encountered " + getDataType());
 			
@@ -480,38 +463,43 @@ public class Data extends Lop
 				
 				if ( this.getExecType() == ExecType.SPARK ) 
 				{
-					boolean isInputMatrixBlock = true;
-					Lop input = getInputs().get(0);
-					if ( input instanceof ParameterizedBuiltin 
-							&& ((ParameterizedBuiltin)input).getOp() == ParameterizedBuiltin.OperationTypes.TRANSFORM ) {
-						// in the case of transform input, the input will be Text strings insteadof MatrixBlocks 
-						// This information is used to have correct class information while accessing RDDs from the symbol table 
-						isInputMatrixBlock = false;
-					}
 					sb.append(OPERAND_DELIMITOR);
-					sb.append(isInputMatrixBlock);
+					sb.append(true); //isInputMatrixBlock
 				}
 			}
 			
 		}
-		
+
+		if (operation == OperationTypes.WRITE) {
+			sb.append(OPERAND_DELIMITOR);
+			Lop descriptionLop = getInputParams().get(DataExpression.DESCRIPTIONPARAM);
+			if (descriptionLop != null) {
+				boolean descLiteral = (descriptionLop instanceof Data && ((Data) descriptionLop).isLiteral());
+				sb.append(prepOperand(descriptionLop.getOutputParameters().getLabel(), DataType.SCALAR,
+						ValueType.STRING, descLiteral));
+			} else {
+				sb.append(prepOperand("", DataType.SCALAR, ValueType.STRING, true));
+			}
+		}
+
 		return sb.toString();
 	}
 	
 	/**
 	 * Method to generate createvar instruction that updates symbol table with metadata, hdfsfile name, etc.
 	 * 
-	 * @throws LopsException if LopsException occurs
 	 */
-	public String getInstructions() throws LopsException {
+	@Override
+	public String getInstructions() {
 		return getCreateVarInstructions(getOutputParameters().getFile_name(), getOutputParameters().getLabel());
 	}
 	
-	public String getInstructions(String outputFileName) throws LopsException {
+	@Override
+	public String getInstructions(String outputFileName) {
 		return getCreateVarInstructions(outputFileName, getOutputParameters().getLabel() );
 	}
 	
-	public String getCreateVarInstructions(String outputFileName, String outputLabel) throws LopsException {
+	public String getCreateVarInstructions(String outputFileName, String outputLabel) {
 		if ( getDataType() == DataType.MATRIX || getDataType() == DataType.FRAME ) {
 			
 			if ( isTransient() )
@@ -582,9 +570,8 @@ public class Data extends Lop
 	 * The set of properties that are attached for a READ operation is different from that for a WRITE operation.
 	 * 
 	 * @return instruction with csv format properties appended
-	 * @throws LopsException if LopsException occurs
 	 */
-	private String createVarCSVHelper() throws LopsException {
+	private String createVarCSVHelper() {
 		StringBuilder sb = new StringBuilder();
 		if ( operation == OperationTypes.READ ) {
 			Data headerLop = (Data) getNamedInputLop(DataExpression.DELIM_HAS_HEADER_ROW);

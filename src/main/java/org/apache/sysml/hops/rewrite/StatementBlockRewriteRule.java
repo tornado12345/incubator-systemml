@@ -19,13 +19,13 @@
 
 package org.apache.sysml.hops.rewrite;
 
-import java.util.ArrayList;
+import java.util.List;
 
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 
-import org.apache.sysml.hops.HopsException;
 import org.apache.sysml.parser.StatementBlock;
+import org.apache.sysml.runtime.controlprogram.parfor.util.IDSequence;
 
 /**
  * Base class for all hop rewrites in order to enable generic
@@ -34,19 +34,46 @@ import org.apache.sysml.parser.StatementBlock;
  */
 public abstract class StatementBlockRewriteRule 
 {
-
 	protected static final Log LOG = LogFactory.getLog(StatementBlockRewriteRule.class.getName());
+
+	private static final String SB_CUT_PREFIX = "_sbcvar";
+	private static final String FUN_CUT_PREFIX = "_funvar";
+	private static IDSequence _seq = new IDSequence();
+	
+	public static String createCutVarName(boolean fun) {
+		return fun ?
+			FUN_CUT_PREFIX + _seq.getNextID() :
+			SB_CUT_PREFIX + _seq.getNextID();
 		
+	}
+	
+	/**
+	 * Indicates if the rewrite potentially splits dags, which is used
+	 * for phase ordering of rewrites.
+	 * 
+	 * @return true if dag splits are possible.
+	 */
+	public abstract boolean createsSplitDag();
+	
 	/**
 	 * Handle an arbitrary statement block. Specific type constraints have to be ensured
-	 * within the individual rewrites.
+	 * within the individual rewrites. If a rewrite does not apply to individual blocks, it 
+	 * should simply return the input block.
 	 * 
 	 * @param sb statement block
 	 * @param sate program rewrite status
 	 * @return list of statement blocks
-	 * @throws HopsException if HopsException occurs
 	 */
-	public abstract ArrayList<StatementBlock> rewriteStatementBlock( StatementBlock sb, ProgramRewriteStatus sate ) 
-		throws HopsException;
+	public abstract List<StatementBlock> rewriteStatementBlock(StatementBlock sb, ProgramRewriteStatus state);
 	
+	/**
+	 * Handle a list of statement blocks. Specific type constraints have to be ensured
+	 * within the individual rewrites. If a rewrite does not require sequence access, it 
+	 * should simply return the input list of statement blocks.
+	 * 
+	 * @param sbs list of statement blocks
+	 * @param sate program rewrite status
+	 * @return list of statement blocks
+	 */
+	public abstract List<StatementBlock> rewriteStatementBlocks(List<StatementBlock> sbs, ProgramRewriteStatus state);
 }

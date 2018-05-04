@@ -27,82 +27,58 @@ import org.apache.sysml.runtime.matrix.mapred.CachedValueMap;
 import org.apache.sysml.runtime.matrix.mapred.IndexedMatrixValue;
 import org.apache.sysml.runtime.matrix.operators.Operator;
 
+public class PickByCountInstruction extends MRInstruction {
 
-public class PickByCountInstruction extends MRInstruction 
-{
-	
 	public byte input1; // used for both valuepick and rangepick
 	public byte input2; // used only for valuepick
 	public double cst; // used only for rangepick
-	public boolean isValuePick=true;
-	
-	/*
-	 *  Constructor for valuepick
-	 *  valuepick:::0:DOUBLE:::1:DOUBLE:::2:DOUBLE
-	 *  0 is data matrix, 1 is the quantile matrix, 2 will have the resulting picked data items 
-	 */
-	public PickByCountInstruction(Operator op, byte _in1, byte _in2, byte out, String istr) {
-		super(op, out);
+	public boolean isValuePick = true;
+
+	private PickByCountInstruction(Operator op, byte _in1, byte _in2, byte out, String istr) {
+		super(MRType.PickByCount, op, out);
 		input1 = _in1;
 		input2 = _in2;
 		cst = 0;
-		mrtype = MRINSTRUCTION_TYPE.PickByCount;
 		instString = istr;
-		isValuePick=true;
+		isValuePick = true;
 	}
 
-	/*
-	 *  Constructor for rangepick
-	 *  rangepick:::0:DOUBLE:::0.25:DOUBLE:::1:DOUBLE
-	 *  0 is data matrix, 0.25 is the quantile that needs to be removed from both ends in the PDF, 
-	 *  1 will have the resulting picked data items between [Q_1-Q_3]
-	 */
-	public PickByCountInstruction(Operator op, byte _in1, double _cst, byte out, String istr) {
-		super(op, out);
+	private PickByCountInstruction(Operator op, byte _in1, double _cst, byte out, String istr) {
+		super(MRType.PickByCount, op, out);
 		input1 = _in1;
 		cst = _cst;
-		mrtype = MRINSTRUCTION_TYPE.PickByCount;
 		instString = istr;
-		isValuePick=false;
+		isValuePick = false;
 	}
 
-	public static PickByCountInstruction parseInstruction ( String str ) 
-		throws DMLRuntimeException 
-	{	
+	public static PickByCountInstruction parseInstruction ( String str ) {
 		InstructionUtils.checkNumFields ( str, 5 );
 		String[] parts = InstructionUtils.getInstructionParts ( str );
-		
 		OperationTypes ptype = OperationTypes.valueOf(parts[4]);
-		
-		if ( ptype == OperationTypes.VALUEPICK ) 
-		{
+		if ( ptype == OperationTypes.VALUEPICK ) {
 			byte in1 = Byte.parseByte(parts[1]);
 			byte in2 = Byte.parseByte(parts[2]);
 			byte out = Byte.parseByte(parts[3]);
 			return new PickByCountInstruction(null, in1, in2, out, str);
 		} 
-		else if ( ptype == OperationTypes.RANGEPICK ) 
-		{
+		else if ( ptype == OperationTypes.RANGEPICK ) {
 			byte in1 = Byte.parseByte(parts[1]);
 			double cstant = Double.parseDouble(parts[2]);
 			byte out = Byte.parseByte(parts[3]);
 			return new PickByCountInstruction(null, in1, cstant, out, str);
 		}
-		
 		return null;
 	}
 
 	@Override
 	public void processInstruction(Class<? extends MatrixValue> valueClass,
 			CachedValueMap cachedValues, IndexedMatrixValue tempValue,
-			IndexedMatrixValue zeroInput, int blockRowFactor, int blockColFactor)
-			throws DMLRuntimeException {
+			IndexedMatrixValue zeroInput, int blockRowFactor, int blockColFactor) {
 		throw new DMLRuntimeException("PickByCountInstruction.processInstruction should never be called!");
-		
 	}
 
 	@Override
-	public byte[] getAllIndexes() throws DMLRuntimeException {
+	public byte[] getAllIndexes() {
 		if( isValuePick ) {
 			return new byte[]{input1,input2,output};
 		}
@@ -113,7 +89,7 @@ public class PickByCountInstruction extends MRInstruction
 	}
 
 	@Override
-	public byte[] getInputIndexes() throws DMLRuntimeException {
+	public byte[] getInputIndexes() {
 		if( isValuePick ) {
 			return new byte[]{input1,input2};
 		}

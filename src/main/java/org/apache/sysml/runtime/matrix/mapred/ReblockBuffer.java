@@ -23,8 +23,10 @@ package org.apache.sysml.runtime.matrix.mapred;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.Comparator;
 import java.util.Iterator;
+import java.util.List;
 
 import org.apache.hadoop.io.Writable;
 import org.apache.hadoop.mapred.OutputCollector;
@@ -34,13 +36,10 @@ import org.apache.sysml.runtime.matrix.data.IJV;
 import org.apache.sysml.runtime.matrix.data.MatrixBlock;
 import org.apache.sysml.runtime.matrix.data.MatrixIndexes;
 import org.apache.sysml.runtime.matrix.data.PartialBlock;
+import org.apache.sysml.runtime.matrix.data.SparseBlock.Type;
 import org.apache.sysml.runtime.matrix.data.TaggedAdaptivePartialBlock;
 import org.apache.sysml.runtime.util.UtilFunctions;
 
-/**
- * 
- * 
- */
 public class ReblockBuffer 
 {
 	
@@ -58,12 +57,7 @@ public class ReblockBuffer
 	private long _clen = -1;
 	private int _brlen = -1;
 	private int _bclen = -1;
-	
-	public ReblockBuffer( long rlen, long clen, int brlen, int bclen )
-	{
-		this( DEFAULT_BUFFER_SIZE, rlen, clen, brlen, bclen );
-	}
-	
+
 	public ReblockBuffer( int buffersize, long rlen, long clen, int brlen, int bclen  )
 	{
 		_bufflen = buffersize;
@@ -76,13 +70,7 @@ public class ReblockBuffer
 		_brlen = brlen;
 		_bclen = bclen;
 	}
-	
-	/**
-	 * 
-	 * @param r
-	 * @param c
-	 * @param v
-	 */
+
 	public void appendCell( long r, long c, double v )
 	{
 		long tmp = Double.doubleToRawLongBits(v);
@@ -91,16 +79,7 @@ public class ReblockBuffer
 		_buff[_count][2] = tmp;
 		_count++;
 	}
-	
-	/**
-	 * 
-	 * @param r_offset
-	 * @param c_offset
-	 * @param inBlk
-	 * @param index
-	 * @param out
-	 * @throws IOException
-	 */
+
 	public void appendBlock(long r_offset, long c_offset, MatrixBlock inBlk, byte index, OutputCollector<Writable, Writable> out ) 
 		throws IOException
 	{
@@ -155,13 +134,7 @@ public class ReblockBuffer
 	{
 		return _bufflen;
 	}
-	
-	/**
-	 * 
-	 * @param index
-	 * @param out
-	 * @throws IOException
-	 */
+
 	public void flushBuffer( byte index, OutputCollector<Writable, Writable> out ) 
 		throws IOException
 	{
@@ -216,10 +189,11 @@ public class ReblockBuffer
 				if( bi != cbi || bj != cbj ) {
 					outputBlock(out, tmpIx, outTVal, tmpBlock);
 					cbi = bi;
-					cbj = bj;					
+					cbj = bj;
 					tmpIx.setIndexes(bi, bj);
-					tmpBlock.reset(Math.min(_brlen, (int)(_rlen-(bi-1)*_brlen)),
-							       Math.min(_bclen, (int)(_clen-(bj-1)*_bclen)), sparse);
+					tmpBlock.reset(
+						UtilFunctions.computeBlockSize(_rlen, bi, _brlen),
+						UtilFunctions.computeBlockSize(_clen, bj, _bclen), sparse);
 				}
 				
 				int ci = UtilFunctions.computeCellInBlock(_buff[i][0], _brlen);
@@ -250,18 +224,12 @@ public class ReblockBuffer
 		
 		_count = 0;
 	}
-	
-	/**
-	 * 
-	 * @param outList
-	 * @throws IOException
-	 * @throws DMLRuntimeException 
-	 */
-	public void flushBufferToBinaryBlocks( ArrayList<IndexedMatrixValue> outList ) 
+
+	public List<IndexedMatrixValue> flushBufferToBinaryBlocks() 
 		throws IOException, DMLRuntimeException
 	{
 		if( _count == 0 )
-			return;
+			return Collections.emptyList();
 		
 		//Step 1) sort reblock buffer (blockwise, no in-block sorting!)
 		Arrays.sort( _buff, 0 ,_count, new ReblockBufferComparator() );
@@ -282,7 +250,8 @@ public class ReblockBuffer
 			}
 		}
 		
-		//Step 3) output blocks 
+		//Step 3) output blocks
+		ArrayList<IndexedMatrixValue> ret = new ArrayList<>();
 		boolean sparse = MatrixBlock.evalSparseFormatInMemory(_brlen, _bclen, _count/numBlocks);
 		MatrixIndexes tmpIx = new MatrixIndexes();
 		MatrixBlock tmpBlock = new MatrixBlock();
@@ -296,12 +265,13 @@ public class ReblockBuffer
 			
 			//output block and switch to next index pair
 			if( bi != cbi || bj != cbj ) {
-				outputBlock(outList, tmpIx, tmpBlock);
+				outputBlock(ret, tmpIx, tmpBlock);
 				cbi = bi;
-				cbj = bj;					
+				cbj = bj;
 				tmpIx = new MatrixIndexes(bi, bj);
-				tmpBlock = new MatrixBlock(Math.min(_brlen, (int)(_rlen-(bi-1)*_brlen)),
-						       Math.min(_bclen, (int)(_clen-(bj-1)*_bclen)), sparse);
+				tmpBlock = new MatrixBlock(
+					UtilFunctions.computeBlockSize(_rlen, bi, _brlen),
+					UtilFunctions.computeBlockSize(_clen, bj, _bclen), sparse);
 			}
 			
 			int ci = UtilFunctions.computeCellInBlock(_buff[i][0], _brlen);
@@ -311,19 +281,11 @@ public class ReblockBuffer
 		}
 		
 		//output last block 
-		outputBlock(outList, tmpIx, tmpBlock);
-		
+		outputBlock(ret, tmpIx, tmpBlock);
 		_count = 0;
+		return ret;
 	}
-	
-	/**
-	 * 
-	 * @param out
-	 * @param key
-	 * @param value
-	 * @param block
-	 * @throws IOException
-	 */
+
 	private static void outputBlock( OutputCollector<Writable, Writable> out, MatrixIndexes key, TaggedAdaptivePartialBlock value, MatrixBlock block ) 
 		throws IOException
 	{
@@ -339,15 +301,7 @@ public class ReblockBuffer
 		value.getBaseObject().set(block);
 		out.collect(key, value);
 	}
-	
-	/**
-	 * 
-	 * @param out
-	 * @param key
-	 * @param value
-	 * @throws IOException
-	 * @throws DMLRuntimeException 
-	 */
+
 	private static void outputBlock( ArrayList<IndexedMatrixValue> out, MatrixIndexes key, MatrixBlock value ) 
 		throws IOException, DMLRuntimeException
 	{
@@ -361,6 +315,11 @@ public class ReblockBuffer
 		
 		//ensure correct representation (for in-memory blocks)
 		value.examSparsity();
+	
+		//convert ultra-sparse blocks from MCSR to COO in order to 
+		//significantly reduce temporary memory pressure until write 
+		if( value.isUltraSparse() )
+			value = new MatrixBlock(value, Type.COO, false);
 		
 		//output block
 		out.add(new IndexedMatrixValue(key,value));

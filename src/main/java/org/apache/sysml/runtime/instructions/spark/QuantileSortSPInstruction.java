@@ -33,32 +33,27 @@ import org.apache.sysml.runtime.instructions.spark.utils.RDDSortUtils;
 import org.apache.sysml.runtime.matrix.MatrixCharacteristics;
 import org.apache.sysml.runtime.matrix.data.MatrixBlock;
 import org.apache.sysml.runtime.matrix.data.MatrixIndexes;
-import org.apache.sysml.runtime.matrix.operators.Operator;
-import org.apache.sysml.runtime.matrix.operators.SimpleOperator;
 
-public class QuantileSortSPInstruction extends UnarySPInstruction
-{
-	
-	/*
-	 * This class supports two variants of sort operation on a 1-dimensional input matrix. 
-	 * The two variants are <code> weighted </code> and <code> unweighted </code>.
-	 * Example instructions: 
-	 *     sort:mVar1:mVar2 (input=mVar1, output=mVar2)
-	 *     sort:mVar1:mVar2:mVar3 (input=mVar1, weights=mVar2, output=mVar3)
-	 *  
-	 */
-	
-	public QuantileSortSPInstruction(Operator op, CPOperand in, CPOperand out, String opcode, String istr){
-		this(op, in, null, out, opcode, istr);
+/**
+ * This class supports two variants of sort operation on a 1-dimensional input matrix. 
+ * The two variants are <code> weighted </code> and <code> unweighted </code>.
+ * Example instructions: 
+ *     sort:mVar1:mVar2 (input=mVar1, output=mVar2)
+ *     sort:mVar1:mVar2:mVar3 (input=mVar1, weights=mVar2, output=mVar3)
+ *  
+ */
+public class QuantileSortSPInstruction extends UnarySPInstruction {
+
+	private QuantileSortSPInstruction(CPOperand in, CPOperand out, String opcode, String istr) {
+		this(in, null, out, opcode, istr);
 	}
-	
-	public QuantileSortSPInstruction(Operator op, CPOperand in1, CPOperand in2, CPOperand out, String opcode, String istr){
-		super(op, in1, in2, out, opcode, istr);
-		_sptype = SPINSTRUCTION_TYPE.QSort;
+
+	private QuantileSortSPInstruction(CPOperand in1, CPOperand in2, CPOperand out, String opcode,
+			String istr) {
+		super(SPType.QSort, null, in1, in2, out, opcode, istr);
 	}
-	
-	public static QuantileSortSPInstruction parseInstruction ( String str ) 
-		throws DMLRuntimeException {
+
+	public static QuantileSortSPInstruction parseInstruction ( String str ) {
 		CPOperand in1 = new CPOperand("", ValueType.UNKNOWN, DataType.UNKNOWN);
 		CPOperand in2 = null;
 		CPOperand out = new CPOperand("", ValueType.UNKNOWN, DataType.UNKNOWN);
@@ -70,13 +65,13 @@ public class QuantileSortSPInstruction extends UnarySPInstruction
 			if ( parts.length == 3 ) {
 				// Example: sort:mVar1:mVar2 (input=mVar1, output=mVar2)
 				parseUnaryInstruction(str, in1, out);
-				return new QuantileSortSPInstruction(new SimpleOperator(null), in1, out, opcode, str);
+				return new QuantileSortSPInstruction(in1, out, opcode, str);
 			}
 			else if ( parts.length == 4 ) {
 				// Example: sort:mVar1:mVar2:mVar3 (input=mVar1, weights=mVar2, output=mVar3)
 				in2 = new CPOperand("", ValueType.UNKNOWN, DataType.UNKNOWN);
 				parseUnaryInstruction(str, in1, in2, out);
-				return new QuantileSortSPInstruction(new SimpleOperator(null), in1, in2, out, opcode, str);
+				return new QuantileSortSPInstruction(in1, in2, out, opcode, str);
 			}
 			else {
 				throw new DMLRuntimeException("Invalid number of operands in instruction: " + str);
@@ -88,9 +83,7 @@ public class QuantileSortSPInstruction extends UnarySPInstruction
 	}
 	
 	@Override
-	public void processInstruction(ExecutionContext ec)
-			throws DMLRuntimeException 
-	{
+	public void processInstruction(ExecutionContext ec) {
 		SparkExecutionContext sec = (SparkExecutionContext)ec;
 		boolean weighted = (input2 != null);
 		

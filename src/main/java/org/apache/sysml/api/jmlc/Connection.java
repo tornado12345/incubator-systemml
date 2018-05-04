@@ -25,6 +25,7 @@ import java.io.FileReader;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -33,33 +34,36 @@ import org.apache.hadoop.fs.Path;
 import org.apache.sysml.api.DMLException;
 import org.apache.sysml.api.DMLScript;
 import org.apache.sysml.api.DMLScript.RUNTIME_PLATFORM;
+import org.apache.sysml.api.mlcontext.ScriptType;
 import org.apache.sysml.conf.CompilerConfig;
 import org.apache.sysml.conf.CompilerConfig.ConfigType;
 import org.apache.sysml.conf.ConfigurationManager;
 import org.apache.sysml.conf.DMLConfig;
+import org.apache.sysml.hops.codegen.SpoofCompiler;
 import org.apache.sysml.hops.rewrite.ProgramRewriter;
 import org.apache.sysml.hops.rewrite.RewriteRemovePersistentReadWrite;
-import org.apache.sysml.parser.AParserWrapper;
 import org.apache.sysml.parser.DMLProgram;
 import org.apache.sysml.parser.DMLTranslator;
 import org.apache.sysml.parser.DataExpression;
+import org.apache.sysml.parser.LanguageException;
 import org.apache.sysml.parser.ParseException;
+import org.apache.sysml.parser.ParserFactory;
+import org.apache.sysml.parser.ParserWrapper;
 import org.apache.sysml.runtime.DMLRuntimeException;
 import org.apache.sysml.runtime.controlprogram.Program;
 import org.apache.sysml.runtime.controlprogram.caching.CacheableData;
 import org.apache.sysml.runtime.io.FrameReader;
 import org.apache.sysml.runtime.io.FrameReaderFactory;
-import org.apache.sysml.runtime.io.FrameReaderTextCell;
 import org.apache.sysml.runtime.io.IOUtilFunctions;
 import org.apache.sysml.runtime.io.MatrixReader;
 import org.apache.sysml.runtime.io.MatrixReaderFactory;
-import org.apache.sysml.runtime.io.ReaderTextCell;
 import org.apache.sysml.runtime.matrix.data.FrameBlock;
 import org.apache.sysml.runtime.matrix.data.InputInfo;
 import org.apache.sysml.runtime.matrix.data.MatrixBlock;
 import org.apache.sysml.runtime.transform.TfUtils;
 import org.apache.sysml.runtime.transform.meta.TfMetaUtils;
 import org.apache.sysml.runtime.util.DataConverter;
+import org.apache.sysml.runtime.util.UtilFunctions;
 import org.apache.wink.json4j.JSONObject;
 
 /**
@@ -86,20 +90,65 @@ import org.apache.wink.json4j.JSONObject;
  * For examples, please see the following:
  * <ul>
  *   <li>JMLC JUnit test cases (org.apache.sysml.test.integration.functions.jmlc)</li>
- *   <li><a target="_blank" href="http://apache.github.io/incubator-systemml/jmlc.html">JMLC section
+ *   <li><a target="_blank" href="http://apache.github.io/systemml/jmlc.html">JMLC section
  *   of SystemML online documentation</a></li>
  * </ul>
  */
 public class Connection implements Closeable
-{		
-	private DMLConfig _dmlconf = null;
-
+{
+	private final DMLConfig _dmlconf;
+	private final CompilerConfig _cconf;
+	
 	/**
 	 * Connection constructor, the starting point for any other JMLC API calls.
 	 * 
 	 */
-	public Connection()
-	{
+	public Connection() {
+		 //with default dml configuration
+		this(new DMLConfig());
+	}
+	
+	/**
+	 * Connection constructor, the starting point for any other JMLC API calls.
+	 * This variant allows to enable a set of boolean compiler configurations.
+	 * 
+	 * @param cconfigs one or many boolean compiler configurations to enable.
+	 */
+	public Connection(CompilerConfig.ConfigType... cconfigs) {
+		//basic constructor, which also constructs the compiler config
+		this(new DMLConfig()); //with default dml configuration
+		
+		//set optional compiler configurations in current config
+		for( ConfigType configType : cconfigs )
+			_cconf.set(configType, true);
+		setLocalConfigs();
+	}
+	
+	/**
+	 * Connection constructor, the starting point for any other JMLC API calls.
+	 * This variant allows to pass a global dml configuration and enable a set
+	 * of boolean compiler configurations.
+	 * 
+	 * @param dmlconfig a dml configuration.
+	 * @param cconfigs one or many boolean compiler configurations to enable.
+	 */
+	public Connection(DMLConfig dmlconfig, CompilerConfig.ConfigType... cconfigs) {
+		//basic constructor, which also constructs the compiler config
+		this(dmlconfig); 
+		
+		//set optional compiler configurations in current config
+		for( ConfigType configType : cconfigs )
+			_cconf.set(configType, true);
+		setLocalConfigs();
+	}
+	
+	/**
+	 * Connection constructor, the starting point for any other JMLC API calls.
+	 * This variant allows to pass a global dml configuration.
+	 * 
+	 * @param dmlconfig a dml configuration.
+	 */
+	public Connection(DMLConfig dmlconfig) {
 		DMLScript.rtplatform = RUNTIME_PLATFORM.SINGLE_NODE;
 		
 		//setup basic parameters for embedded execution
@@ -107,6 +156,7 @@ public class Connection implements Closeable
 		CompilerConfig cconf = new CompilerConfig();
 		cconf.set(ConfigType.IGNORE_UNSPECIFIED_ARGS, true);
 		cconf.set(ConfigType.IGNORE_READ_WRITE_METADATA, true);
+		cconf.set(ConfigType.IGNORE_TEMPORARY_FILENAMES, true);
 		cconf.set(ConfigType.REJECT_READ_WRITE_UNKNOWNS, false);
 		cconf.set(ConfigType.PARALLEL_CP_READ_TEXTFORMATS, false);
 		cconf.set(ConfigType.PARALLEL_CP_WRITE_TEXTFORMATS, false);
@@ -117,14 +167,28 @@ public class Connection implements Closeable
 		cconf.set(ConfigType.ALLOW_DYN_RECOMPILATION, false);
 		cconf.set(ConfigType.ALLOW_INDIVIDUAL_SB_SPECIFIC_OPS, false);
 		cconf.set(ConfigType.ALLOW_CSE_PERSISTENT_READS, false);
-		ConfigurationManager.setLocalConfig(cconf);
+		cconf.set(ConfigType.CODEGEN_ENABLED, false);
+		_cconf = cconf;
 		
 		//disable caching globally 
 		CacheableData.disableCaching();
 		
-		//create thread-local default configuration
-		_dmlconf = new DMLConfig();
-		ConfigurationManager.setLocalConfig(_dmlconf);
+		//assign the given configuration
+		_dmlconf = dmlconfig;
+		
+		setLocalConfigs();
+	}
+	
+	/**
+	 * Prepares (precompiles) a script and registers input and output variables.
+	 * 
+	 * @param script string representing the DML or PyDML script
+	 * @param inputs string array of input variables to register
+	 * @param outputs string array of output variables to register
+	 * @return PreparedScript object representing the precompiled script
+	 */
+	public PreparedScript prepareScript( String script, String[] inputs, String[] outputs) {
+		return prepareScript(script, inputs, outputs, false);
 	}
 	
 	/**
@@ -135,11 +199,8 @@ public class Connection implements Closeable
 	 * @param outputs string array of output variables to register
 	 * @param parsePyDML {@code true} if PyDML, {@code false} if DML
 	 * @return PreparedScript object representing the precompiled script
-	 * @throws DMLException if DMLException occurs
 	 */
-	public PreparedScript prepareScript( String script, String[] inputs, String[] outputs, boolean parsePyDML) 
-		throws DMLException 
-	{
+	public PreparedScript prepareScript( String script, String[] inputs, String[] outputs, boolean parsePyDML) {
 		return prepareScript(script, new HashMap<String,String>(), inputs, outputs, parsePyDML);
 	}
 	
@@ -152,24 +213,34 @@ public class Connection implements Closeable
 	 * @param outputs string array of output variables to register
 	 * @param parsePyDML {@code true} if PyDML, {@code false} if DML
 	 * @return PreparedScript object representing the precompiled script
-	 * @throws DMLException if DMLException occurs
 	 */
-	public PreparedScript prepareScript( String script, Map<String, String> args, String[] inputs, String[] outputs, boolean parsePyDML) 
-		throws DMLException 
-	{
-		//prepare arguments
+	public PreparedScript prepareScript( String script, Map<String, String> args, String[] inputs, String[] outputs, boolean parsePyDML) {
+		DMLScript.SCRIPT_TYPE = parsePyDML ? ScriptType.PYDML : ScriptType.DML;
+		
+		//check for valid names of passed arguments
+		String[] invalidArgs = args.keySet().stream()
+			.filter(k -> k==null || !k.startsWith("$")).toArray(String[]::new);
+		if( invalidArgs.length > 0 )
+			throw new LanguageException("Invalid argument names: "+Arrays.toString(invalidArgs));
+		
+		//check for valid names of input and output variables
+		String[] invalidVars = UtilFunctions.asSet(inputs, outputs).stream()
+			.filter(k -> k==null || k.startsWith("$")).toArray(String[]::new);
+		if( invalidVars.length > 0 )
+			throw new LanguageException("Invalid variable names: "+Arrays.toString(invalidVars));
+		
+		setLocalConfigs();
 		
 		//simplified compilation chain
 		Program rtprog = null;
-		try
-		{
+		try {
 			//parsing
-			AParserWrapper parser = AParserWrapper.createParser(parsePyDML);
+			ParserWrapper parser = ParserFactory.createParser(parsePyDML ? ScriptType.PYDML : ScriptType.DML);
 			DMLProgram prog = parser.parse(null, script, args);
 			
 			//language validate
 			DMLTranslator dmlt = new DMLTranslator(prog);
-			dmlt.liveVariableAnalysis(prog);			
+			dmlt.liveVariableAnalysis(prog);
 			dmlt.validateParseTree(prog);
 			
 			//hop construct/rewrite
@@ -183,24 +254,21 @@ public class Connection implements Closeable
 			
 			//lop construct and runtime prog generation
 			dmlt.constructLops(prog);
-			rtprog = prog.getRuntimeProgram(_dmlconf);
+			rtprog = dmlt.getRuntimeProgram(prog, _dmlconf);
 			
 			//final cleanup runtime prog
 			JMLCUtils.cleanupRuntimeProgram(rtprog, outputs);
-			
-			//System.out.println(Explain.explain(rtprog));
 		}
 		catch(ParseException pe) {
 			// don't chain ParseException (for cleaner error output)
 			throw pe;
 		}
-		catch(Exception ex)
-		{
+		catch(Exception ex) {
 			throw new DMLException(ex);
 		}
-			
+		
 		//return newly create precompiled script 
-		return new PreparedScript(rtprog, inputs, outputs);
+		return new PreparedScript(rtprog, inputs, outputs, _dmlconf, _cconf);
 	}
 	
 	/**
@@ -209,8 +277,10 @@ public class Connection implements Closeable
 	 */
 	@Override
 	public void close() {
-		//clear thread-local dml / compiler configs
+		//clear thread-local configurations
 		ConfigurationManager.clearLocalConfigs();
+		if( ConfigurationManager.isCodegenEnabled() )
+			SpoofCompiler.cleanupCodeGenerator();
 	}
 	
 	/**
@@ -228,11 +298,11 @@ public class Connection implements Closeable
 		try 
 		{
 			//read from hdfs or gpfs file system
-			if(    fname.startsWith("hdfs:") 
-				|| fname.startsWith("gpfs:") ) 
+			if(    fname.startsWith("hdfs:") || fname.startsWith("gpfs:")
+				|| IOUtilFunctions.isObjectStoreFileScheme(new Path(fname)) ) 
 			{ 
-				FileSystem fs = FileSystem.get(ConfigurationManager.getCachedJobConf());
 				Path scriptPath = new Path(fname);
+				FileSystem fs = IOUtilFunctions.getFileSystem(scriptPath);
 				in = new BufferedReader(new InputStreamReader(fs.open(scriptPath)));
 			}
 			// from local file system
@@ -246,7 +316,8 @@ public class Connection implements Closeable
 				sb.append( tmp );
 				sb.append( "\n" );
 			}
-		} finally {
+		}
+		finally {
 			IOUtilFunctions.closeSilently(in);
 		}
 		
@@ -310,6 +381,8 @@ public class Connection implements Closeable
 	public double[][] readDoubleMatrix(String fname, InputInfo iinfo, long rows, long cols, int brlen, int bclen, long nnz) 
 		throws IOException
 	{
+		setLocalConfigs();
+		
 		try {
 			MatrixReader reader = MatrixReaderFactory.createMatrixReader(iinfo);
 			MatrixBlock mb = reader.readMatrixFromHDFS(fname, rows, cols, brlen, bclen, nnz);
@@ -321,16 +394,97 @@ public class Connection implements Closeable
 	}
 	
 	/**
-	 * Converts an input string representation of a matrix in textcell format
+	 * Converts an input string representation of a matrix in csv or textcell format
 	 * into a dense double array. The meta data string is the SystemML generated
 	 * .mtd file including the number of rows and columns.
 	 * 
-	 * @param input string matrix in textcell format
+	 * @param input string matrix in csv or textcell format
 	 * @param meta string representing SystemML matrix metadata in JSON format
 	 * @return matrix as a two-dimensional double array
 	 * @throws IOException if IOException occurs
 	 */
 	public double[][] convertToDoubleMatrix(String input, String meta) 
+		throws IOException
+	{
+		MatrixBlock mb = convertToMatrix(input, meta);
+		return DataConverter.convertToDoubleMatrix(mb);
+	}
+	
+	/**
+	 * Converts an input string representation of a matrix in textcell format
+	 * into a dense double array. 
+	 * 
+	 * @param input string matrix in textcell format
+	 * @param rows number of rows in the matrix
+	 * @param cols number of columns in the matrix
+	 * @return matrix as a two-dimensional double array
+	 * @throws IOException if IOException occurs
+	 */
+	public double[][] convertToDoubleMatrix(String input, int rows, int cols) throws IOException {
+		try( InputStream is = IOUtilFunctions.toInputStream(input) ) {
+			return convertToDoubleMatrix(is, rows, cols);
+		}
+	}
+	
+	/**
+	 * Converts an input stream of a string matrix in textcell format
+	 * into a dense double array. 
+	 * 
+	 * @param input InputStream to a string matrix in textcell format
+	 * @param rows number of rows in the matrix
+	 * @param cols number of columns in the matrix
+	 * @return matrix as a two-dimensional double array
+	 * @throws IOException if IOException occurs
+	 */
+	public double[][] convertToDoubleMatrix(InputStream input, int rows, int cols) throws IOException {
+		return convertToDoubleMatrix(input, rows, cols, DataExpression.FORMAT_TYPE_VALUE_TEXT);
+	}
+	
+	/**
+	 * Converts an input stream of a string matrix in csv or textcell format
+	 * into a dense double array. 
+	 * 
+	 * @param input InputStream to a string matrix in csv or textcell format
+	 * @param rows number of rows in the matrix
+	 * @param cols number of columns in the matrix
+	 * @param format input format of the given stream
+	 * @return matrix as a two-dimensional double array
+	 * @throws IOException if IOException occurs
+	 */
+	public double[][] convertToDoubleMatrix(InputStream input, int rows, int cols, String format) 
+		throws IOException
+	{
+		MatrixBlock mb = convertToMatrix(input, rows, cols, format);
+		return DataConverter.convertToDoubleMatrix(mb);
+	}
+	
+	/**
+	 * Converts an input string representation of a matrix in csv or textcell format
+	 * into a matrix block. The meta data string is the SystemML generated
+	 * .mtd file including the number of rows and columns.
+	 * 
+	 * @param input string matrix in csv or textcell format
+	 * @param meta string representing SystemML matrix metadata in JSON format
+	 * @return matrix as a matrix block
+	 * @throws IOException if IOException occurs
+	 */
+	public MatrixBlock convertToMatrix(String input, String meta) throws IOException {
+		try( InputStream is = IOUtilFunctions.toInputStream(input) ) {
+			return convertToMatrix(is, meta);
+		}
+	}
+	
+	/**
+	 * Converts an input stream of a string matrix in csv or textcell format
+	 * into a matrix block. The meta data string is the SystemML generated
+	 * .mtd file including the number of rows and columns.
+	 * 
+	 * @param input InputStream to a string matrix in csv or textcell format
+	 * @param meta string representing SystemML matrix metadata in JSON format
+	 * @return matrix as a matrix block
+	 * @throws IOException if IOException occurs
+	 */
+	public MatrixBlock convertToMatrix(InputStream input, String meta) 
 		throws IOException
 	{
 		try {
@@ -339,15 +493,9 @@ public class Connection implements Closeable
 			int rows = jmtd.getInt(DataExpression.READROWPARAM);
 			int cols = jmtd.getInt(DataExpression.READCOLPARAM);
 			String format = jmtd.getString(DataExpression.FORMAT_TYPE);
-	
-			//sanity check input format
-			if(!(DataExpression.FORMAT_TYPE_VALUE_TEXT.equals(format)
-				||DataExpression.FORMAT_TYPE_VALUE_MATRIXMARKET.equals(format))) {
-				throw new IOException("Invalid input format (expected: text or mm): "+format);
-			}
 			
 			//parse the input matrix
-			return convertToDoubleMatrix(input, rows, cols);
+			return convertToMatrix(input, rows, cols, format);
 		}
 		catch(Exception ex) {
 			throw new IOException(ex);
@@ -356,50 +504,70 @@ public class Connection implements Closeable
 	
 	/**
 	 * Converts an input string representation of a matrix in textcell format
-	 * into a dense double array. The number of rows and columns need to be 
-	 * specified because textcell only represents non-zero values and hence
-	 * does not define the dimensions in the general case.
+	 * into a matrix block. 
 	 * 
 	 * @param input string matrix in textcell format
 	 * @param rows number of rows in the matrix
 	 * @param cols number of columns in the matrix
-	 * @return matrix as a two-dimensional double array
+	 * @return matrix as a matrix block
 	 * @throws IOException if IOException occurs
 	 */
-	public double[][] convertToDoubleMatrix(String input, int rows, int cols) 
-		throws IOException
-	{
-		InputStream is = IOUtilFunctions.toInputStream(input);
-		return convertToDoubleMatrix(is, rows, cols);
+	public MatrixBlock convertToMatrix(String input, int rows, int cols) throws IOException {
+		try( InputStream is = IOUtilFunctions.toInputStream(input) ) {
+			return convertToMatrix(is, rows, cols);
+		}
 	}
 	
 	/**
 	 * Converts an input stream of a string matrix in textcell format
-	 * into a dense double array. The number of rows and columns need to be 
-	 * specified because textcell only represents non-zero values and hence
-	 * does not define the dimensions in the general case.
+	 * into a matrix block. 
 	 * 
 	 * @param input InputStream to a string matrix in textcell format
 	 * @param rows number of rows in the matrix
 	 * @param cols number of columns in the matrix
-	 * @return matrix as a two-dimensional double array
+	 * @return matrix as a matrix block
 	 * @throws IOException if IOException occurs
 	 */
-	public double[][] convertToDoubleMatrix(InputStream input, int rows, int cols) 
+	public MatrixBlock convertToMatrix(InputStream input, int rows, int cols) throws IOException {
+		return convertToMatrix(input, rows, cols, DataExpression.FORMAT_TYPE_VALUE_TEXT);
+	}
+	
+	/**
+	 * Converts an input stream of a string matrix in csv or textcell format
+	 * into a matrix block. 
+	 * 
+	 * @param input InputStream to a string matrix in csv or textcell format
+	 * @param rows number of rows in the matrix
+	 * @param cols number of columns in the matrix
+	 * @param format input format of the given stream
+	 * @return matrix as a matrix block
+	 * @throws IOException if IOException occurs
+	 */
+	public MatrixBlock convertToMatrix(InputStream input, int rows, int cols, String format) 
 		throws IOException
 	{
-		double[][] ret = null;
+		MatrixBlock ret = null;
+
+		//sanity check input format
+		if(!(DataExpression.FORMAT_TYPE_VALUE_TEXT.equals(format)
+			||DataExpression.FORMAT_TYPE_VALUE_MATRIXMARKET.equals(format)
+			||DataExpression.FORMAT_TYPE_VALUE_CSV.equals(format)) ) {
+			throw new IOException("Invalid input format (expected: csv, text or mm): "+format);
+		}
+		
+		setLocalConfigs();
 		
 		try {
 			//read input matrix
-			ReaderTextCell reader = (ReaderTextCell)MatrixReaderFactory.createMatrixReader(InputInfo.TextCellInputInfo);
-			MatrixBlock mb = reader.readMatrixFromInputStream(input, rows, cols, ConfigurationManager.getBlocksize(), ConfigurationManager.getBlocksize(), (long)rows*cols);
-		
-			//convert to double array
-			ret = DataConverter.convertToDoubleMatrix( mb );
+			InputInfo iinfo = DataExpression.FORMAT_TYPE_VALUE_CSV.equals(format) ? 
+					InputInfo.CSVInputInfo : InputInfo.TextCellInputInfo;
+			MatrixReader reader = MatrixReaderFactory.createMatrixReader(iinfo);
+			int blksz = ConfigurationManager.getBlocksize();
+			ret = reader.readMatrixFromInputStream(input, 
+					rows, cols, blksz, blksz, (long)rows*cols);
 		}
 		catch(DMLRuntimeException rex) {
-			throw new IOException( rex );
+			throw new IOException(rex);
 		}
 		
 		return ret;
@@ -429,7 +597,7 @@ public class Connection implements Closeable
 			long rows = jmtd.getLong(DataExpression.READROWPARAM);
 			long cols = jmtd.getLong(DataExpression.READCOLPARAM);
 			String format = jmtd.getString(DataExpression.FORMAT_TYPE);
-			InputInfo iinfo = InputInfo.stringExternalToInputInfo(format);			
+			InputInfo iinfo = InputInfo.stringExternalToInputInfo(format);
 		
 			//read frame file
 			return readStringFrame(fname, iinfo, rows, cols);
@@ -453,6 +621,8 @@ public class Connection implements Closeable
 	public String[][] readStringFrame(String fname, InputInfo iinfo, long rows, long cols) 
 		throws IOException
 	{
+		setLocalConfigs();
+		
 		try {
 			FrameReader reader = FrameReaderFactory.createFrameReader(iinfo);
 			FrameBlock mb = reader.readFrameFromHDFS(fname, rows, cols);
@@ -464,16 +634,97 @@ public class Connection implements Closeable
 	}
 	
 	/**
-	 * Converts an input string representation of a frame in textcell format
+	 * Converts an input string representation of a frame in csv or textcell format
 	 * into a dense string array. The meta data string is the SystemML generated
 	 * .mtd file including the number of rows and columns.
 	 * 
-	 * @param input string frame in textcell format
+	 * @param input string frame in csv or textcell format
 	 * @param meta string representing SystemML frame metadata in JSON format
 	 * @return frame as a two-dimensional string array
 	 * @throws IOException if IOException occurs
 	 */
 	public String[][] convertToStringFrame(String input, String meta) 
+		throws IOException
+	{
+		FrameBlock fb = convertToFrame(input, meta);
+		return DataConverter.convertToStringFrame(fb);
+	}
+	
+	/**
+	 * Converts an input stream of a string frame in textcell format
+	 * into a dense string array. 
+	 * 
+	 * @param input string frame in textcell format
+	 * @param rows number of rows in the frame
+	 * @param cols number of columns in the frame
+	 * @return frame as a two-dimensional string array
+	 * @throws IOException if IOException occurs
+	 */
+	public String[][] convertToStringFrame(String input, int rows, int cols) throws IOException {
+		try( InputStream is = IOUtilFunctions.toInputStream(input) ) {
+			return convertToStringFrame(is, rows, cols);
+		}
+	}
+	
+	/**
+	 * Converts an input stream of a string frame in textcell format
+	 * into a dense string array. 
+	 * 
+	 * @param input InputStream to a string frame in textcell format
+	 * @param rows number of rows in the frame
+	 * @param cols number of columns in the frame
+	 * @return frame as a two-dimensional string array
+	 * @throws IOException if IOException occurs
+	 */
+	public String[][] convertToStringFrame(InputStream input, int rows, int cols) throws IOException {
+		return convertToStringFrame(input, rows, cols, DataExpression.FORMAT_TYPE_VALUE_TEXT);
+	}
+	
+	/**
+	 * Converts an input stream of a string frame in csv or textcell format
+	 * into a dense string array. 
+	 * 
+	 * @param input InputStream to a string frame in csv or textcell format
+	 * @param rows number of rows in the frame
+	 * @param cols number of columns in the frame
+	 * @param format input format of the given stream
+	 * @return frame as a two-dimensional string array
+	 * @throws IOException if IOException occurs
+	 */
+	public String[][] convertToStringFrame(InputStream input, int rows, int cols, String format) 
+		throws IOException
+	{
+		FrameBlock fb = convertToFrame(input, rows, cols, format);
+		return DataConverter.convertToStringFrame(fb);
+	}
+	
+	/**
+	 * Converts an input string representation of a frame in csv or textcell format
+	 * into a frame block. The meta data string is the SystemML generated
+	 * .mtd file including the number of rows and columns.
+	 * 
+	 * @param input string frame in csv or textcell format
+	 * @param meta string representing SystemML frame metadata in JSON format
+	 * @return frame as a frame block
+	 * @throws IOException if IOException occurs
+	 */
+	public FrameBlock convertToFrame(String input, String meta) throws IOException {
+		try( InputStream is = IOUtilFunctions.toInputStream(input) ) {
+			return convertToFrame(is, meta);
+		}
+	}
+	
+	/**
+	 * Converts an input stream of a string frame in csv or textcell format
+	 * into a frame block. The meta data string is the SystemML generated
+	 * .mtd file including the number of rows and columns.
+	 * 
+	 * @param input InputStream to a string frame in csv or textcell format
+	 * @param meta string representing SystemML frame metadata in JSON format
+	 * @return frame as a frame block
+	 * @throws IOException if IOException occurs
+	 */
+	public FrameBlock convertToFrame(InputStream input, String meta) 
 		throws IOException
 	{
 		try {
@@ -482,15 +733,9 @@ public class Connection implements Closeable
 			int rows = jmtd.getInt(DataExpression.READROWPARAM);
 			int cols = jmtd.getInt(DataExpression.READCOLPARAM);
 			String format = jmtd.getString(DataExpression.FORMAT_TYPE);
-	
-			//sanity check input format
-			if(!(DataExpression.FORMAT_TYPE_VALUE_TEXT.equals(format)
-				||DataExpression.FORMAT_TYPE_VALUE_MATRIXMARKET.equals(format))) {
-				throw new IOException("Invalid input format (expected: text or mm): "+format);
-			}
 			
 			//parse the input frame
-			return convertToStringFrame(input, rows, cols);
+			return convertToFrame(input, rows, cols, format);
 		}
 		catch(Exception ex) {
 			throw new IOException(ex);
@@ -499,55 +744,72 @@ public class Connection implements Closeable
 	
 	/**
 	 * Converts an input string representation of a frame in textcell format
-	 * into a dense string array. The number of rows and columns need to be 
-	 * specified because textcell only represents non-zero values and hence
-	 * does not define the dimensions in the general case.
+	 * into a frame block. 
 	 * 
 	 * @param input string frame in textcell format
 	 * @param rows number of rows in the frame
 	 * @param cols number of columns in the frame
-	 * @return frame as a two-dimensional string array
+	 * @return frame as a frame block
 	 * @throws IOException if IOException occurs
 	 */
-	public String[][] convertToStringFrame(String input, int rows, int cols) 
-		throws IOException
-	{
-		InputStream is = IOUtilFunctions.toInputStream(input);
-		return convertToStringFrame(is, rows, cols);
+	public FrameBlock convertToFrame(String input, int rows, int cols) throws IOException {
+		try( InputStream is = IOUtilFunctions.toInputStream(input) ) {
+			return convertToFrame(is, rows, cols);
+		}
 	}
 	
 	/**
 	 * Converts an input stream of a string frame in textcell format
-	 * into a dense string array. The number of rows and columns need to be 
-	 * specified because textcell only represents non-zero values and hence
-	 * does not define the dimensions in the general case.
+	 * into a frame block. 
 	 * 
 	 * @param input InputStream to a string frame in textcell format
 	 * @param rows number of rows in the frame
 	 * @param cols number of columns in the frame
-	 * @return frame as a two-dimensional string array
+	 * @return frame as a frame block
 	 * @throws IOException if IOException occurs
 	 */
-	public String[][] convertToStringFrame(InputStream input, int rows, int cols) 
+	public FrameBlock convertToFrame(InputStream input, int rows, int cols) throws IOException {
+		return convertToFrame(input, rows, cols, DataExpression.FORMAT_TYPE_VALUE_TEXT);
+	}
+	
+	/**
+	 * Converts an input stream of a frame in csv or textcell format
+	 * into a frame block. 
+	 * 
+	 * @param input InputStream to a string frame in csv or textcell format
+	 * @param rows number of rows in the frame
+	 * @param cols number of columns in the frame
+	 * @param format input format of the given stream
+	 * @return frame as a frame block
+	 * @throws IOException if IOException occurs
+	 */
+	public FrameBlock convertToFrame(InputStream input, int rows, int cols, String format) 
 		throws IOException
 	{
-		String[][] ret = null;
+		FrameBlock ret = null;
+	
+		//sanity check input format
+		if(!(DataExpression.FORMAT_TYPE_VALUE_TEXT.equals(format)
+			||DataExpression.FORMAT_TYPE_VALUE_MATRIXMARKET.equals(format)
+			||DataExpression.FORMAT_TYPE_VALUE_CSV.equals(format))) {
+			throw new IOException("Invalid input format (expected: csv, text or mm): "+format);
+		}
+		
+		setLocalConfigs();
 		
 		try {
-			//read input matrix
-			FrameReaderTextCell reader = (FrameReaderTextCell)FrameReaderFactory.createFrameReader(InputInfo.TextCellInputInfo);
-			FrameBlock mb = reader.readFrameFromInputStream(input, rows, cols);
-		
-			//convert to double array
-			ret = DataConverter.convertToStringFrame( mb );
+			//read input frame
+			InputInfo iinfo = DataExpression.FORMAT_TYPE_VALUE_CSV.equals(format) ? 
+					InputInfo.CSVInputInfo : InputInfo.TextCellInputInfo;
+			FrameReader reader = FrameReaderFactory.createFrameReader(iinfo);
+			ret = reader.readFrameFromInputStream(input, rows, cols);
 		}
 		catch(DMLRuntimeException rex) {
-			throw new IOException( rex );
+			throw new IOException(rex);
 		}
 		
 		return ret;
 	}
-	
 	
 	////////////////////////////////////////////
 	// Read transform meta data
@@ -633,5 +895,11 @@ public class Connection implements Closeable
 	 */
 	public FrameBlock readTransformMetaDataFromPath(String spec, String metapath, String colDelim) throws IOException {
 		return TfMetaUtils.readTransformMetaDataFromPath(spec, metapath, colDelim);
+	}
+	
+	private void setLocalConfigs() {
+		//set thread-local configurations for compilation and read
+		ConfigurationManager.setLocalConfig(_dmlconf);
+		ConfigurationManager.setLocalConfig(_cconf);
 	}
 }

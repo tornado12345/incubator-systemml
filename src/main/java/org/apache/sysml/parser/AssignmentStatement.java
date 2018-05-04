@@ -21,69 +21,72 @@ package org.apache.sysml.parser;
 
 import java.util.ArrayList;
 
+import org.antlr.v4.runtime.ParserRuleContext;
 import org.apache.sysml.api.DMLScript;
 import org.apache.sysml.debug.DMLBreakpointManager;
 
 
 public class AssignmentStatement extends Statement
 {
-		
 	private ArrayList<DataIdentifier> _targetList;
 	private Expression _source;
+	private boolean _isAccum; //+=
 	 
 	// rewrites statement to support function inlining (creates deep copy)
-	public Statement rewriteStatement(String prefix) throws LanguageException{
-				
+	@Override
+	public Statement rewriteStatement(String prefix) {
 		// rewrite target (deep copy)
-		DataIdentifier newTarget = (DataIdentifier)_targetList.get(0).rewriteExpression(prefix);
-		
+		DataIdentifier newTarget = (DataIdentifier) _targetList.get(0).rewriteExpression(prefix);
 		// rewrite source (deep copy)
 		Expression newSource = _source.rewriteExpression(prefix);
-		
 		// create rewritten assignment statement (deep copy)
-		AssignmentStatement retVal = new AssignmentStatement(newTarget, newSource,this.getBeginLine(), 
-											this.getBeginColumn(), this.getEndLine(), this.getEndColumn());
-		
+		AssignmentStatement retVal = new AssignmentStatement(newTarget, newSource, this);
 		return retVal;
 	}
 	
+	public AssignmentStatement(DataIdentifier di, Expression exp) {
+		_targetList = new ArrayList<>();
+		_targetList.add(di);
+		_source = exp;
+	}
 	
-	public AssignmentStatement(DataIdentifier t, Expression s) {
+	public AssignmentStatement(DataIdentifier di, Expression exp, ParseInfo parseInfo) {
+		this(di, exp);
+		setParseInfo(parseInfo);
+	}
 
-		_targetList = new ArrayList<DataIdentifier>();
-		_targetList.add(t);
-		_source = s;
+	public AssignmentStatement(ParserRuleContext ctx, DataIdentifier di, Expression exp) {
+		this(di, exp);
+		setCtxValues(ctx);
 	}
-	
-	
-	public AssignmentStatement(DataIdentifier t, Expression s, int beginLine, int beginCol, int endLine, int endCol) 
-		throws LanguageException
-	{	
-		_targetList = new ArrayList<DataIdentifier>();
-		_targetList.add(t);
-		_source = s;
-	
-		setBeginLine(beginLine);
-		setBeginColumn(beginCol);
-		setEndLine(endLine);
-		setEndColumn(endCol);
-		
+
+	public AssignmentStatement(ParserRuleContext ctx, DataIdentifier di, Expression exp, String filename) {
+		this(ctx, di, exp);
+		setFilename(filename);
 	}
-	
+
 	public DataIdentifier getTarget(){
 		return _targetList.get(0);
 	}
 	
-	public ArrayList<DataIdentifier> getTargetList()
-	{
+	public ArrayList<DataIdentifier> getTargetList() {
 		return _targetList;
 	}
 
 	public Expression getSource(){
 		return _source;
 	}
+	
 	public void setSource(Expression s){
 		_source = s;
+	}
+	
+	public boolean isAccumulator() {
+		return _isAccum;
+	}
+	
+	public void setAccumulator(boolean flag) {
+		_isAccum = flag;
 	}
 	
 	@Override
@@ -100,47 +103,54 @@ public class AssignmentStatement extends Statement
 		
 		return false;
 	}
-	
+
+	@Override
 	public void initializeforwardLV(VariableSet activeIn){
 		//do nothing
 	}
 	
+	@Override
 	public VariableSet initializebackwardLV(VariableSet lo){
 		return lo;
 	}
 	
+	@Override
 	public VariableSet variablesRead() {
 		VariableSet result = new VariableSet();
-		
 		// add variables read by source expression
 		result.addVariables(_source.variablesRead());
-		
-		// for LHS IndexedIdentifier, add variables for indexing expressions
-		for (int i=0; i<_targetList.size(); i++){
-			if (_targetList.get(i) instanceof IndexedIdentifier) {
-				IndexedIdentifier target = (IndexedIdentifier) _targetList.get(i);
+		// for left indexing or accumulators add targets as well
+		for (DataIdentifier target : _targetList)
+			if (target instanceof IndexedIdentifier || _isAccum )
 				result.addVariables(target.variablesRead());
-			}
-		}		
 		return result;
 	}
 	
+	@Override
 	public  VariableSet variablesUpdated() {
 		VariableSet result =  new VariableSet();
-		
 		// add target to updated list
 		for (DataIdentifier target : _targetList)
-			result.addVariable(target.getName(), target);
+			if (target != null)
+				result.addVariable(target.getName(), target);
 		return result;
 	}
 	
+	@Override
 	public String toString(){
 		StringBuilder sb = new StringBuilder();
 		for (int i=0; i< _targetList.size(); i++){
-			sb.append(_targetList.get(i).toString());
+			DataIdentifier di = _targetList.get(i);
+			sb.append(di);
 		}
-		sb.append(" = ");
-		sb.append(_source.toString());
+		sb.append(_isAccum ? " += " : " = ");
+		if (_source instanceof StringIdentifier) {
+			sb.append("\"");
+			sb.append(_source.toString());
+			sb.append("\"");
+		} else {
+			sb.append(_source.toString());
+		}
 		sb.append(";");
 		
 		return sb.toString();

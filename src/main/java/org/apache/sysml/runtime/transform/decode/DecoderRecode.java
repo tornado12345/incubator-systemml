@@ -21,12 +21,12 @@ package org.apache.sysml.runtime.transform.decode;
 
 import java.util.HashMap;
 
-import org.apache.sysml.lops.Lop;
 import org.apache.sysml.parser.Expression.ValueType;
 import org.apache.sysml.runtime.matrix.data.FrameBlock;
 import org.apache.sysml.runtime.matrix.data.MatrixBlock;
 import org.apache.sysml.runtime.matrix.data.Pair;
 import org.apache.sysml.runtime.transform.TfUtils;
+import org.apache.sysml.runtime.transform.encode.EncoderRecode;
 import org.apache.sysml.runtime.util.UtilFunctions;
 
 /**
@@ -78,24 +78,24 @@ public class DecoderRecode extends Decoder
 		//initialize recode maps according to schema
 		_rcMaps = new HashMap[_colList.length];
 		for( int j=0; j<_colList.length; j++ ) {
-			HashMap<Long, Object> map = new HashMap<Long, Object>();
+			HashMap<Long, Object> map = new HashMap<>();
 			for( int i=0; i<meta.getNumRows(); i++ ) {
 				if( meta.get(i, _colList[j]-1)==null )
 					break; //reached end of recode map
-				String[] tmp = meta.get(i, _colList[j]-1).toString().split(Lop.DATATYPE_PREFIX);				
+				String[] tmp = EncoderRecode.splitRecodeMapEntry(meta.get(i, _colList[j]-1).toString());
 				Object obj = UtilFunctions.stringToObject(_schema[_colList[j]-1], tmp[0]);
-				map.put(Long.parseLong(tmp[1]), obj);				
+				map.put(Long.parseLong(tmp[1]), obj);
 			}
 			_rcMaps[j] = map;
 		}
 	}
 	
 	/**
-	 * Parses a line of <token, ID, count> into <token, ID> pairs, where 
+	 * Parses a line of &lt;token, ID, count&gt; into &lt;token, ID&gt; pairs, where 
 	 * quoted tokens (potentially including separators) are supported.
 	 * 
-	 * @param entry
-	 * @param pair
+	 * @param entry entry line (token, ID, count)
+	 * @param pair token-ID pair
 	 */
 	public static void parseRecodeMapEntry(String entry, Pair<String,String> pair) {
 		int ixq = entry.lastIndexOf('"');

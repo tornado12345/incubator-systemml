@@ -19,6 +19,14 @@
 
 package org.apache.sysml.parser.pydml;
 
+import java.io.File;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+
 import org.antlr.v4.runtime.ParserRuleContext;
 import org.antlr.v4.runtime.Token;
 import org.antlr.v4.runtime.tree.ErrorNode;
@@ -49,6 +57,7 @@ import org.apache.sysml.parser.LanguageException;
 import org.apache.sysml.parser.ParForStatement;
 import org.apache.sysml.parser.ParameterExpression;
 import org.apache.sysml.parser.ParseException;
+import org.apache.sysml.parser.ParserWrapper;
 import org.apache.sysml.parser.PathStatement;
 import org.apache.sysml.parser.Statement;
 import org.apache.sysml.parser.StatementBlock;
@@ -58,8 +67,6 @@ import org.apache.sysml.parser.common.CommonSyntacticValidator;
 import org.apache.sysml.parser.common.CustomErrorListener;
 import org.apache.sysml.parser.common.ExpressionInfo;
 import org.apache.sysml.parser.common.StatementInfo;
-import org.apache.sysml.parser.dml.DmlParser.MatrixMulExpressionContext;
-import org.apache.sysml.parser.dml.DmlSyntacticValidator;
 import org.apache.sysml.parser.pydml.PydmlParser.AddSubExpressionContext;
 import org.apache.sysml.parser.pydml.PydmlParser.AssignmentStatementContext;
 import org.apache.sysml.parser.pydml.PydmlParser.AtomicExpressionContext;
@@ -110,14 +117,6 @@ import org.apache.sysml.parser.pydml.PydmlParser.UnaryExpressionContext;
 import org.apache.sysml.parser.pydml.PydmlParser.ValueDataTypeCheckContext;
 import org.apache.sysml.parser.pydml.PydmlParser.WhileStatementContext;
 
-import java.io.File;
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
-
 /**
  * TODO: Refactor duplicated parser code dml/pydml (entire package).
  *
@@ -133,7 +132,7 @@ public class PydmlSyntacticValidator extends CommonSyntacticValidator implements
 	@Override public String falseStringLiteral() { return "False"; }
 
 	protected ArrayList<ParameterExpression> getParameterExpressionList(List<ParameterizedExpressionContext> paramExprs) {
-		ArrayList<ParameterExpression> retVal = new ArrayList<ParameterExpression>();
+		ArrayList<ParameterExpression> retVal = new ArrayList<>();
 		for(ParameterizedExpressionContext ctx : paramExprs) {
 			String paramName = null;
 			if(ctx.paramName != null && ctx.paramName.getText() != null && !ctx.paramName.getText().isEmpty()) {
@@ -338,10 +337,10 @@ public class PydmlSyntacticValidator extends CommonSyntacticValidator implements
 		setFileLineColumn(ctx.dataInfo.expr, ctx);
 
 		try {
-			ArrayList< ArrayList<Expression> > exprList = new ArrayList< ArrayList<Expression> >();
+			ArrayList< ArrayList<Expression> > exprList = new ArrayList<>();
 
-			ArrayList<Expression> rowIndices = new ArrayList<Expression>();
-			ArrayList<Expression> colIndices = new ArrayList<Expression>();
+			ArrayList<Expression> rowIndices = new ArrayList<>();
+			ArrayList<Expression> colIndices = new ArrayList<>();
 
 
 			if(!isRowLower && !isRowUpper) {
@@ -360,21 +359,14 @@ public class PydmlSyntacticValidator extends CommonSyntacticValidator implements
 					// Add expression for nrow(X) for implicit upper bound
 					Expression.BuiltinFunctionOp bop = Expression.BuiltinFunctionOp.NROW;
 					DataIdentifier x = new DataIdentifier(ctx.name.getText());
-					int line = ctx.start.getLine();
-					int col = ctx.start.getCharPositionInLine();
-					Expression expr = new BuiltinFunctionExpression(bop, new Expression[]{x},
-							currentFile, line, col, line, col);
-					setFileLineColumn(expr, ctx);
+					Expression expr = new BuiltinFunctionExpression(ctx, bop, new Expression[] { x }, currentFile);
 					rowIndices.add(expr);
 				}
 			}
 			else if(!isRowLower && isRowUpper && isRowSliceImplicit) {
 				// Add expression for `1` for implicit lower bound
 				// Note: We go ahead and increment by 1 to convert from 0-based to 1-based indexing
-				int line = ctx.start.getLine();
-				int col = ctx.start.getCharPositionInLine();
-				IntIdentifier one = new IntIdentifier(1, currentFile, line, col, line, col);
-				setFileLineColumn(one, ctx);
+				IntIdentifier one = new IntIdentifier(ctx, 1, currentFile);
 				rowIndices.add(one);
 
 				// Add given upper bound
@@ -400,21 +392,14 @@ public class PydmlSyntacticValidator extends CommonSyntacticValidator implements
 					// Add expression for ncol(X) for implicit upper bound
 					Expression.BuiltinFunctionOp bop = Expression.BuiltinFunctionOp.NCOL;
 					DataIdentifier x = new DataIdentifier(ctx.name.getText());
-					int line = ctx.start.getLine();
-					int col = ctx.start.getCharPositionInLine();
-					Expression expr = new BuiltinFunctionExpression(bop, new Expression[]{x},
-							currentFile, line, col, line, col);
-					setFileLineColumn(expr, ctx);
+					Expression expr = new BuiltinFunctionExpression(ctx, bop, new Expression[] { x }, currentFile);
 					colIndices.add(expr);
 				}
 			}
 			else if(!isColLower && isColUpper && isColSliceImplicit) {
 				// Add expression for `1` for implicit lower bound
 				// Note: We go ahead and increment by 1 to convert from 0-based to 1-based indexing
-				int line = ctx.start.getLine();
-				int col = ctx.start.getCharPositionInLine();
-				IntIdentifier one = new IntIdentifier(1, currentFile, line, col, line, col);
-				setFileLineColumn(one, ctx);
+				IntIdentifier one = new IntIdentifier(ctx, 1, currentFile);
 				colIndices.add(one);
 
 				// Add given upper bound
@@ -438,18 +423,16 @@ public class PydmlSyntacticValidator extends CommonSyntacticValidator implements
 	 * Increment lower indices by 1 when translating from PyDML
 	 * (0-based indexing) to DML (1-based indexing).
 	 *
-	 * @param expr
-	 * @param ctx
-	 * @return
+	 * @param expr expression 
+	 * @param ctx antlr rule context
+	 * @return expression
 	 */
 	private Expression incrementByOne(Expression expr, ParserRuleContext ctx) {
 		// Addition and subtraction operator same as DML
 		Expression.BinaryOp bop = Expression.getBinaryOp("+");
 		Expression retVal = new BinaryExpression(bop);
 		((BinaryExpression)retVal).setLeft(expr);
-		int line = ctx.start.getLine();
-		int col = ctx.start.getCharPositionInLine();
-		((BinaryExpression)retVal).setRight(new DoubleIdentifier(1.0, currentFile, line, col, line, col));
+		((BinaryExpression)retVal).setRight(new DoubleIdentifier(ctx, 1.0, currentFile));
 		setFileLineColumn(retVal, ctx);
 		return retVal;
 	}
@@ -472,14 +455,14 @@ public class PydmlSyntacticValidator extends CommonSyntacticValidator implements
 	private void handleCommandlineArgumentExpression(DataIdentifierContext ctx)
 	{
 		String varName = ctx.getText().trim();
-		fillExpressionInfoCommandLineParameters(varName, ctx.dataInfo, ctx.start);
+		fillExpressionInfoCommandLineParameters(ctx, varName, ctx.dataInfo);
 
 		if(ctx.dataInfo.expr == null) {
 			if(!(ctx.parent instanceof IfdefAssignmentStatementContext)) {
 				String msg = "The parameter " + varName + " either needs to be passed "
 						+ "through commandline or initialized to default value.";
 				if( ConfigurationManager.getCompilerConfigFlag(ConfigType.IGNORE_UNSPECIFIED_ARGS) ) {
-					ctx.dataInfo.expr = getConstIdFromString(" ", ctx.start);
+					ctx.dataInfo.expr = getConstIdFromString(ctx, " ");
 					if (!ConfigurationManager.getCompilerConfigFlag(ConfigType.MLCONTEXT)) {
 						raiseWarning(msg, ctx.start);
 					}
@@ -533,7 +516,7 @@ public class PydmlSyntacticValidator extends CommonSyntacticValidator implements
 				return;
 			}
 			else {
-				ctx.info.namespaces = new HashMap<String, DMLProgram>();
+				ctx.info.namespaces = new HashMap<>();
 				ctx.info.namespaces.put(getQualifiedNamespace(namespace), prog);
 				ctx.info.stmt = new ImportStatement();
 				((ImportStatement) ctx.info.stmt).setCompletePath(filePath);
@@ -546,7 +529,7 @@ public class PydmlSyntacticValidator extends CommonSyntacticValidator implements
 			// Skip redundant parsing (to prevent potential infinite recursion) and
 			// create empty program for this context to allow processing to continue.
 			prog = new DMLProgram();
-			ctx.info.namespaces = new HashMap<String, DMLProgram>();
+			ctx.info.namespaces = new HashMap<>();
 			ctx.info.namespaces.put(getQualifiedNamespace(namespace), prog);
 			ctx.info.stmt = new ImportStatement();
 			((ImportStatement) ctx.info.stmt).setCompletePath(filePath);
@@ -575,10 +558,10 @@ public class PydmlSyntacticValidator extends CommonSyntacticValidator implements
 	// -----------------------------------------------------------------
 
 	/** Similar to the "axis" argument in numpy.
-	 * @param ctx
+	 * @param ctx parameter expression
 	 * @return 0 (along rows), 1 (along column) or -1 (for error)
 	 */
-	private int getAxis(ParameterExpression ctx) {
+	private static int getAxis(ParameterExpression ctx) {
 		if(ctx.getName() != null && ctx.getName() != null) {
 			if(!ctx.getName().equals("axis")) {
 				return -1;
@@ -597,7 +580,7 @@ public class PydmlSyntacticValidator extends CommonSyntacticValidator implements
 	}
 
 	// TODO : Clean up to use Map or some other structure
-	private String getPythonAggFunctionNames(String functionName, int axis) {
+	private static String getPythonAggFunctionNames(String functionName, int axis) {
 		if(axis != 0 && axis != 1) {
 			return functionName;
 		}
@@ -653,22 +636,18 @@ public class PydmlSyntacticValidator extends CommonSyntacticValidator implements
 
 	/**
 	 * Check function name, namespace, parameters (#params & possible values) and produce useful messages/hints
-	 * @param ctx
-	 * @param namespace
-	 * @param functionName
-	 * @param paramExpression
-	 * @param fnName
-	 * @return
+	 * @param ctx antlr rule context
+	 * @param namespace Namespace of the function
+	 * @param functionName Name of the builtin function
+	 * @param paramExpression Array of parameter names and values
+	 * @param fnName Token of the builtin function identifier
+	 * @return common syntax format for runtime
 	 */
 	private ConvertedDMLSyntax convertPythonBuiltinFunctionToDMLSyntax(ParserRuleContext ctx, String namespace, String functionName, ArrayList<ParameterExpression> paramExpression,
 			Token fnName) {
 		if (sources.containsValue(namespace) || functions.contains(functionName)) {
 			return new ConvertedDMLSyntax(namespace, functionName, paramExpression);
 		}
-
-		String fileName = currentFile;
-		int line = ctx.start.getLine();
-		int col = ctx.start.getCharPositionInLine();
 
 		if(namespace.equals(DMLProgram.DEFAULT_NAMESPACE) && functionName.equals("len")) {
 			if(paramExpression.size() != 1) {
@@ -701,7 +680,7 @@ public class PydmlSyntacticValidator extends CommonSyntacticValidator implements
 			}
 			else if(!(namespace.equals(DMLProgram.DEFAULT_NAMESPACE)) && paramExpression.size() == 0) {
 				// x.sum() => sum(x)
-				paramExpression = new ArrayList<ParameterExpression>();
+				paramExpression = new ArrayList<>();
 				paramExpression.add(new ParameterExpression(null, new DataIdentifier(namespace)));
 				// otherwise same function name
 				if(functionName.equals("avg")) {
@@ -727,7 +706,7 @@ public class PydmlSyntacticValidator extends CommonSyntacticValidator implements
 					return null;
 				}
 				else {
-					ArrayList<ParameterExpression> temp = new ArrayList<ParameterExpression>();
+					ArrayList<ParameterExpression> temp = new ArrayList<>();
 					temp.add(paramExpression.get(0));
 					paramExpression = temp;
 					functionName = getPythonAggFunctionNames(functionName, axis);
@@ -745,7 +724,7 @@ public class PydmlSyntacticValidator extends CommonSyntacticValidator implements
 					 return null;
 				 }
 				 else {
-					 paramExpression = new ArrayList<ParameterExpression>();
+					 paramExpression = new ArrayList<>();
 					 paramExpression.add(new ParameterExpression(null, new DataIdentifier(namespace)));
 					 functionName = getPythonAggFunctionNames(functionName, axis);
 					 if(functionName.equals("Not Supported")) {
@@ -795,7 +774,7 @@ public class PydmlSyntacticValidator extends CommonSyntacticValidator implements
 				notifyErrorListeners("The builtin function \'" + functionName + "\' accepts only 1 argument (0 or 1)", fnName);
 				return null;
 			}
-			paramExpression = new ArrayList<ParameterExpression>();
+			paramExpression = new ArrayList<>();
 			paramExpression.add(new ParameterExpression(null, new DataIdentifier(namespace)));
 			namespace = DMLProgram.DEFAULT_NAMESPACE;
 			if(axis == 0) {
@@ -814,7 +793,7 @@ public class PydmlSyntacticValidator extends CommonSyntacticValidator implements
 			paramExpression.get(0).setName("rows");
 			paramExpression.get(1).setName("cols");
 			paramExpression.get(2).setName("sparsity");
-			paramExpression.add(new ParameterExpression("pdf", new StringIdentifier("normal", fileName, line, col, line, col)));
+			paramExpression.add(new ParameterExpression("pdf", new StringIdentifier(ctx, "normal", currentFile)));
 			functionName = "rand";
 			namespace = DMLProgram.DEFAULT_NAMESPACE;
 		}
@@ -828,7 +807,7 @@ public class PydmlSyntacticValidator extends CommonSyntacticValidator implements
 			paramExpression.get(1).setName("cols");
 			paramExpression.get(2).setName("sparsity");
 			paramExpression.get(3).setName("lambda");
-			paramExpression.add(new ParameterExpression("pdf", new StringIdentifier("poisson", fileName, line, col, line, col)));
+			paramExpression.add(new ParameterExpression("pdf", new StringIdentifier(ctx, "poisson", currentFile)));
 			functionName = "rand";
 			namespace = DMLProgram.DEFAULT_NAMESPACE;
 		}
@@ -843,7 +822,7 @@ public class PydmlSyntacticValidator extends CommonSyntacticValidator implements
 			paramExpression.get(2).setName("sparsity");
 			paramExpression.get(3).setName("min");
 			paramExpression.get(4).setName("max");
-			paramExpression.add(new ParameterExpression("pdf", new StringIdentifier("uniform", fileName, line, col, line, col)));
+			paramExpression.add(new ParameterExpression("pdf", new StringIdentifier(ctx, "uniform", currentFile)));
 			functionName = "rand";
 			namespace = DMLProgram.DEFAULT_NAMESPACE;
 		}
@@ -886,10 +865,10 @@ public class PydmlSyntacticValidator extends CommonSyntacticValidator implements
 				initializerString = initializerString.replaceAll(";", " ");
 				initializerString = initializerString.replaceAll("\\[", "");
 				initializerString = initializerString.replaceAll("\\]", "");
-				paramExpression = new ArrayList<ParameterExpression>();
-				paramExpression.add(new ParameterExpression(null, new StringIdentifier(initializerString, fileName, line, col, line, col)));
-				paramExpression.add(new ParameterExpression("rows", new IntIdentifier(rows, fileName, line, col, line, col)));
-				paramExpression.add(new ParameterExpression("cols", new IntIdentifier(cols, fileName, line, col, line, col)));
+				paramExpression = new ArrayList<>();
+				paramExpression.add(new ParameterExpression(null, new StringIdentifier(ctx, initializerString, currentFile)));
+				paramExpression.add(new ParameterExpression("rows", new IntIdentifier(ctx, rows, currentFile)));
+				paramExpression.add(new ParameterExpression("cols", new IntIdentifier(ctx, cols, currentFile)));
 			}
 			else {
 				functionName = "as.matrix";
@@ -936,7 +915,7 @@ public class PydmlSyntacticValidator extends CommonSyntacticValidator implements
 			paramExpression.get(0).setName("rows");
 			paramExpression.get(1).setName("cols");
 
-			ArrayList<ParameterExpression> temp = new ArrayList<ParameterExpression>();
+			ArrayList<ParameterExpression> temp = new ArrayList<>();
 			temp.add(new ParameterExpression(null, new DataIdentifier(namespace)));
 			temp.add(paramExpression.get(0));
 			temp.add(paramExpression.get(1));
@@ -957,10 +936,10 @@ public class PydmlSyntacticValidator extends CommonSyntacticValidator implements
 			}
 			StringIdentifier marginVal = null;
 			if(axis == 0) {
-				marginVal = new StringIdentifier("rows", fileName, line, col, line, col);
+				marginVal = new StringIdentifier(ctx, "rows", currentFile);
 			}
 			else {
-				marginVal = new StringIdentifier("cols", fileName, line, col, line, col);
+				marginVal = new StringIdentifier(ctx, "cols", currentFile);
 			}
 			paramExpression.get(0).setName("target");
 			paramExpression.get(1).setName("margin");
@@ -999,7 +978,7 @@ public class PydmlSyntacticValidator extends CommonSyntacticValidator implements
 			paramExpression.get(0).setName("target");
 			paramExpression.get(1).setName("mean");
 			paramExpression.get(2).setName("sd");
-			paramExpression.add(new ParameterExpression("dist", new StringIdentifier("normal", fileName, line, col, line, col)));
+			paramExpression.add(new ParameterExpression("dist", new StringIdentifier(ctx, "normal", currentFile)));
 			namespace = DMLProgram.DEFAULT_NAMESPACE;
 		}
 		else if(namespace.equals("expon") && functionName.equals("cdf")) {
@@ -1011,7 +990,7 @@ public class PydmlSyntacticValidator extends CommonSyntacticValidator implements
 			functionName = "cdf";
 			paramExpression.get(0).setName("target");
 			paramExpression.get(1).setName("mean");
-			paramExpression.add(new ParameterExpression("dist", new StringIdentifier("exp", fileName, line, col, line, col)));
+			paramExpression.add(new ParameterExpression("dist", new StringIdentifier(ctx, "exp", currentFile)));
 			namespace = DMLProgram.DEFAULT_NAMESPACE;
 		}
 		else if(namespace.equals("chi") && functionName.equals("cdf")) {
@@ -1023,7 +1002,7 @@ public class PydmlSyntacticValidator extends CommonSyntacticValidator implements
 			functionName = "cdf";
 			paramExpression.get(0).setName("target");
 			paramExpression.get(1).setName("df");
-			paramExpression.add(new ParameterExpression("dist", new StringIdentifier("chisq", fileName, line, col, line, col)));
+			paramExpression.add(new ParameterExpression("dist", new StringIdentifier(ctx, "chisq", currentFile)));
 			namespace = DMLProgram.DEFAULT_NAMESPACE;
 		}
 		else if(namespace.equals("f") && functionName.equals("cdf")) {
@@ -1036,7 +1015,7 @@ public class PydmlSyntacticValidator extends CommonSyntacticValidator implements
 			paramExpression.get(0).setName("target");
 			paramExpression.get(1).setName("df1");
 			paramExpression.get(2).setName("df2");
-			paramExpression.add(new ParameterExpression("dist", new StringIdentifier("f", fileName, line, col, line, col)));
+			paramExpression.add(new ParameterExpression("dist", new StringIdentifier(ctx, "f", currentFile)));
 			namespace = DMLProgram.DEFAULT_NAMESPACE;
 		}
 		else if(namespace.equals("t") && functionName.equals("cdf")) {
@@ -1048,7 +1027,7 @@ public class PydmlSyntacticValidator extends CommonSyntacticValidator implements
 			functionName = "cdf";
 			paramExpression.get(0).setName("target");
 			paramExpression.get(1).setName("df");
-			paramExpression.add(new ParameterExpression("dist", new StringIdentifier("t", fileName, line, col, line, col)));
+			paramExpression.add(new ParameterExpression("dist", new StringIdentifier(ctx, "t", currentFile)));
 			namespace = DMLProgram.DEFAULT_NAMESPACE;
 		}
 		else if(namespace.equals(DMLProgram.DEFAULT_NAMESPACE) && functionName.equals("percentile")) {
@@ -1094,7 +1073,7 @@ public class PydmlSyntacticValidator extends CommonSyntacticValidator implements
 	 * For Pydml, matrix multiply is invoked using dot (A, B). This is taken from numpy.dot
 	 * For Dml, it is invoked using "%*%". The dot function call in pydml is converted to a
 	 * {@link BinaryExpression} equivalent to what is done in
-	 * {@link DmlSyntacticValidator#exitMatrixMulExpression(MatrixMulExpressionContext)}
+	 * DmlSyntacticValidator's exitMatrixMulExpression(MatrixMulExpressionContext).
 	 */
 	@Override
 	protected Expression handleLanguageSpecificFunction(ParserRuleContext ctx, String functionName, ArrayList<ParameterExpression> paramExpression){
@@ -1111,11 +1090,11 @@ public class PydmlSyntacticValidator extends CommonSyntacticValidator implements
 	@Override
 	public void exitFunctionCallAssignmentStatement(FunctionCallAssignmentStatementContext ctx) {
 
-		Set<String> printStatements = new  HashSet<String>();
+		Set<String> printStatements = new  HashSet<>();
 		printStatements.add("print");
 		printStatements.add("stop");
 
-		Set<String> outputStatements = new HashSet<String>();
+		Set<String> outputStatements = new HashSet<>();
 		outputStatements.add("save");
 
 		String[] fnNames = getQualifiedNames(ctx.name.getText());
@@ -1165,16 +1144,14 @@ public class PydmlSyntacticValidator extends CommonSyntacticValidator implements
 			functionName = convertedSyntax.functionName;
 			paramExpression = convertedSyntax.paramExpression;
 		}
-
-		final ExpressionInfo info = ctx.info;
-		Action f = new Action() {
-			@Override public void execute(Expression e) { info.expr = e; }
-		};
-		boolean validBIF = buildForBuiltInFunction(ctx, functionName, paramExpression, f);
-		if (validBIF)
+		
+		//handle builtin functions
+		ctx.info.expr= buildForBuiltInFunction(ctx, functionName, paramExpression);
+		if( ctx.info.expr != null )
 			return;
 
-		notifyErrorListeners("only builtin functions allowed as part of expression", ctx.start);
+		// handle user-defined functions
+		ctx.info.expr = createFunctionCall(ctx, namespace, functionName, paramExpression);
 	}
 
 	@Override
@@ -1205,7 +1182,7 @@ public class PydmlSyntacticValidator extends CommonSyntacticValidator implements
 		functCall.setFunctionName(functionName);
 		functCall.setFunctionNamespace(namespace);
 
-		final ArrayList<DataIdentifier> targetList = new ArrayList<DataIdentifier>();
+		final ArrayList<DataIdentifier> targetList = new ArrayList<>();
 		for(DataIdentifierContext dataCtx : ctx.targetList) {
 			if(dataCtx.dataInfo.expr instanceof DataIdentifier) {
 				targetList.add((DataIdentifier) dataCtx.dataInfo.expr);
@@ -1217,13 +1194,11 @@ public class PydmlSyntacticValidator extends CommonSyntacticValidator implements
 		}
 
 		if(namespace.equals(DMLProgram.DEFAULT_NAMESPACE)) {
-			final FunctionCallMultiAssignmentStatementContext fctx = ctx;
-			Action f = new Action() {
-				@Override public void execute(Expression e) { setMultiAssignmentStatement(targetList, e, fctx, fctx.info); }
-			};
-			boolean validBIF = buildForBuiltInFunction(ctx, functionName, paramExpression, f);
-			if (validBIF)
+			Expression e = buildForBuiltInFunction(ctx, functionName, paramExpression);
+			if( e != null ) {
+				setMultiAssignmentStatement(targetList, e, ctx, ctx.info);
 				return;
+			}
 		}
 
 		// Override default namespace for imported non-built-in function
@@ -1238,8 +1213,8 @@ public class PydmlSyntacticValidator extends CommonSyntacticValidator implements
 	// 			Control Statements - Guards & Loops
 	// -----------------------------------------------------------------
 
-	private StatementBlock getStatementBlock(Statement current) {
-		return PyDMLParserWrapper.getStatementBlock(current);
+	private static StatementBlock getStatementBlock(Statement current) {
+		return ParserWrapper.getStatementBlock(current);
 	}
 
 	@Override
@@ -1247,10 +1222,7 @@ public class PydmlSyntacticValidator extends CommonSyntacticValidator implements
 		IfStatement ifStmt = new IfStatement();
 		ConditionalPredicate predicate = new ConditionalPredicate(ctx.predicate.info.expr);
 		ifStmt.setConditionalPredicate(predicate);
-		String fileName = currentFile;
-		int line = ctx.start.getLine();
-		int col = ctx.start.getCharPositionInLine();
-		ifStmt.setAllPositions(fileName, line, col, line, col);
+		ifStmt.setCtxValuesAndFilename(ctx, currentFile);
 
 		if(ctx.ifBody.size() > 0) {
 			for(StatementContext stmtCtx : ctx.ifBody) {
@@ -1284,10 +1256,7 @@ public class PydmlSyntacticValidator extends CommonSyntacticValidator implements
 		IfStatement elifStmt = new IfStatement();
 		ConditionalPredicate predicate = new ConditionalPredicate(ctx.predicate.info.expr);
 		elifStmt.setConditionalPredicate(predicate);
-		String fileName = currentFile;
-		int line = ctx.start.getLine();
-		int col = ctx.start.getCharPositionInLine();
-		elifStmt.setAllPositions(fileName, line, col, line, col);
+		elifStmt.setCtxValuesAndFilename(ctx, currentFile);
 
 		if(ctx.elifBody.size() > 0) {
 			for (StatementContext stmtCtx : ctx.elifBody) {
@@ -1305,9 +1274,7 @@ public class PydmlSyntacticValidator extends CommonSyntacticValidator implements
 		WhileStatement whileStmt = new WhileStatement();
 		ConditionalPredicate predicate = new ConditionalPredicate(ctx.predicate.info.expr);
 		whileStmt.setPredicate(predicate);
-		int line = ctx.start.getLine();
-		int col = ctx.start.getCharPositionInLine();
-		whileStmt.setAllPositions(currentFile, line, col, line, col);
+		whileStmt.setCtxValuesAndFilename(ctx, currentFile);
 
 		if(ctx.body.size() > 0) {
 			for(StatementContext stmtCtx : ctx.body) {
@@ -1323,8 +1290,6 @@ public class PydmlSyntacticValidator extends CommonSyntacticValidator implements
 	@Override
 	public void exitForStatement(ForStatementContext ctx) {
 		ForStatement forStmt = new ForStatement();
-		int line = ctx.start.getLine();
-		int col = ctx.start.getCharPositionInLine();
 
 		DataIdentifier iterVar = new DataIdentifier(ctx.iterVar.getText());
 		HashMap<String, String> parForParamValues = null;
@@ -1332,7 +1297,8 @@ public class PydmlSyntacticValidator extends CommonSyntacticValidator implements
 		if(ctx.iterPred.info.increment != null) {
 			incrementExpr = ctx.iterPred.info.increment;
 		}
-		IterablePredicate predicate = new IterablePredicate(iterVar, ctx.iterPred.info.from, ctx.iterPred.info.to, incrementExpr, parForParamValues, currentFile, line, col, line, col);
+		IterablePredicate predicate = new IterablePredicate(ctx, iterVar, ctx.iterPred.info.from, ctx.iterPred.info.to,
+				incrementExpr, parForParamValues, currentFile);
 		forStmt.setPredicate(predicate);
 
 		if(ctx.body.size() > 0) {
@@ -1348,14 +1314,15 @@ public class PydmlSyntacticValidator extends CommonSyntacticValidator implements
 	@Override
 	public void exitParForStatement(ParForStatementContext ctx) {
 		ParForStatement parForStmt = new ParForStatement();
-		int line = ctx.start.getLine();
-		int col = ctx.start.getCharPositionInLine();
 
 		DataIdentifier iterVar = new DataIdentifier(ctx.iterVar.getText());
-		HashMap<String, String> parForParamValues = new HashMap<String, String>();
+		HashMap<String, String> parForParamValues = new HashMap<>();
 		if(ctx.parForParams != null && ctx.parForParams.size() > 0) {
 			for(StrictParameterizedExpressionContext parForParamCtx : ctx.parForParams) {
-				parForParamValues.put(parForParamCtx.paramName.getText(), parForParamCtx.paramVal.getText());
+				String paramVal = parForParamCtx.paramVal.getText();
+				if( argVals.containsKey(paramVal) )
+					paramVal = argVals.get(paramVal);
+				parForParamValues.put(parForParamCtx.paramName.getText(), paramVal);
 			}
 		}
 
@@ -1363,7 +1330,8 @@ public class PydmlSyntacticValidator extends CommonSyntacticValidator implements
 		if( ctx.iterPred.info.increment != null ) {
 			incrementExpr = ctx.iterPred.info.increment;
 		}
-		IterablePredicate predicate = new IterablePredicate(iterVar, ctx.iterPred.info.from, ctx.iterPred.info.to, incrementExpr, parForParamValues, currentFile, line, col, line, col);
+		IterablePredicate predicate = new IterablePredicate(ctx, iterVar, ctx.iterPred.info.from, ctx.iterPred.info.to,
+				incrementExpr, parForParamValues, currentFile);
 		parForStmt.setPredicate(predicate);
 		if(ctx.body.size() > 0) {
 			for(StatementContext stmtCtx : ctx.body) {
@@ -1372,7 +1340,6 @@ public class PydmlSyntacticValidator extends CommonSyntacticValidator implements
 			parForStmt.mergeStatementBlocks();
 		}
 		ctx.info.stmt = parForStmt;
-		setFileLineColumn(ctx.info.stmt, ctx);
 	}
 
 
@@ -1401,7 +1368,7 @@ public class PydmlSyntacticValidator extends CommonSyntacticValidator implements
 	// -----------------------------------------------------------------
 
 	private ArrayList<DataIdentifier> getFunctionParameters(List<TypedArgNoAssignContext> ctx) {
-		ArrayList<DataIdentifier> retVal = new ArrayList<DataIdentifier>();
+		ArrayList<DataIdentifier> retVal = new ArrayList<>();
 		for(TypedArgNoAssignContext paramCtx : ctx) {
 			DataIdentifier dataId = new DataIdentifier(paramCtx.paramName.getText());
 			String dataType = null;
@@ -1463,7 +1430,7 @@ public class PydmlSyntacticValidator extends CommonSyntacticValidator implements
 		if(ctx.body.size() > 0) {
 			// handle function body
 			// Create arraylist of one statement block
-			ArrayList<StatementBlock> body = new ArrayList<StatementBlock>();
+			ArrayList<StatementBlock> body = new ArrayList<>();
 			for(StatementContext stmtCtx : ctx.body) {
 				body.add(getStatementBlock(stmtCtx.info.stmt));
 			}
@@ -1495,7 +1462,7 @@ public class PydmlSyntacticValidator extends CommonSyntacticValidator implements
 		functionStmt.setName(ctx.name.getText());
 		
 		// set other parameters
-		HashMap<String, String> otherParams = new HashMap<String,String>();
+		HashMap<String, String> otherParams = new HashMap<>();
 		boolean atleastOneClassName = false;
 		for(StrictParameterizedKeyValueStringContext otherParamCtx : ctx.otherParams){
 			String paramName = otherParamCtx.paramName.getText();
@@ -1575,11 +1542,8 @@ public class PydmlSyntacticValidator extends CommonSyntacticValidator implements
 				source = ctx.source.info.expr;
 			}
 
-			int line = ctx.start.getLine();
-			int col = ctx.start.getCharPositionInLine();
 			try {
-				ctx.info.stmt = new AssignmentStatement(target, source, line, col, line, col);
-				setFileLineColumn(ctx.info.stmt, ctx);
+				ctx.info.stmt = new AssignmentStatement(ctx, target, source, currentFile);
 			} catch (LanguageException e) {
 				notifyErrorListeners("invalid assignment for ifdef function", ctx.targetList.start);
 				return;
@@ -1620,7 +1584,7 @@ public class PydmlSyntacticValidator extends CommonSyntacticValidator implements
 		// Introduce empty StatementInfo
 		// This is later ignored by PyDMLParserWrapper
 		try {
-			ctx.info.stmt = new AssignmentStatement(null, null, 0, 0, 0, 0);
+			ctx.info.stmt = new AssignmentStatement(ctx, null, null);
 			ctx.info.stmt.setEmptyNewLineStatement(true);
 		} catch (LanguageException e) {
 			e.printStackTrace();

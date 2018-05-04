@@ -32,38 +32,21 @@ import org.apache.sysml.parser.Expression.ValueType;
 public class CoVariance extends Lop 
 {
 
-	
-	/**
-	 * Constructor to perform covariance.
-	 * input1 &lt;- data 
-	 * (prior to this lop, input vectors need to attached together using CombineBinary or CombineTertiary) 
-	 * 
-	 * @param input1 low-level operator
-	 * @param dt data type
-	 * @param vt value type
-	 * @throws LopsException if LopsException occurs
-	 */
-	public CoVariance(Lop input1, DataType dt, ValueType vt) throws LopsException {
-		this(input1, dt, vt, ExecType.MR);
-	}
-
-	public CoVariance(Lop input1, DataType dt, ValueType vt, ExecType et) throws LopsException {
+	public CoVariance(Lop input1, DataType dt, ValueType vt, ExecType et) {
 		super(Lop.Type.CoVariance, dt, vt);
 		init(input1, null, null, et);
 	}
 	
-	public CoVariance(Lop input1, Lop input2, DataType dt, ValueType vt, ExecType et) throws LopsException {
+	public CoVariance(Lop input1, Lop input2, DataType dt, ValueType vt, ExecType et) {
 		this(input1, input2, null, dt, vt, et);
 	}
 	
-	public CoVariance(Lop input1, Lop input2, Lop input3, DataType dt, ValueType vt, ExecType et) throws LopsException {
+	public CoVariance(Lop input1, Lop input2, Lop input3, DataType dt, ValueType vt, ExecType et) {
 		super(Lop.Type.CoVariance, dt, vt);
 		init(input1, input2, input3, et);
 	}
 
-	private void init(Lop input1, Lop input2, Lop input3, ExecType et) 
-		throws LopsException 
-	{
+	private void init(Lop input1, Lop input2, Lop input3, ExecType et) {
 		/*
 		 * When et = MR: covariance lop will have a single input lop, which
 		 * denote the combined input data -- output of combinebinary, if unweighed;
@@ -115,21 +98,7 @@ public class CoVariance extends Lop
 	 */
 	@Override
 	public String getInstructions(String input1, String input2, String output) {
-		StringBuilder sb = new StringBuilder();
-		sb.append( getExecType() );
-		sb.append( Lop.OPERAND_DELIMITOR );
-		sb.append( "cov" );
-		sb.append( OPERAND_DELIMITOR );
-
-		sb.append( getInputs().get(0).prepInputOperand(input1));
-		sb.append( OPERAND_DELIMITOR );
-
-		sb.append( getInputs().get(1).prepInputOperand(input2));
-		sb.append( OPERAND_DELIMITOR );
-
-		sb.append( this.prepOutputOperand(output));
-		
-		return sb.toString();
+		return getInstructions(input1, input2, null, output);
 	}
 
 	/**
@@ -149,13 +118,17 @@ public class CoVariance extends Lop
 		sb.append( getInputs().get(0).prepInputOperand(input1));
 		sb.append( OPERAND_DELIMITOR );
 
-		sb.append( getInputs().get(1).prepInputOperand(input2));
-		sb.append( OPERAND_DELIMITOR );
-
-		sb.append( getInputs().get(2).prepInputOperand(input3));
-		sb.append( OPERAND_DELIMITOR );
+		if( input2 != null ) {
+			sb.append( getInputs().get(1).prepInputOperand(input2));
+			sb.append( OPERAND_DELIMITOR );
+		}
 		
-		sb.append( this.prepOutputOperand(output));
+		if( input3 != null ) {
+			sb.append( getInputs().get(2).prepInputOperand(input3));
+			sb.append( OPERAND_DELIMITOR );
+		}
+		
+		sb.append( prepOutputOperand(output));
 		
 		return sb.toString();
 	}
@@ -167,18 +140,7 @@ public class CoVariance extends Lop
 	 */
 	@Override
 	public String getInstructions(int input_index, int output_index) {
-		StringBuilder sb = new StringBuilder();
-		sb.append( getExecType() );
-		sb.append( Lop.OPERAND_DELIMITOR );
-		sb.append( "cov" );
-		sb.append( OPERAND_DELIMITOR );
-		
-		sb.append( getInputs().get(0).prepInputOperand(input_index));
-		sb.append( OPERAND_DELIMITOR );
-		
-		sb.append ( this.prepInputOperand(output_index));
-		
-		return sb.toString();
+		return getInstructions(String.valueOf(input_index), null, null, String.valueOf(output_index));
 	}
 
 }

@@ -28,11 +28,8 @@ import org.apache.sysml.hops.DataOp;
 import org.apache.sysml.hops.FunctionOp;
 import org.apache.sysml.hops.Hop;
 import org.apache.sysml.hops.OptimizerUtils;
-import org.apache.sysml.hops.Hop.DataOpTypes;
 import org.apache.sysml.hops.Hop.FileFormatTypes;
-import org.apache.sysml.hops.Hop.ParamBuiltinOp;
 import org.apache.sysml.hops.HopsException;
-import org.apache.sysml.hops.ParameterizedBuiltinOp;
 import org.apache.sysml.parser.Expression.DataType;
 
 /**
@@ -46,7 +43,6 @@ public class RewriteBlockSizeAndReblock extends HopRewriteRule
 	
 	@Override
 	public ArrayList<Hop> rewriteHopDAGs(ArrayList<Hop> roots, ProgramRewriteStatus state)
-		throws HopsException
 	{
 		if( roots == null )
 			return null;
@@ -64,7 +60,6 @@ public class RewriteBlockSizeAndReblock extends HopRewriteRule
 
 	@Override
 	public Hop rewriteHopDAG(Hop root, ProgramRewriteStatus state) 
-		throws HopsException
 	{
 		if( root == null )
 			return null;
@@ -80,11 +75,10 @@ public class RewriteBlockSizeAndReblock extends HopRewriteRule
 	}
 
 	private void rule_BlockSizeAndReblock(Hop hop, final int blocksize) 
-		throws HopsException 
 	{
 		// Go to the source(s) of the DAG
 		for (Hop hi : hop.getInput()) {
-			if (hi.getVisited() != Hop.VisitStatus.DONE)
+			if (!hi.isVisited())
 				rule_BlockSizeAndReblock(hi, blocksize);
 		}
 
@@ -98,7 +92,7 @@ public class RewriteBlockSizeAndReblock extends HopRewriteRule
 			if( canReblock && 
 				( (dop.getDataType() == DataType.MATRIX && (dop.getRowsInBlock() != blocksize || dop.getColsInBlock() != blocksize))
 				||(dop.getDataType() == DataType.FRAME && OptimizerUtils.isSparkExecutionMode() && (dop.getInputFormatType()==FileFormatTypes.TEXT
-						  || dop.getInputFormatType()==FileFormatTypes.CSV && OptimizerUtils.ALLOW_FRAME_CSV_REBLOCK))) ) 
+						  || dop.getInputFormatType()==FileFormatTypes.CSV))) ) 
 			{
 				if( dop.getDataOpType() == DataOp.DataOpTypes.PERSISTENTREAD) 
 				{
@@ -146,27 +140,6 @@ public class RewriteBlockSizeAndReblock extends HopRewriteRule
 				}
 			}
 		} 
-		//TODO remove once transform rebased to frames
-		else if ( (hop instanceof ParameterizedBuiltinOp && ((ParameterizedBuiltinOp)hop).getOp() == ParamBuiltinOp.TRANSFORM) ) {
-			
-			// check if there exists a non-csv-write output. If yes, add reblock
-			boolean rblk = false;
-			for(Hop out : hop.getParent()) 
-			{
-				if ( !(out instanceof DataOp 
-						&& ((DataOp)out).getDataOpType() == DataOpTypes.PERSISTENTWRITE 
-						&& ((DataOp)out).getInputFormatType() == FileFormatTypes.CSV) )
-				{
-					rblk = true;
-					break;
-				}
-			}
-			if ( rblk )
-			{
-				hop.setRequiresReblock(true);
-				hop.setOutputBlocksizes(blocksize, blocksize);
-			}
-		}
 		else //NO DATAOP 
 		{
 			// TODO: following two lines are commented, and the subsequent hack is used instead!
@@ -237,7 +210,7 @@ public class RewriteBlockSizeAndReblock extends HopRewriteRule
 			}
 		}
 
-		hop.setVisited(Hop.VisitStatus.DONE);
+		hop.setVisited();
 	}
 	
 	private static boolean isReblockValid() {

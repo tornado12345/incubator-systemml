@@ -20,7 +20,9 @@
 package org.apache.sysml.runtime.functionobjects;
 
 
-import org.apache.sysml.runtime.DMLRuntimeException;
+import org.apache.commons.lang.NotImplementedException;
+import org.apache.sysml.runtime.matrix.MatrixCharacteristics;
+import org.apache.sysml.runtime.matrix.data.MatrixIndexes;
 import org.apache.sysml.runtime.matrix.data.MatrixValue.CellIndex;
 
 /**
@@ -30,29 +32,24 @@ import org.apache.sysml.runtime.matrix.data.MatrixValue.CellIndex;
  */
 public class SortIndex extends IndexFunction
 {
-
 	private static final long serialVersionUID = -8446389232078905200L;
 
-	private int     _col        = -1;
-	private boolean _decreasing = false;
-	private boolean _ixreturn   = false;
+	private final int[] _cols;
+	private final boolean _decreasing;
+	private final boolean _ixreturn;
 	
-	private SortIndex() {
-		// nothing to do here
+	public SortIndex(int col, boolean decreasing, boolean indexreturn) {
+		this(new int[]{col}, decreasing, indexreturn);
+	}
+	
+	public SortIndex(int[] cols, boolean decreasing, boolean indexreturn) {
+		_cols = cols;
+		_decreasing = decreasing;
+		_ixreturn = indexreturn;
 	}
 
-	public static SortIndex getSortIndexFnObject(int col, boolean decreasing, boolean indexreturn) 
-	{
-		SortIndex ix = new SortIndex();
-		ix._col = col;
-		ix._decreasing = decreasing;
-		ix._ixreturn = indexreturn;
-		
-		return ix;
-	}
-
-	public int getCol() {
-		return _col;
+	public int[] getCols() {
+		return _cols;
 	}
 	
 	public boolean getDecreasing() {
@@ -63,17 +60,24 @@ public class SortIndex extends IndexFunction
 		return _ixreturn;
 	}
 	
-	public Object clone() throws CloneNotSupportedException {
-		// cloning is not supported for singleton classes
-		throw new CloneNotSupportedException();
-	}
-	
-	public boolean computeDimension(int row, int col, CellIndex retDim) 
-		throws DMLRuntimeException 
-	{
+	@Override
+	public boolean computeDimension(int row, int col, CellIndex retDim) {
 		retDim.set(row, _ixreturn?1:col);
 		return false;
 	}
-	
 
+	@Override
+	public void execute(MatrixIndexes in, MatrixIndexes out) {
+		throw new NotImplementedException();
+	}
+
+	@Override
+	public void execute(CellIndex in, CellIndex out) {
+		throw new NotImplementedException();
+	}
+
+	@Override
+	public boolean computeDimension(MatrixCharacteristics in, MatrixCharacteristics out) {
+		throw new NotImplementedException();
+	}
 }

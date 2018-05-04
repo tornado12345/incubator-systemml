@@ -23,7 +23,6 @@ import org.junit.Assert;
 import org.junit.Test;
 import org.apache.sysml.api.DMLScript;
 import org.apache.sysml.api.DMLScript.RUNTIME_PLATFORM;
-import org.apache.sysml.hops.OptimizerUtils;
 import org.apache.sysml.runtime.io.MatrixReaderFactory;
 import org.apache.sysml.runtime.matrix.data.InputInfo;
 import org.apache.sysml.runtime.util.DataConverter;
@@ -39,24 +38,27 @@ public class TransformFrameEncodeApplyTest extends AutomatedTestBase
 	private final static String TEST_CLASS_DIR = TEST_DIR + TransformFrameEncodeApplyTest.class.getSimpleName() + "/";
 	
 	//dataset and transform tasks without missing values
-	private final static String DATASET1 	= "homes3/homes.csv";
-	private final static String SPEC1 		= "homes3/homes.tfspec_recode.json"; 
-	private final static String SPEC1b 		= "homes3/homes.tfspec_recode2.json"; 
-	private final static String SPEC2 		= "homes3/homes.tfspec_dummy.json";
-	private final static String SPEC2b 		= "homes3/homes.tfspec_dummy2.json";
-	private final static String SPEC3 		= "homes3/homes.tfspec_bin.json"; //incl recode
-	private final static String SPEC3b 		= "homes3/homes.tfspec_bin2.json"; //incl recode
+	private final static String DATASET1 = "homes3/homes.csv";
+	private final static String SPEC1    = "homes3/homes.tfspec_recode.json"; 
+	private final static String SPEC1b   = "homes3/homes.tfspec_recode2.json"; 
+	private final static String SPEC2    = "homes3/homes.tfspec_dummy.json";
+	private final static String SPEC2b   = "homes3/homes.tfspec_dummy2.json";
+	private final static String SPEC3    = "homes3/homes.tfspec_bin.json"; //incl recode
+	private final static String SPEC3b   = "homes3/homes.tfspec_bin2.json"; //incl recode
+	private final static String SPEC6    = "homes3/homes.tfspec_recode_dummy.json"; 
+	private final static String SPEC6b   = "homes3/homes.tfspec_recode_dummy2.json"; 
 	
 	//dataset and transform tasks with missing values
-	private final static String DATASET2 	= "homes/homes.csv";
-	private final static String SPEC4 		= "homes3/homes.tfspec_impute.json";
-	private final static String SPEC4b 		= "homes3/homes.tfspec_impute2.json";
-	private final static String SPEC5 		= "homes3/homes.tfspec_omit.json";
-	private final static String SPEC5b 		= "homes3/homes.tfspec_omit2.json";
+	private final static String DATASET2 = "homes/homes.csv";
+	private final static String SPEC4    = "homes3/homes.tfspec_impute.json";
+	private final static String SPEC4b   = "homes3/homes.tfspec_impute2.json";
+	private final static String SPEC5    = "homes3/homes.tfspec_omit.json";
+	private final static String SPEC5b   = "homes3/homes.tfspec_omit2.json";
 	
 	public enum TransformType {
 		RECODE,
 		DUMMY,
+		RECODE_DUMMY,
 		BIN,
 		IMPUTE,
 		OMIT,
@@ -96,6 +98,21 @@ public class TransformFrameEncodeApplyTest extends AutomatedTestBase
 	@Test
 	public void testHomesDummycodeIDsHybridCSV() {
 		runTransformTest(RUNTIME_PLATFORM.HYBRID_SPARK, "csv", TransformType.DUMMY, false);
+	}
+	
+	@Test
+	public void testHomesRecodeDummycodeIDsSingleNodeCSV() {
+		runTransformTest(RUNTIME_PLATFORM.SINGLE_NODE, "csv", TransformType.RECODE_DUMMY, false);
+	}
+	
+	@Test
+	public void testHomesRecodeDummycodeIDsSparkCSV() {
+		runTransformTest(RUNTIME_PLATFORM.SPARK, "csv", TransformType.RECODE_DUMMY, false);
+	}
+	
+	@Test
+	public void testHomesRecodeDummycodeIDsHybridCSV() {
+		runTransformTest(RUNTIME_PLATFORM.HYBRID_SPARK, "csv", TransformType.RECODE_DUMMY, false);
 	}
 	
 	@Test
@@ -174,6 +191,21 @@ public class TransformFrameEncodeApplyTest extends AutomatedTestBase
 	}
 	
 	@Test
+	public void testHomesRecodeDummycodeColnamesSingleNodeCSV() {
+		runTransformTest(RUNTIME_PLATFORM.SINGLE_NODE, "csv", TransformType.RECODE_DUMMY, true);
+	}
+	
+	@Test
+	public void testHomesRecodeDummycodeColnamesSparkCSV() {
+		runTransformTest(RUNTIME_PLATFORM.SPARK, "csv", TransformType.RECODE_DUMMY, true);
+	}
+	
+	@Test
+	public void testHomesRecodeDummycodeColnamesHybridCSV() {
+		runTransformTest(RUNTIME_PLATFORM.HYBRID_SPARK, "csv", TransformType.RECODE_DUMMY, true);
+	}
+	
+	@Test
 	public void testHomesBinningColnamesSingleNodeCSV() {
 		runTransformTest(RUNTIME_PLATFORM.SINGLE_NODE, "csv", TransformType.BIN, true);
 	}
@@ -218,17 +250,10 @@ public class TransformFrameEncodeApplyTest extends AutomatedTestBase
 		runTransformTest(RUNTIME_PLATFORM.HYBRID_SPARK, "csv", TransformType.IMPUTE, true);
 	}
 	
-	/**
-	 * 
-	 * @param rt
-	 * @param ofmt
-	 * @param dataset
-	 */
 	private void runTransformTest( RUNTIME_PLATFORM rt, String ofmt, TransformType type, boolean colnames )
 	{
 		//set runtime platform
 		RUNTIME_PLATFORM rtold = rtplatform;
-		boolean csvReblockOld = OptimizerUtils.ALLOW_FRAME_CSV_REBLOCK;
 		rtplatform = rt;
 
 		boolean sparkConfigOld = DMLScript.USE_LOCAL_SPARK_CONFIG;
@@ -243,6 +268,7 @@ public class TransformFrameEncodeApplyTest extends AutomatedTestBase
 			case BIN:    SPEC = colnames?SPEC3b:SPEC3; DATASET = DATASET1; break;
 			case IMPUTE: SPEC = colnames?SPEC4b:SPEC4; DATASET = DATASET2; break;
 			case OMIT:   SPEC = colnames?SPEC5b:SPEC5; DATASET = DATASET2; break;
+			case RECODE_DUMMY: SPEC = colnames?SPEC6b:SPEC6; DATASET = DATASET1; break;
 		}
 
 		if( !ofmt.equals("csv") )
@@ -261,7 +287,6 @@ public class TransformFrameEncodeApplyTest extends AutomatedTestBase
 				"TFDATA2=" + output("tfout2"),
 				"OFMT=" + ofmt };
 	
-			OptimizerUtils.ALLOW_FRAME_CSV_REBLOCK = true;
 			runTest(true, false, null, -1); 
 			
 			//read input/output and compare
@@ -284,7 +309,6 @@ public class TransformFrameEncodeApplyTest extends AutomatedTestBase
 		finally {
 			rtplatform = rtold;
 			DMLScript.USE_LOCAL_SPARK_CONFIG = sparkConfigOld;
-			OptimizerUtils.ALLOW_FRAME_CSV_REBLOCK = csvReblockOld;
 		}
 	}
 }

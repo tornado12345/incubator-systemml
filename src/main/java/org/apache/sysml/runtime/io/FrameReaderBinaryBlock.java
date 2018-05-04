@@ -20,6 +20,7 @@
 package org.apache.sysml.runtime.io;
 
 import java.io.IOException;
+import java.io.InputStream;
 
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
@@ -38,17 +39,6 @@ import org.apache.sysml.runtime.matrix.data.FrameBlock;
  */
 public class FrameReaderBinaryBlock extends FrameReader
 {
-	/**
-	 * 
-	 * @param fname
-	 * @param schema
-	 * @param names
-	 * @param rlen
-	 * @param clen
-	 * @return
-	 * @throws DMLRuntimeException 
-	 * @throws IOException 
-	 */
 	@Override
 	public final FrameBlock readFrameFromHDFS(String fname, ValueType[] schema, String[] names, long rlen, long clen) 
 		throws IOException, DMLRuntimeException 
@@ -60,8 +50,8 @@ public class FrameReaderBinaryBlock extends FrameReader
 		
 		//prepare file access
 		JobConf job = new JobConf(ConfigurationManager.getCachedJobConf());	
-		FileSystem fs = FileSystem.get(job);
 		Path path = new Path( fname ); 
+		FileSystem fs = IOUtilFunctions.getFileSystem(path, job);
 		
 		//check existence and non-empty file
 		checkValidInputFile(fs, path); 
@@ -72,37 +62,23 @@ public class FrameReaderBinaryBlock extends FrameReader
 		return ret;
 	}
 	
-	/**
-	 * 
-	 * @param path
-	 * @param job
-	 * @param fs 
-	 * @param dest
-	 * @param rlen
-	 * @param clen
-	 * 
-	 * @throws IOException
-	 * @throws DMLRuntimeException 
-	 */
+	@Override
+	public FrameBlock readFrameFromInputStream(InputStream is, ValueType[] schema, String[] names, long rlen, long clen)
+		throws IOException, DMLRuntimeException 
+	{
+		throw new DMLRuntimeException("Not implemented yet.");
+	}
+
 	protected void readBinaryBlockFrameFromHDFS( Path path, JobConf job, FileSystem fs, FrameBlock dest, long rlen, long clen )
 		throws IOException, DMLRuntimeException
 	{
 		//sequential read from sequence files
-		for( Path lpath : getSequenceFilePaths(fs, path) ) //1..N files 
+		for( Path lpath : IOUtilFunctions.getSequenceFilePaths(fs, path) ) //1..N files 
 			readBinaryBlockFrameFromSequenceFile(lpath, job, fs, dest);
 	}
-	
-	/**
-	 * 
-	 * @param path
-	 * @param job
-	 * @param fs
-	 * @param dest
-	 * @throws IOException
-	 * @throws DMLRuntimeException
-	 */
-	@SuppressWarnings({ "deprecation", "resource" })
-	protected final void readBinaryBlockFrameFromSequenceFile( Path path, JobConf job, FileSystem fs, FrameBlock dest )
+
+	@SuppressWarnings({ "deprecation" })
+	protected static void readBinaryBlockFrameFromSequenceFile( Path path, JobConf job, FileSystem fs, FrameBlock dest )
 		throws IOException, DMLRuntimeException
 	{
 		int rlen = dest.getNumRows();
@@ -143,23 +119,23 @@ public class FrameReaderBinaryBlock extends FrameReader
 	/**
 	 * Specific functionality of FrameReaderBinaryBlock, mostly used for testing.
 	 * 
-	 * @param fname
-	 * @return
-	 * @throws IOException 
+	 * @param fname file name
+	 * @return frame block
+	 * @throws IOException if IOException occurs
 	 */
 	@SuppressWarnings("deprecation")
 	public FrameBlock readFirstBlock(String fname) throws IOException 
 	{
 		//prepare file access
 		JobConf job = new JobConf(ConfigurationManager.getCachedJobConf());	
-		FileSystem fs = FileSystem.get(job);
 		Path path = new Path( fname ); 
+		FileSystem fs = IOUtilFunctions.getFileSystem(path, job);
 		
 		LongWritable key = new LongWritable();
 		FrameBlock value = new FrameBlock();
 		
 		//read first block from first file
-		Path lpath = getSequenceFilePaths(fs, path)[0];  
+		Path lpath = IOUtilFunctions.getSequenceFilePaths(fs, path)[0];  
 		SequenceFile.Reader reader = new SequenceFile.Reader(fs,lpath,job);		
 		try {
 			reader.next(key, value);

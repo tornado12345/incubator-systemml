@@ -32,10 +32,9 @@ import org.apache.commons.math3.random.Well1024a;
 
 public class PoissonPRNGenerator extends PRNGenerator
 {
-	PoissonDistribution _pdist = null;
-	double _mean = Double.NaN;
-	
-	private static final double DEFAULT_MEAN = 1.0;
+	private PoissonDistribution _pdist = null;
+	private double _mean = Double.NaN;
+	private long seed;
 	
 	public PoissonPRNGenerator() {
 		// default mean and default seed
@@ -44,23 +43,15 @@ public class PoissonPRNGenerator extends PRNGenerator
 		setup(_mean, seed);
 	}
 	
-	public PoissonPRNGenerator(double mean) 
-	{
+	public PoissonPRNGenerator(double mean) {
 		// default seed
 		super();
 		_mean = mean;
 		setup(_mean, seed);
 	}
-	
-	public PoissonPRNGenerator(long sd) {
-		// default mean
-		super();
-		setup(DEFAULT_MEAN, sd);
-	}
-	
+
 	public void setup(double mean, long sd) {
 		seed = sd;
-		
 		SynchronizedRandomGenerator srg = new SynchronizedRandomGenerator(new Well1024a());
 		srg.setSeed(seed);
 		_pdist = new PoissonDistribution(srg, _mean, PoissonDistribution.DEFAULT_EPSILON, PoissonDistribution.DEFAULT_MAX_ITERATIONS);
@@ -75,10 +66,8 @@ public class PoissonPRNGenerator extends PRNGenerator
 		setup(mean, seed);
 	}
 	
+	@Override
 	public double nextDouble() {
 		return (double) _pdist.sample();
 	}
-	
-	
-
 }

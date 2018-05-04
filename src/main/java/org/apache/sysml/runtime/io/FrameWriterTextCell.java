@@ -38,13 +38,7 @@ import org.apache.sysml.runtime.util.MapReduceTool;
  */
 public class FrameWriterTextCell extends FrameWriter
 {
-	/**
-	 * @param src
-	 * @param fname
-	 * @return
-	 * @throws IOException 
-	 * @throws DMLRuntimeException 
-	 */
+
 	@Override
 	public final void writeFrameToHDFS( FrameBlock src, String fname, long rlen, long clen )
 		throws IOException, DMLRuntimeException 
@@ -66,37 +60,29 @@ public class FrameWriterTextCell extends FrameWriter
 		writeTextCellFrameToHDFS(path, job, src, src.getNumRows(), src.getNumColumns());
 	}
 
-	/**
-	 * 
-	 * @param path
-	 * @param job
-	 * @param src
-	 * @param rlen
-	 * @param clen
-	 * @throws IOException
-	 */
 	protected void writeTextCellFrameToHDFS( Path path, JobConf job, FrameBlock src, long rlen, long clen )
 		throws IOException
 	{
-		FileSystem fs = FileSystem.get(job);
+		FileSystem fs = IOUtilFunctions.getFileSystem(path, job);
 		
 		//sequential write to single text file
-		writeTextCellFrameToFile(path, job, fs, src, 0, (int)rlen);	
-	}	
+		writeTextCellFrameToFile(path, job, fs, src, 0, (int)rlen);
+		IOUtilFunctions.deleteCrcFilesFromLocalFileSystem(fs, path);
+	}
 	
 	/**
 	 * Internal primitive to write a row range of a frame to a single text file, 
 	 * which is used for both single- and multi-threaded writers (for consistency). 
-	 *  
-	 * @param path
-	 * @param job
-	 * @param fs
-	 * @param src
-	 * @param rl
-	 * @param ru
-	 * @throws IOException 
+	 * 
+	 * @param path file path
+	 * @param job job configuration
+	 * @param fs file system
+	 * @param src frame block
+	 * @param rl lower row
+	 * @param ru upper row
+	 * @throws IOException if IOException occurs
 	 */
-	protected final void writeTextCellFrameToFile( Path path, JobConf job, FileSystem fs, FrameBlock src, int rl, int ru ) 
+	protected static void writeTextCellFrameToFile( Path path, JobConf job, FileSystem fs, FrameBlock src, int rl, int ru ) 
 		throws IOException
 	{
 		boolean entriesWritten = false;
@@ -142,12 +128,11 @@ public class FrameWriterTextCell extends FrameWriter
 			}
 	
 			//handle empty result
-			if ( !entriesWritten ) {
-				br.write("1 1 0\n");
-			}
+			if ( !entriesWritten )
+				br.write(IOUtilFunctions.EMPTY_TEXT_LINE);
 		}
 		finally {
 			IOUtilFunctions.closeSilently(br);
-		}		
+		}
 	}
 }

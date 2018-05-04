@@ -34,35 +34,36 @@ public abstract class Decoder implements Serializable
 {	
 	private static final long serialVersionUID = -1732411001366177787L;
 	
-	protected ValueType[] _schema = null;
-	protected int[] _colList = null;
-		
-	protected Decoder( ValueType[] schema, int[] colList ) {
+	protected final ValueType[] _schema;
+	protected final int[] _colList;
+	protected String[] _colnames = null;
+	
+	protected Decoder(ValueType[] schema, int[] colList) {
 		_schema = schema;
 		_colList = colList;
 	}
-	
-	/**
-	 * 
-	 * @return
-	 */
+
 	public ValueType[] getSchema() {
 		return _schema;
+	}
+	
+	public void setColnames(String[] colnames) {
+		_colnames = colnames;
+	}
+	
+	public String[] getColnames() {
+		return _colnames;
 	}
 	
 	/**
 	 * Block decode API converting a matrix block into a frame block.
 	 * 
-	 * @param in
-	 * @param out
+	 * @param in input matrix block
+	 * @param out output frame block
 	 * 
 	 * @return returns given output frame block for convenience
 	 */
 	public abstract FrameBlock decode(MatrixBlock in, FrameBlock out);
-	
-	/**
-	 * 
-	 * @param meta
-	 */
+
 	public abstract void initMetaData(FrameBlock meta);
 }

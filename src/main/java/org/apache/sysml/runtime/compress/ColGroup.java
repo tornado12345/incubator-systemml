@@ -23,9 +23,10 @@ import java.io.DataInput;
 import java.io.DataOutput;
 import java.io.IOException;
 import java.io.Serializable;
+import java.util.Iterator;
 import java.util.List;
 
-import org.apache.sysml.runtime.DMLRuntimeException;
+import org.apache.sysml.runtime.matrix.data.IJV;
 import org.apache.sysml.runtime.matrix.data.MatrixBlock;
 import org.apache.sysml.runtime.matrix.operators.AggregateUnaryOperator;
 import org.apache.sysml.runtime.matrix.operators.ScalarOperator;
@@ -40,9 +41,11 @@ public abstract class ColGroup implements Serializable
 	private static final long serialVersionUID = 2439785418908671481L;
 
 	public enum CompressionType  {
-		UNCOMPRESSED,   //uncompressed sparse/dense 
-		RLE_BITMAP,     //RLE bitmap
-		OLE_BITMAP;  //OLE bitmap
+		UNCOMPRESSED, //uncompressed sparse/dense 
+		RLE_BITMAP,  //RLE bitmap
+		OLE_BITMAP,  //OLE bitmap
+		DDC1, //DDC 1 byte
+		DDC2; //DDC 2 byte
 	}
 	
 	/**
@@ -53,10 +56,6 @@ public abstract class ColGroup implements Serializable
 
 	/** Number of rows in the matrix, for use by child classes. */
 	protected int _numRows;
-
-	/** How the elements of the column group are compressed. */
-	private CompressionType _compType;
-
 	
 	/**
 	 * Main constructor.
@@ -67,22 +66,28 @@ public abstract class ColGroup implements Serializable
 	 * @param numRows
 	 *            total number of rows in the parent block
 	 */
-	protected ColGroup(CompressionType type, int[] colIndices, int numRows) {
-		_compType = type;
+	protected ColGroup(int[] colIndices, int numRows) {
 		_colIndexes = colIndices;
 		_numRows = numRows;
 	}
 
-	/** Convenience constructor for converting indices to a more compact format. */
-	protected ColGroup(CompressionType type, List<Integer> colIndicesList, int numRows) {
-		_compType = type;
+	/**
+	 * Convenience constructor for converting indices to a more compact format.
+	 * 
+	 * @param colIndicesList list of column indices
+	 * @param numRows total number of rows in the parent block
+	 */
+	protected ColGroup(List<Integer> colIndicesList, int numRows) {
 		_colIndexes = new int[colIndicesList.size()];
 		int i = 0;
 		for (Integer index : colIndicesList)
 			_colIndexes[i++] = index;
+		_numRows = numRows;
 	}
 
 	/**
+	 * Obtain the offsets of the columns in the matrix block that make up the group
+	 * 
 	 * @return offsets of the columns in the matrix block that make up the group
 	 */
 	public int[] getColIndices() {
@@ -90,10 +95,10 @@ public abstract class ColGroup implements Serializable
 	}
 
 	/**
-	 * @param col
-	 *            an index from 0 to the number of columns in this group - 1
-	 * @return offset of the specified column in the matrix block that make up
-	 *         the group
+	 * Obtain a column index value.
+	 * 
+	 * @param colNum column number
+	 * @return column index value
 	 */
 	public int getColIndex(int colNum) {
 		return _colIndexes[colNum];
@@ -104,6 +109,8 @@ public abstract class ColGroup implements Serializable
 	}
 	
 	/**
+	 * Obtain the number of columns in this column group.
+	 * 
 	 * @return number of columns in this column group
 	 */
 	public int getNumCols() {
@@ -111,16 +118,12 @@ public abstract class ColGroup implements Serializable
 	}
 
 	/**
+	 * Obtain the compression type.
+	 * 
 	 * @return How the elements of the column group are compressed.
 	 */
-	public CompressionType getCompType() {
-		return _compType;
-	}
+	public abstract CompressionType getCompType();
 
-	/**
-	 * 
-	 * @param offset
-	 */
 	public void shiftColIndices(int offset)  {
 		for( int i=0; i<_colIndexes.length; i++ )
 			_colIndexes[i] += offset;
@@ -134,14 +137,12 @@ public abstract class ColGroup implements Serializable
 	 *         in memory.
 	 */
 	public long estimateInMemorySize() {
-		// int numRows (4B) , array reference colIndices (8B) + array object
-		// overhead if exists (32B) + 4B per element, CompressionType compType
-		// (2 booleans 2B + enum overhead 32B + reference to enum 8B)
-		long size = 54;
-		if (_colIndexes == null)
-			return size;
-		else
-			return size + 32 + 4 * _colIndexes.length;
+		// object (12B padded to factors of 8), int numRows (4B), 
+		// array reference colIndices (8B) 
+		//+ array object overhead if exists (32B) + 4B per element
+		long size = 24;
+		return (_colIndexes == null) ? size : 
+			size + 32 + 4 * _colIndexes.length;
 	}
 
 	/**
@@ -151,6 +152,8 @@ public abstract class ColGroup implements Serializable
 	 * @param target
 	 *            a matrix block where the columns covered by this column group
 	 *            have not yet been filled in.
+	 * @param rl row lower
+	 * @param ru row upper
 	 */
 	public abstract void decompressToBlock(MatrixBlock target, int rl, int ru);
 
@@ -168,6 +171,7 @@ public abstract class ColGroup implements Serializable
 	public abstract void decompressToBlock(MatrixBlock target, int[] colIndexTargets);
 
 	/**
+	 * Decompress to block.
 	 * 
 	 * @param target  dense output vector
 	 * @param colpos  column to decompress, error if larger or equal numCols
@@ -178,36 +182,57 @@ public abstract class ColGroup implements Serializable
 	/**
 	 * Serializes column group to data output.
 	 * 
-	 * @param out
-	 * @throws IOException
+	 * @param out data output
+	 * @throws IOException if IOException occurs
 	 */
 	public abstract void write(DataOutput out) 
 		throws IOException;
 	
 	/**
+	 * Serializes column group to data output.
+	 * 
+	 * @param out data output
+	 * @param skipDict skip shared dictionary
+	 * @throws IOException if IOException occurs
+	 */
+	public void write(DataOutput out, boolean skipDict) throws IOException {
+		write(out); //skipDict ignored by default
+	}
+	
+	/**
 	 * Deserializes column group from data input.
 	 * 
-	 * @param in
-	 * @throws IOException
+	 * @param in data input
+	 * @throws IOException if IOException occurs
 	 */
 	public abstract void readFields(DataInput in) 
 		throws IOException;
-		
+	
+	/**
+	 * Deserializes column group from data input.
+	 * 
+	 * @param in data input
+	 * @param skipDict skip shared dictionary
+	 * @throws IOException if IOException occurs
+	 */
+	public void readFields(DataInput in, boolean skipDict) throws IOException {
+		readFields(in); //skipDict ignored by default
+	}
 	
 	/**
 	 * Returns the exact serialized size of column group.
 	 * This can be used for example for buffer preallocation.
 	 * 
-	 * @return
+	 * @return exact serialized size for column group
 	 */
 	public abstract long getExactSizeOnDisk();
 	
 	/**
 	 * Get the value at a global row/column position.
 	 * 
-	 * @param r
-	 * @param c
-	 * @return
+	 * @param r row
+	 * @param c column
+	 * @return value at the row/column position
 	 */
 	public abstract double get(int r, int c);
 	
@@ -219,12 +244,13 @@ public abstract class ColGroup implements Serializable
 	 *            vector to multiply by (tall vector)
 	 * @param result
 	 *            accumulator for holding the result
-	 * @throws DMLRuntimeException
+	 * @param rl row lower
+	 * @param ru row upper
 	 *             if the internal SystemML code that performs the
 	 *             multiplication experiences an error
 	 */
 	public abstract void rightMultByVector(MatrixBlock vector,
-			MatrixBlock result, int rl, int ru) throws DMLRuntimeException;
+			MatrixBlock result, int rl, int ru);
 
 
 	/**
@@ -232,12 +258,10 @@ public abstract class ColGroup implements Serializable
 	 * row vector on the left (the original column vector is assumed to be
 	 * transposed already i.e. its size now is 1xn).
 	 * 
-	 * @param vector
-	 * @param result
-	 * @throws DMLRuntimeException 
+	 * @param vector row vector
+	 * @param result matrix block result
 	 */
-	public abstract void leftMultByRowVector(MatrixBlock vector,
-			MatrixBlock result) throws DMLRuntimeException;
+	public abstract void leftMultByRowVector(MatrixBlock vector, MatrixBlock result);
 
 	/**
 	 * Perform the specified scalar operation directly on the compressed column
@@ -247,24 +271,47 @@ public abstract class ColGroup implements Serializable
 	 *            operation to perform
 	 * @return version of this column group with the operation applied
 	 */
-	public abstract ColGroup scalarOperation(ScalarOperator op)
-			throws DMLRuntimeException;
+	public abstract ColGroup scalarOperation(ScalarOperator op);
 
-	/**
-	 * 
-	 * @param op
-	 * @param result
-	 * @throws DMLUnsupportedOperationException
-	 * @throws DMLRuntimeException
-	 */
-	public abstract void unaryAggregateOperations(AggregateUnaryOperator op, MatrixBlock result)
-		throws DMLRuntimeException;
+	public abstract void unaryAggregateOperations(AggregateUnaryOperator op, MatrixBlock result);
 	
 	/**
+	 * Create a column group iterator for a row index range.
 	 * 
-	 * @param rnnz
+	 * @param rl row lower index, inclusive
+	 * @param ru row upper index, exclusive
+	 * @param inclZeros include zero values into scope of iterator
+	 * @param rowMajor use a row major iteration order
+	 * @return an iterator instance
+	 */
+	public abstract Iterator<IJV> getIterator(int rl, int ru,
+			boolean inclZeros, boolean rowMajor);
+	
+	/**
+	 * Create a dense row iterator for a row index range. This iterator
+	 * implies the inclusion of zeros and row-major iteration order.
+	 * 
+	 * @param rl row lower index, inclusive
+	 * @param ru row upper index, exclusive
+	 * @return an iterator instance
+	 */
+	public abstract ColGroupRowIterator getRowIterator(int rl, int ru);
+	
+	/**
+	 * Count the number of non-zeros per row
+	 * 
+	 * @param rnnz non-zeros per row
 	 * @param rl row lower bound, inclusive
  	 * @param ru row upper bound, exclusive
 	 */
 	protected abstract void countNonZerosPerRow(int[] rnnz, int rl, int ru);
+
+	/**
+	 * Base class for column group row iterators. We do not
+	 * implement the default Iterator interface in order to
+	 * avoid unnecessary value copies per group.
+	 */
+	protected abstract class ColGroupRowIterator {
+		public abstract void next(double[] buff, int rowIx, int segIx, boolean last);
+	}
 }

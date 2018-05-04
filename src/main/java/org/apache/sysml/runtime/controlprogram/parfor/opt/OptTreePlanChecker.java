@@ -25,8 +25,6 @@ import java.util.Set;
 
 import org.apache.sysml.hops.FunctionOp;
 import org.apache.sysml.hops.Hop;
-import org.apache.sysml.hops.Hop.VisitStatus;
-import org.apache.sysml.hops.HopsException;
 import org.apache.sysml.parser.DMLProgram;
 import org.apache.sysml.parser.ForStatement;
 import org.apache.sysml.parser.ForStatementBlock;
@@ -47,23 +45,10 @@ import org.apache.sysml.runtime.controlprogram.WhileProgramBlock;
 import org.apache.sysml.runtime.instructions.Instruction;
 import org.apache.sysml.runtime.instructions.cp.FunctionCallCPInstruction;
 
-/**
- * 
- * 
- */
 public class OptTreePlanChecker 
 {
-	
-	/**
-	 * 
-	 * @param pb
-	 * @param sb
-	 * @param fnStack
-	 * @throws HopsException
-	 * @throws DMLRuntimeException
-	 */
+
 	public static void checkProgramCorrectness( ProgramBlock pb, StatementBlock sb, Set<String> fnStack ) 
-		throws HopsException, DMLRuntimeException
 	{
 		Program prog = pb.getProgram();
 		DMLProgram dprog = sb.getDMLProg();
@@ -130,78 +115,34 @@ public class OptTreePlanChecker
 		}
 		else
 		{
-			checkHopDagCorrectness(prog, dprog, sb.get_hops(), pb.getInstructions(), fnStack);
+			checkHopDagCorrectness(prog, dprog, sb.getHops(), pb.getInstructions(), fnStack);
 			//checkLinksProgramStatementBlock(pb, sb);
 		}
 		
 	}
-	
-	/**
-	 * 
-	 * @param prog
-	 * @param dprog
-	 * @param roots
-	 * @param inst
-	 * @param fnStack
-	 * @throws DMLRuntimeException
-	 * @throws HopsException
-	 */
-	private static void checkHopDagCorrectness( Program prog, DMLProgram dprog, ArrayList<Hop> roots, ArrayList<Instruction> inst, Set<String> fnStack ) 
-		throws DMLRuntimeException, HopsException
-	{
+
+	private static void checkHopDagCorrectness( Program prog, DMLProgram dprog, ArrayList<Hop> roots, ArrayList<Instruction> inst, Set<String> fnStack ) {
 		if( roots != null )
 			for( Hop hop : roots )
 				checkHopDagCorrectness(prog, dprog, hop, inst, fnStack);
 	}
-	
-	/**
-	 * 
-	 * @param prog
-	 * @param dprog
-	 * @param root
-	 * @param inst
-	 * @param fnStack
-	 * @throws DMLRuntimeException
-	 * @throws HopsException
-	 */
-	private static void checkHopDagCorrectness( Program prog, DMLProgram dprog, Hop root, ArrayList<Instruction> inst, Set<String> fnStack ) 
-		throws DMLRuntimeException, HopsException
-	{
+
+	private static void checkHopDagCorrectness( Program prog, DMLProgram dprog, Hop root, ArrayList<Instruction> inst, Set<String> fnStack ) {
 		//set of checks to perform
 		checkFunctionNames(prog, dprog, root, inst, fnStack);
 	}
-	
-	/**
-	 * 
-	 * @param pb
-	 * @param sb
-	 * @throws DMLRuntimeException
-	 */
-	private static void checkLinksProgramStatementBlock( ProgramBlock pb, StatementBlock sb ) 
-		throws DMLRuntimeException
-	{
+
+	private static void checkLinksProgramStatementBlock( ProgramBlock pb, StatementBlock sb ) {
 		if( pb.getStatementBlock() != sb )
 			throw new DMLRuntimeException("Links between programblocks and statementblocks are incorrect ("+pb+").");
 	}
-	
-	/**
-	 * 
-	 * @param prog
-	 * @param dprog
-	 * @param root
-	 * @param inst
-	 * @param fnStack
-	 * @throws DMLRuntimeException
-	 * @throws HopsException
-	 */
-	private static void checkFunctionNames( Program prog, DMLProgram dprog, Hop root, ArrayList<Instruction> inst, Set<String> fnStack ) 
-		throws DMLRuntimeException, HopsException
-	{
+
+	private static void checkFunctionNames( Program prog, DMLProgram dprog, Hop root, ArrayList<Instruction> inst, Set<String> fnStack ) {
 		//reset visit status of dag
 		root.resetVisitStatus();
 		
 		//get all function op in this dag
-		HashMap<String, FunctionOp> fops = new HashMap<String, FunctionOp>();
+		HashMap<String, FunctionOp> fops = new HashMap<>();
 		getAllFunctionOps(root, fops);
 		
 		for( Instruction linst : inst )
@@ -231,29 +172,22 @@ public class OptTreePlanChecker
 				}
 			}
 	}
-	
-	/**
-	 * 
-	 * @param hop
-	 * @param memo
-	 */
+
 	private static void getAllFunctionOps( Hop hop, HashMap<String, FunctionOp> memo )
 	{
-		if( hop.getVisited() == VisitStatus.DONE )
+		if( hop.isVisited() )
 			return;
 		
 		//process functionop
-		if( hop instanceof FunctionOp )
-		{
+		if( hop instanceof FunctionOp ) {
 			FunctionOp fop = (FunctionOp) hop;
-			String key = DMLProgram.constructFunctionKey(fop.getFunctionNamespace(),fop.getFunctionName());
-			memo.put(key, fop);
+			memo.put(fop.getFunctionKey(), fop);
 		}
 		
 		//process children
 		for( Hop in : hop.getInput() )
 			getAllFunctionOps(in, memo);
 		
-		hop.setVisited(VisitStatus.DONE);
+		hop.setVisited();
 	}
 }

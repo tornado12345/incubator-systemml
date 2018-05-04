@@ -21,25 +21,22 @@ package org.apache.sysml.runtime.instructions;
 
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
-
-import org.apache.sysml.api.monitoring.Location;
+import org.apache.sysml.api.DMLScript;
 import org.apache.sysml.lops.Lop;
 import org.apache.sysml.parser.DataIdentifier;
-import org.apache.sysml.runtime.DMLRuntimeException;
 import org.apache.sysml.runtime.controlprogram.context.ExecutionContext;
 
 
 public abstract class Instruction 
 {
-	public enum INSTRUCTION_TYPE { 
-		CONTROL_PROGRAM, 
-		MAPREDUCE, 
-		EXTERNAL_LIBRARY, 
-		MAPREDUCE_JOB, 
-		BREAKPOINT, 
+	public enum IType { 
+		CONTROL_PROGRAM,
+		MAPREDUCE,
+		MAPREDUCE_JOB,
+		BREAKPOINT,
 		SPARK,
 		GPU
-	};
+	}
 	
 	protected static final Log LOG = LogFactory.getLog(Instruction.class.getName());
 	
@@ -48,35 +45,46 @@ public abstract class Instruction
 	public static final String VALUETYPE_PREFIX = Lop.VALUETYPE_PREFIX;
 	public static final String LITERAL_PREFIX = Lop.LITERAL_PREFIX;
 	public static final String INSTRUCTION_DELIM = Lop.INSTRUCTION_DELIMITOR;
-	public static final String NAME_VALUE_SEPARATOR = Lop.NAME_VALUE_SEPARATOR;
 	public static final String SP_INST_PREFIX = "sp_";
 	public static final String GPU_INST_PREFIX = "gpu_";
 	
 	//basic instruction meta data
-	protected INSTRUCTION_TYPE type = null;
 	protected String instString = null;
 	protected String instOpcode = null;
+	private String extendedOpcode = null;
 	private long instID = -1;
 	
 	//originating script positions
+	protected String filename = null;
 	protected int beginLine = -1;
 	protected int endLine = -1;  
 	protected int beginCol = -1; 
 	protected int endCol = -1;
 	
-	public void setType (INSTRUCTION_TYPE tp ) {
-		type = tp;
+	public String getFilename() {
+		return filename;
+	}
+
+	public int getBeginLine() {
+		return beginLine;
+	}
+
+	public int getEndLine() {
+		return endLine;
+	}
+
+	public int getBeginColumn() {
+		return beginCol;
+	}
+
+	public int getEndColumn() {
+		return endCol;
 	}
 	
-	public INSTRUCTION_TYPE getType() {
-		return type;
-	}
+	public abstract IType getType();
 	
-	/**
-	 * Setter for instruction line number 
-	 * @param ln Exact (or approximate) DML script line number
-	 */
-	public void setLocation ( int beginLine, int endLine,  int beginCol, int endCol) {
+	public void setLocation(String filename, int beginLine, int endLine, int beginCol, int endCol) {
+		this.filename = filename;
 		this.beginLine = beginLine;
 		this.endLine = endLine;
 		this.beginCol = beginCol;
@@ -85,6 +93,7 @@ public abstract class Instruction
 	
 	public void setLocation(Lop lop) {
 		if(lop != null) {
+			this.filename = lop.getFilename();
 			this.beginLine = lop._beginLine;
 			this.endLine = lop._endLine;
 			this.beginCol = lop._beginColumn;
@@ -94,6 +103,7 @@ public abstract class Instruction
 	
 	public void setLocation(DataIdentifier id) {
 		if(id != null) {
+			this.filename = id.getFilename();
 			this.beginLine = id.getBeginLine();
 			this.endLine = id.getEndLine();
 			this.beginCol = id.getBeginColumn();
@@ -103,22 +113,13 @@ public abstract class Instruction
 	
 	public void setLocation(Instruction oldInst) {
 		if(oldInst != null) {
+			this.filename = oldInst.filename;
 			this.beginLine = oldInst.beginLine;
 			this.endLine = oldInst.endLine;
 			this.beginCol = oldInst.beginCol;
 			this.endCol = oldInst.endCol;
 		}
 	}
-	
-	public Location getLocation() {
-		// Rather than exposing 4 different getter methods. Also Location doesnot contain any references to Spark libraries
-		if(beginLine == -1 || endLine == -1 || beginCol == -1 || endCol == -1) {
-			return null;
-		}
-		else
-			return new Location(beginLine, endLine, beginCol, endCol);
-	}
-	
 	
 	/**
 	 * Getter for instruction line number
@@ -148,6 +149,7 @@ public abstract class Instruction
 		LOG.debug(instString);
 	}
 	
+	@Override
 	public String toString() {
 		return instString;
 	}
@@ -161,18 +163,33 @@ public abstract class Instruction
 	}
 	
 	public String getExtendedOpcode() {
-		if( type == INSTRUCTION_TYPE.SPARK )
-			return SP_INST_PREFIX + getOpcode();
-		else if( type == INSTRUCTION_TYPE.GPU )
-			return GPU_INST_PREFIX + getOpcode();
-		else
-			return getOpcode();
+		if(extendedOpcode != null)
+			return extendedOpcode;
+		if(DMLScript.FINEGRAINED_STATISTICS) {
+			String scriptInfo;
+			if(filename != null)
+				scriptInfo = " [" + filename + " " + beginLine + ":" + beginCol + "-" + endLine + ":" + endCol + "]";
+			else
+				scriptInfo = " [" + beginLine + ":" + beginCol + "-" + endLine + ":" + endCol + "]";
+			if( getType() == IType.SPARK )
+				extendedOpcode = SP_INST_PREFIX + getOpcode() + scriptInfo;
+			else if( getType() == IType.GPU )
+				extendedOpcode = GPU_INST_PREFIX + getOpcode() + scriptInfo;
+			else
+				extendedOpcode = getOpcode() + scriptInfo;
+		}
+		else {
+			// This ensures that there is no overhead if finegrained statistics is disabled
+			if( getType() == IType.SPARK )
+				extendedOpcode = SP_INST_PREFIX + getOpcode();
+			else if( getType() == IType.GPU )
+				extendedOpcode = GPU_INST_PREFIX + getOpcode();
+			else
+				extendedOpcode = getOpcode();
+		}
+		return extendedOpcode;
 	}
-	
-	/**
-	 * 
-	 * @return
-	 */
+
 	public boolean requiresLabelUpdate()
 	{
 		return instString.contains( Lop.VARIABLE_NAME_PLACEHOLDER );
@@ -183,13 +200,10 @@ public abstract class Instruction
 	 * should overwrite this method in order to update (1) the in-memory instruction
 	 * and (2) the instruction string 
 	 * 
-	 * @param pattern
-	 * @param replace
-	 * @throws DMLRuntimeException 
+	 * @param pattern ?
+	 * @param replace ?
 	 */
-	public void updateInstructionThreadID(String pattern, String replace) 
-		throws DMLRuntimeException
-	{
+	public void updateInstructionThreadID(String pattern, String replace) {
 		//do nothing
 	}
 	
@@ -198,13 +212,10 @@ public abstract class Instruction
 	 * Overwriting methods should first call the super method and subsequently do
 	 * their custom setup.
 	 * 
-	 * @param ec
-	 * @return
-	 * @throws DMLRuntimeException 
+	 * @param ec execution context
+	 * @return instruction
 	 */
-	public Instruction preprocessInstruction(ExecutionContext ec)
-		throws DMLRuntimeException
-	{
+	public Instruction preprocessInstruction(ExecutionContext ec){
 		//update debug status
 		ec.updateDebugState( this );
 		
@@ -215,22 +226,18 @@ public abstract class Instruction
 	/**
 	 * This method should be used to execute the instruction. 
 	 * 
-	 * @param ec
-	 * @throws DMLRuntimeException
+	 * @param ec execution context
 	 */
-	public abstract void processInstruction(ExecutionContext ec) 
-		throws DMLRuntimeException;
+	public abstract void processInstruction(ExecutionContext ec);
 	
 	/**
 	 * This method should be used for any tear down after executing this instruction.
 	 * Overwriting methods should first do their custom tear down and subsequently 
 	 * call the super method.
 	 * 
-	 * @param ec
+	 * @param ec execution context
 	 */
-	public void postprocessInstruction(ExecutionContext ec)
-		throws DMLRuntimeException
-	{
+	public void postprocessInstruction(ExecutionContext ec) {
 		//do nothing
 	}
 }

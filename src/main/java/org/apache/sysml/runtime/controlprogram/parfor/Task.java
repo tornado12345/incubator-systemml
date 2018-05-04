@@ -47,78 +47,49 @@ public class Task implements Serializable
 	public static final int MAX_VARNAME_SIZE  = 256;
 	public static final int MAX_TASK_SIZE     = Integer.MAX_VALUE-1; 
 	
-	private TaskType           	  _type;
+	private String _iterVar;
+	private TaskType _type;
 	private LinkedList<IntObject> _iterations; //each iteration is specified as an ordered set of index values
 	
 	public Task() {
 		//default constructor for serialize
 	}
 	
-	public Task( TaskType type )
-	{
+	public Task( String iterVar, TaskType type ) {
+		if( iterVar.length() > MAX_VARNAME_SIZE )
+			throw new RuntimeException("Cannot create task, MAX_VARNAME_SIZE exceeded.");
+		_iterVar = iterVar;
 		_type = type;
-		
-		_iterations = new LinkedList<IntObject>();
+		_iterations = new LinkedList<>();
 	}
 	
-	public void addIteration( IntObject indexVal ) 
-	{
-		if( indexVal.getName().length() > MAX_VARNAME_SIZE )
-			throw new RuntimeException("Cannot add iteration, MAX_VARNAME_SIZE exceeded.");
-		
+	public void addIteration( IntObject indexVal )  {
 		if( size() >= MAX_TASK_SIZE )
 			throw new RuntimeException("Cannot add iteration, MAX_TASK_SIZE reached.");
-			
 		_iterations.addLast( indexVal );
 	}
 	
-	public List<IntObject> getIterations()
-	{
+	public List<IntObject> getIterations() {
 		return _iterations;
 	}
 	
-	public TaskType getType()
-	{
+	public TaskType getType() {
 		return _type;
 	}
 	
-	public int size()
-	{
+	public String getVarName() {
+		return _iterVar;
+	}
+	
+	public int size() {
 		return _iterations.size();
 	}
-	
-	/**
-	 * 
-	 * @param task
-	 */
-	public void mergeTask( Task task )
-	{
-		//check for set iteration type
-		if( _type==TaskType.RANGE )
-			throw new RuntimeException("Task Merging not supported for tasks of type ITERATION_RANGE.");
-		
-		//check for same iteration name
-		String var1 = _iterations.getFirst().getName();
-		String var2 = task._iterations.getFirst().getName();
-		if( !var1.equals(var2) )
-			throw new RuntimeException("Task Merging not supported for tasks with different variable names");
-	
-		//merge tasks
-		for( IntObject o : task._iterations )
-			_iterations.addLast( o );
-	}
-	
 
 	@Override
-	public String toString() 
-	{
+	public String toString() {
 		return toFormatedString();
 	}
-	
-	/**
-	 * 
-	 * @return
-	 */
+
 	public String toFormatedString()
 	{
 		StringBuilder sb = new StringBuilder();
@@ -131,7 +102,7 @@ public class Task implements Serializable
 			if( count!=0 ) 
 				sb.append(";");
 			sb.append("[");
-			sb.append(dat.getName());
+			sb.append(_iterVar);
 			sb.append("=");
 			sb.append(dat.getLongValue());
 			sb.append("]");
@@ -141,11 +112,7 @@ public class Task implements Serializable
 		sb.append("})");
 		return sb.toString();
 	}
-	
-	/**
-	 * 
-	 * @return
-	 */
+
 	public String toCompactString()
 	{
 		StringBuilder sb = new StringBuilder( );
@@ -154,8 +121,7 @@ public class Task implements Serializable
 		if( size() > 0 )
 		{
 			sb.append(".");
-			IntObject dat0 = _iterations.getFirst();
-			sb.append(dat0.getName());
+			sb.append(_iterVar);
 			sb.append(".{");
 		
 			int count = 0;
@@ -172,11 +138,7 @@ public class Task implements Serializable
 		
 		return sb.toString();
 	}
-	
-	/**
-	 * 
-	 * @return
-	 */
+
 	public String toCompactString( int maxDigits )
 	{
 		StringBuilder sb = new StringBuilder( );
@@ -185,8 +147,7 @@ public class Task implements Serializable
 		if( size() > 0 )
 		{
 			sb.append(".");
-			IntObject dat0 = _iterations.getFirst();
-			sb.append(dat0.getName());
+			sb.append(_iterVar);
 			sb.append(".{");
 		
 			int count = 0;
@@ -207,28 +168,22 @@ public class Task implements Serializable
 		
 		return sb.toString();
 	}
-	
-	/**
-	 * 
-	 * @param stask
-	 * @return
-	 */
+
 	public static Task parseCompactString( String stask )
 	{
-		StringTokenizer st = new StringTokenizer( stask.trim(), "." );		
-		
-		Task newTask = new Task( TaskType.valueOf(st.nextToken()) );
+		StringTokenizer st = new StringTokenizer( stask.trim(), "." );
+		TaskType type = TaskType.valueOf(st.nextToken());
 		String meta = st.nextToken();
+		Task newTask = new Task(meta, type);
 		
 		//iteration data
 		String sdata = st.nextToken();
 		sdata = sdata.substring(1,sdata.length()-1); // remove brackets
 		StringTokenizer st2 = new StringTokenizer(sdata, ",");
-		while( st2.hasMoreTokens() )
-		{
+		while( st2.hasMoreTokens() ) {
 			//create new iteration
 			String lsdata = st2.nextToken();
-			IntObject ldata = new IntObject(meta,Integer.parseInt( lsdata ) );
+			IntObject ldata = new IntObject(Integer.parseInt(lsdata));
 			newTask.addIteration(ldata);
 		}
 		

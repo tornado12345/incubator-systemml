@@ -31,20 +31,14 @@ import org.apache.sysml.runtime.matrix.operators.COVOperator;
 import org.apache.sysml.runtime.matrix.operators.Operator;
 import org.apache.sysml.runtime.matrix.operators.CMOperator.AggregateOperationTypes;
 
+public class CM_N_COVInstruction extends UnaryMRInstructionBase {
 
-public class CM_N_COVInstruction extends UnaryMRInstructionBase 
-{
-	
-	public CM_N_COVInstruction(Operator op, byte in, byte out, String istr)
-	{
-		super(op, in, out);
-		mrtype = MRINSTRUCTION_TYPE.CM_N_COV;
+	private CM_N_COVInstruction(Operator op, byte in, byte out, String istr) {
+		super(MRType.CM_N_COV, op, in, out);
 		instString = istr;
 	}
-	
-	public static CM_N_COVInstruction parseInstruction ( String str ) 
-		throws DMLRuntimeException 
-	{	
+
+	public static CM_N_COVInstruction parseInstruction ( String str ) {
 		String[] parts = InstructionUtils.getInstructionParts ( str );
 		
 		byte in, out;
@@ -85,8 +79,7 @@ public class CM_N_COVInstruction extends UnaryMRInstructionBase
 	@Override
 	public void processInstruction(Class<? extends MatrixValue> valueClass,
 			CachedValueMap cachedValues, IndexedMatrixValue tempValue,
-			IndexedMatrixValue zeroInput, int blockRowFactor, int blockColFactor)
-			throws DMLRuntimeException {
+			IndexedMatrixValue zeroInput, int blockRowFactor, int blockColFactor) {
 		
 		throw new DMLRuntimeException("no processInstruction for AggregateInstruction!");
 		

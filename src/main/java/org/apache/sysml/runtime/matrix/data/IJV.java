@@ -32,11 +32,7 @@ public class IJV
 	public IJV() {
 		//do nothing
 	}
-	
-	public IJV(int i, int j, double v){
-		set(i, j, v);
-	}
-	
+
 	public void set(int i, int j, double v) {
 		_i = i;
 		_j = j;
@@ -55,6 +51,7 @@ public class IJV
 		return _v;
 	}
 	
+	@Override
 	public String toString() {
 		return "("+_i+", "+_j+"): "+_v;
 	}

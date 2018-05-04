@@ -19,7 +19,8 @@
 
 package org.apache.sysml.runtime.instructions.cpfile;
 
-import org.apache.sysml.parser.Expression.DataType;
+import org.apache.sysml.lops.LeftIndex;
+import org.apache.sysml.lops.RightIndex;
 import org.apache.sysml.runtime.DMLRuntimeException;
 import org.apache.sysml.runtime.controlprogram.caching.MatrixObject;
 import org.apache.sysml.runtime.controlprogram.context.ExecutionContext;
@@ -27,10 +28,8 @@ import org.apache.sysml.runtime.instructions.InstructionUtils;
 import org.apache.sysml.runtime.instructions.cp.CPOperand;
 import org.apache.sysml.runtime.instructions.cp.IndexingCPInstruction;
 import org.apache.sysml.runtime.matrix.MatrixCharacteristics;
-import org.apache.sysml.runtime.matrix.MatrixFormatMetaData;
+import org.apache.sysml.runtime.matrix.MetaDataFormat;
 import org.apache.sysml.runtime.matrix.data.MatrixBlock;
-import org.apache.sysml.runtime.matrix.operators.Operator;
-import org.apache.sysml.runtime.matrix.operators.SimpleOperator;
 import org.apache.sysml.runtime.util.IndexRange;
 import org.apache.sysml.runtime.util.MapReduceTool;
 
@@ -42,105 +41,92 @@ import org.apache.sysml.runtime.util.MapReduceTool;
  * COLWISE partition formats. 
  * 
  */
-public final class MatrixIndexingCPFileInstruction extends IndexingCPInstruction 
-{
-	public MatrixIndexingCPFileInstruction(Operator op, CPOperand in, CPOperand rl, CPOperand ru, CPOperand cl, CPOperand cu, CPOperand out, String opcode, String istr) {
-		super( op, in, rl, ru, cl, cu, out, opcode, istr );
+public final class MatrixIndexingCPFileInstruction extends IndexingCPInstruction {
+
+	private MatrixIndexingCPFileInstruction(CPOperand in, CPOperand rl, CPOperand ru, CPOperand cl,
+			CPOperand cu, CPOperand out, String opcode, String istr) {
+		super(in, rl, ru, cl, cu, out, opcode, istr);
 	}
-	
-	public MatrixIndexingCPFileInstruction(Operator op, CPOperand lhsInput, CPOperand rhsInput, CPOperand rl, CPOperand ru, CPOperand cl, CPOperand cu, CPOperand out, String opcode, String istr) {
-		super( op, lhsInput, rhsInput, rl, ru, cl, cu, out, opcode, istr);
-	}
-	
-	public static MatrixIndexingCPFileInstruction parseInstruction ( String str ) 
-		throws DMLRuntimeException 
-	{		
+
+	public static MatrixIndexingCPFileInstruction parseInstruction ( String str ) {
 		String[] parts = InstructionUtils.getInstructionPartsWithValueType(str);
 		String opcode = parts[0];
 		
-		if ( opcode.equalsIgnoreCase("rangeReIndex") ) {
+		if ( opcode.equalsIgnoreCase(RightIndex.OPCODE) ) {
 			if ( parts.length == 7 ) {
-				// Example: rangeReIndex:mVar1:Var2:Var3:Var4:Var5:mVar6
 				CPOperand in, rl, ru, cl, cu, out;
-				in = new CPOperand();
-				rl = new CPOperand();
-				ru = new CPOperand();
-				cl = new CPOperand();
-				cu = new CPOperand();
-				out = new CPOperand();
-				in.split(parts[1]);
-				rl.split(parts[2]);
-				ru.split(parts[3]);
-				cl.split(parts[4]);
-				cu.split(parts[5]);
-				out.split(parts[6]);
-				return new MatrixIndexingCPFileInstruction(new SimpleOperator(null), in, rl, ru, cl, cu, out, opcode, str);
+				in = new CPOperand(parts[1]);
+				rl = new CPOperand(parts[2]);
+				ru = new CPOperand(parts[3]);
+				cl = new CPOperand(parts[4]);
+				cu = new CPOperand(parts[5]);
+				out = new CPOperand(parts[6]);
+				return new MatrixIndexingCPFileInstruction(in, rl, ru, cl, cu, out, opcode, str);
 			}
 			else {
 				throw new DMLRuntimeException("Invalid number of operands in instruction: " + str);
 			}
 		} 
-		else if ( parts[0].equalsIgnoreCase("leftIndex")) 
-		{
-			throw new DMLRuntimeException("Invalid opcode while parsing a MatrixIndexingCPFileInstruction: " + str);	
+		else if ( parts[0].equalsIgnoreCase(LeftIndex.OPCODE)) {
+			throw new DMLRuntimeException("Invalid opcode while parsing a MatrixIndexingCPFileInstruction: " + str);
 		}
-		else 
-		{
+		else {
 			throw new DMLRuntimeException("Unknown opcode while parsing a MatrixIndexingCPFileInstruction: " + str);
 		}
 	}
 	
 	@Override
-	public void processInstruction(ExecutionContext ec)
-			throws DMLRuntimeException 
-	{	
+	public void processInstruction(ExecutionContext ec) {
 		String opcode = getOpcode();
 		IndexRange ixrange = getIndexRange(ec).add(1);
 		MatrixObject mo = ec.getMatrixObject(input1.getName());
 		
-		if( mo.isPartitioned() && opcode.equalsIgnoreCase("rangeReIndex") ) 
+		if( mo.isPartitioned() && opcode.equalsIgnoreCase(RightIndex.OPCODE) ) 
 		{
-			MatrixFormatMetaData meta = (MatrixFormatMetaData)mo.getMetaData();
+			MetaDataFormat meta = (MetaDataFormat)mo.getMetaData();
 			MatrixCharacteristics mc = meta.getMatrixCharacteristics();
 			String pfname = mo.getPartitionFileName( ixrange, mc.getRowsPerBlock(), mc.getColsPerBlock());
 			
-			if( MapReduceTool.existsFileOnHDFS(pfname) )
-			{
-				MatrixObject out = ec.getMatrixObject(output.getName());
-				
-				//create output matrix object				
+			if( MapReduceTool.existsFileOnHDFS(pfname) ) { //default
+				//create output matrix object
 				MatrixObject mobj = new MatrixObject(mo.getValueType(), pfname );
-				mobj.setDataType( DataType.MATRIX );
-				mobj.setVarName( out.getVarName() );
 				MatrixCharacteristics mcNew = null;
-				switch( mo.getPartitionFormat() )
-				{
+				switch( mo.getPartitionFormat() ) {
 					case ROW_WISE:
 						mcNew = new MatrixCharacteristics( 1, mc.getCols(), mc.getRowsPerBlock(), mc.getColsPerBlock() );
 						break;
+					case ROW_BLOCK_WISE_N:
+						mcNew = new MatrixCharacteristics( mo.getPartitionSize(), mc.getCols(), mc.getRowsPerBlock(), mc.getColsPerBlock() );
+						break;
 					case COLUMN_WISE:
 						mcNew = new MatrixCharacteristics( mc.getRows(), 1, mc.getRowsPerBlock(), mc.getColsPerBlock() );
-						break;					
+						break;
+					case COLUMN_BLOCK_WISE_N:
+						mcNew = new MatrixCharacteristics( mc.getRows(), mo.getPartitionSize(), mc.getRowsPerBlock(), mc.getColsPerBlock() );
+						break;
 					default:
-						throw new DMLRuntimeException("Unsupported partition format for CP_FILE rangeReIndex: "+ mo.getPartitionFormat());
+						throw new DMLRuntimeException("Unsupported partition format for CP_FILE "+RightIndex.OPCODE+": "+ mo.getPartitionFormat());
 				}
 				
-				MatrixFormatMetaData metaNew = new MatrixFormatMetaData(mcNew,meta.getOutputInfo(),meta.getInputInfo());
-				mobj.setMetaData(metaNew);	 
+				MetaDataFormat metaNew = new MetaDataFormat(mcNew,meta.getOutputInfo(),meta.getInputInfo());
+				mobj.setMetaData(metaNew);
+				
+				//note: disable cleanup to ensure that the partitioning file is not deleted 
+				//(e.g., for nested loops or reused partitioned matrices across loops)
+				mobj.enableCleanup(false);
 				
 				//put output object into symbol table
 				ec.setVariable(output.getName(), mobj);
 			}
-			else
-			{
-				//will return an empty matrix partition 
+			else { //empty matrix partition
+				//note: for binary cell data partitioning empty partitions are not materialized
 				MatrixBlock resultBlock = mo.readMatrixPartition( ixrange );
-				ec.setMatrixOutput(output.getName(), resultBlock);
+				ec.setMatrixOutput(output.getName(), resultBlock, getExtendedOpcode());
 			}
 		}
-		else
-		{
-			throw new DMLRuntimeException("Invalid opcode or index predicate for MatrixIndexingCPFileInstruction: " + instString);	
+		else {
+			throw new DMLRuntimeException("Invalid opcode or index predicate "
+				+ "for MatrixIndexingCPFileInstruction: " + instString);
 		}
 	}
 }

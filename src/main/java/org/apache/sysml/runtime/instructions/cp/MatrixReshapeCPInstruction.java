@@ -27,46 +27,29 @@ import org.apache.sysml.runtime.matrix.data.LibMatrixReorg;
 import org.apache.sysml.runtime.matrix.data.MatrixBlock;
 import org.apache.sysml.runtime.matrix.operators.Operator;
 
-/**
- * 
- * 
- */
-public class MatrixReshapeCPInstruction extends UnaryCPInstruction
-{	
-	
-	private CPOperand _opRows = null;
-	private CPOperand _opCols = null;
-	private CPOperand _opByRow = null;
-	
-	public MatrixReshapeCPInstruction(Operator op, CPOperand in1, CPOperand in2, CPOperand in3, CPOperand in4, CPOperand out, String opcode, String istr)
-	{
-		super(op, in1, out, opcode, istr);
-		_cptype = CPINSTRUCTION_TYPE.MatrixReshape;
-		
+public class MatrixReshapeCPInstruction extends UnaryCPInstruction {
+
+	private final CPOperand _opRows;
+	private final CPOperand _opCols;
+	private final CPOperand _opByRow;
+
+	private MatrixReshapeCPInstruction(Operator op, CPOperand in1, CPOperand in2, CPOperand in3, CPOperand in4,
+			CPOperand out, String opcode, String istr) {
+		super(CPType.MatrixReshape, op, in1, out, opcode, istr);
 		_opRows = in2;
 		_opCols = in3;
 		_opByRow = in4;
 	}
-	
-	/**
-	 * 
-	 * @param str
-	 * @return
-	 * @throws DMLRuntimeException
-	 */
-	public static MatrixReshapeCPInstruction parseInstruction ( String str ) 
-		throws DMLRuntimeException 
-	{
+
+	public static MatrixReshapeCPInstruction parseInstruction ( String str ) {
 		String[] parts = InstructionUtils.getInstructionPartsWithValueType(str);
 		InstructionUtils.checkNumFields( parts, 5 );
-		
 		String opcode = parts[0];
 		CPOperand in1 = new CPOperand(parts[1]);
 		CPOperand in2 = new CPOperand(parts[2]);
 		CPOperand in3 = new CPOperand(parts[3]);
 		CPOperand in4 = new CPOperand(parts[4]);
 		CPOperand out = new CPOperand(parts[5]);
-			 
 		if(!opcode.equalsIgnoreCase("rshape"))
 			throw new DMLRuntimeException("Unknown opcode while parsing an MatrixReshapeInstruction: " + str);
 		else
@@ -74,11 +57,9 @@ public class MatrixReshapeCPInstruction extends UnaryCPInstruction
 	}
 	
 	@Override
-	public void processInstruction(ExecutionContext ec)
-		throws DMLRuntimeException 
-	{
+	public void processInstruction(ExecutionContext ec) {
 		//get inputs
-		MatrixBlock in = ec.getMatrixInput(input1.getName());
+		MatrixBlock in = ec.getMatrixInput(input1.getName(), getExtendedOpcode());
 		int rows = (int)ec.getScalarInput(_opRows.getName(), _opRows.getValueType(), _opRows.isLiteral()).getLongValue(); //save cast
 		int cols = (int)ec.getScalarInput(_opCols.getName(), _opCols.getValueType(), _opCols.isLiteral()).getLongValue(); //save cast
 		BooleanObject byRow = (BooleanObject) ec.getScalarInput(_opByRow.getName(), ValueType.BOOLEAN, _opByRow.isLiteral());
@@ -88,8 +69,8 @@ public class MatrixReshapeCPInstruction extends UnaryCPInstruction
 		out = LibMatrixReorg.reshape(in, out, rows, cols, byRow.getBooleanValue());
 		
 		//set output and release inputs
-		ec.setMatrixOutput(output.getName(), out);
-		ec.releaseMatrixInput(input1.getName());
+		ec.setMatrixOutput(output.getName(), out, getExtendedOpcode());
+		ec.releaseMatrixInput(input1.getName(), getExtendedOpcode());
 	}
 	
 }

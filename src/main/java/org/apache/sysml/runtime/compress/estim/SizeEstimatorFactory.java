@@ -23,14 +23,9 @@ import org.apache.sysml.runtime.matrix.data.MatrixBlock;
 
 public class SizeEstimatorFactory 
 {
-	public static final float SAMPLING_RATIO = 0.01f; //conservative default
-	
-	/**
-	 * 
-	 * @param data
-	 * @param numRows
-	 * @return
-	 */
+	public static final double SAMPLING_RATIO = 0.05; //conservative default
+	public static final boolean EXTRACT_SAMPLE_ONCE = true;
+
 	@SuppressWarnings("unused")
 	public static CompressedSizeEstimator getSizeEstimator(MatrixBlock data, int numRows) {
 		return (SAMPLING_RATIO == 1.0) ?

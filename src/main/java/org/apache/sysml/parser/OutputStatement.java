@@ -19,14 +19,13 @@
 
 package org.apache.sysml.parser;
 
-import java.util.ArrayList;
 import java.util.HashMap;
 
+import org.antlr.v4.runtime.ParserRuleContext;
 import org.apache.sysml.api.DMLScript;
 import org.apache.sysml.debug.DMLBreakpointManager;
 import org.apache.sysml.parser.Expression.DataOp;
 
- 
 public class OutputStatement extends Statement
 {
 		
@@ -37,7 +36,8 @@ public class OutputStatement extends Statement
 																DataExpression.FORMAT_TYPE, 
 																DataExpression.DELIM_DELIMITER, 
 																DataExpression.DELIM_HAS_HEADER_ROW, 
-																DataExpression.DELIM_SPARSE};
+																DataExpression.DELIM_SPARSE,
+																DataExpression.DESCRIPTIONPARAM};
 
 	public DataIdentifier getIdentifier(){
 		return _id;
@@ -50,74 +50,19 @@ public class OutputStatement extends Statement
 	public void setIdentifier(DataIdentifier t) {
 		_id = t;
 	}
-	
-	public OutputStatement(DataIdentifier t, DataOp op, 
-			String filename, int blp, int bcp, int elp, int ecp){
+
+	public OutputStatement(ParserRuleContext ctx, DataIdentifier t, DataOp op, String filename) {
 		_id = t;
-		_paramsExpr = new DataExpression(op, new HashMap<String,Expression>(),
-				filename, blp, bcp, elp, ecp);
+		_paramsExpr = new DataExpression(ctx, op, new HashMap<String, Expression>(), filename);
+		setCtxValuesAndFilename(ctx, filename);
 	}
-	
-	/**
-	 * Called by the parser (both javacc and antlr).
-	 * 
-	 * @param fname
-	 * @param fci
-	 * @param filename
-	 * @param blp
-	 * @param bcp
-	 * @param elp
-	 * @param ecp
-	 * @throws DMLParseException
-	 */
-	public OutputStatement(String fname, FunctionCallIdentifier fci, 
-			String filename, int blp, int bcp, int elp, int ecp) 
-		throws LanguageException 
-	{		
-		setAllPositions(filename, blp, bcp, elp, ecp);
-		DataOp op = Expression.DataOp.WRITE;
-		ArrayList<ParameterExpression> passedExprs = fci.getParamExprs();
-		_paramsExpr = new DataExpression(op, new HashMap<String,Expression>(),
-				filename, blp, bcp, elp, ecp);
-		
-		//check number parameters and proceed only if this will not cause errors
-		if (passedExprs.size() < 2)
-			raiseValidateError("write method must specify both variable to write to file, and filename to write variable to");
-		else
-		{
-			ParameterExpression firstParam = passedExprs.get(0);
-			if (firstParam.getName() != null || (!(firstParam.getExpr() instanceof DataIdentifier)))
-				raiseValidateError("first argument to write method must be name of variable to be written out");
-			else
-				_id = (DataIdentifier)firstParam.getExpr();
-			
-			ParameterExpression secondParam = passedExprs.get(1);
-			if (secondParam.getName() != null || (secondParam.getName() != null && secondParam.getName().equals(DataExpression.IO_FILENAME)))
-				raiseValidateError("second argument to write method must be filename of file variable written to");
-			else
-				addExprParam(DataExpression.IO_FILENAME, secondParam.getExpr(), false);
-				
-			for (int i = 2; i< passedExprs.size(); i++){
-				ParameterExpression currParam = passedExprs.get(i);
-				addExprParam(currParam.getName(), currParam.getExpr(), false);
-			}
-			if (fname.equals("writeMM")){
-				StringIdentifier writeMMExpr = new StringIdentifier(DataExpression.FORMAT_TYPE_VALUE_MATRIXMARKET,
-						this.getFilename(), this.getBeginLine(), this.getBeginColumn(), this.getEndLine(), this.getEndColumn());
-				addExprParam(DataExpression.FORMAT_TYPE, writeMMExpr, false);
-			}
-			else if (fname.equals("write.csv")){
-				StringIdentifier delimitedExpr = new StringIdentifier(DataExpression.FORMAT_TYPE_VALUE_CSV,
-						this.getFilename(), this.getBeginLine(), this.getBeginColumn(), this.getEndLine(), this.getEndColumn());
-				addExprParam(DataExpression.FORMAT_TYPE, delimitedExpr, false);
-			}
-		}
+
+	public OutputStatement(DataIdentifier t, DataOp op, ParseInfo parseInfo) {
+		_id = t;
+		_paramsExpr = new DataExpression(op, new HashMap<String, Expression>(), parseInfo);
+		setParseInfo(parseInfo);
 	}
-	
-	public void setExprParam(String name, Expression value) {
-		_paramsExpr.addVarParam(name, value);
-	}
-	
+
 	public static boolean isValidParamName(String key){
 		for (String paramName : WRITE_VALID_PARAM_NAMES)
 			if (paramName.equals(key))
@@ -125,64 +70,67 @@ public class OutputStatement extends Statement
 			return false;
 	}
 	
-	public void addExprParam(String name, Expression value, boolean fromMTDFile) 
-		throws LanguageException
-	{
+	public void addExprParam(String name, Expression value, boolean fromMTDFile) {
 		if( _paramsExpr.getVarParam(name) != null )
 			raiseValidateError("attempted to add IOStatement parameter " + name + " more than once", false);
-		
 		if( !OutputStatement.isValidParamName(name) )
 			raiseValidateError("attempted to add invalid write statement parameter: " + name, false);
-		
 		_paramsExpr.addVarParam(name, value);
 	}
 	
 	// rewrites statement to support function inlining (create deep copy)
-	public Statement rewriteStatement(String prefix) throws LanguageException{
-		
-		OutputStatement newStatement = new OutputStatement(null,Expression.DataOp.WRITE,
-				this.getFilename(), this.getBeginLine(), this.getBeginColumn(), this.getEndLine(), this.getEndColumn());
-		
+	@Override
+	public Statement rewriteStatement(String prefix) {
+		OutputStatement newStatement = new OutputStatement(null, Expression.DataOp.WRITE, this);
 		// rewrite outputStatement variable name (creates deep copy)
 		newStatement._id = (DataIdentifier)this._id.rewriteExpression(prefix);
-		
 		// rewrite parameter expressions (creates deep copy)
 		DataOp op = _paramsExpr.getOpCode();
-		HashMap<String,Expression> newExprParams = new HashMap<String,Expression>();
+		HashMap<String,Expression> newExprParams = new HashMap<>();
 		for (String key : _paramsExpr.getVarParams().keySet()){
 			Expression newExpr = _paramsExpr.getVarParam(key).rewriteExpression(prefix);
 			newExprParams.put(key, newExpr);
 		}
-		DataExpression newParamerizedExpr = new DataExpression(op, newExprParams,
-				this.getFilename(), this.getBeginLine(), this.getBeginColumn(), this.getEndLine(), this.getEndColumn());
+		DataExpression newParamerizedExpr = new DataExpression(op, newExprParams, this);
 		newStatement.setExprParams(newParamerizedExpr);
 		return newStatement;
 	}
-		
+
 	public void setExprParams(DataExpression newParamerizedExpr) {
 		_paramsExpr = newParamerizedExpr;
 	}
+
 	public Expression getExprParam(String key){
 		return _paramsExpr.getVarParam(key);
 	}
 	
+	@Override
 	public void initializeforwardLV(VariableSet activeIn){}
-	public VariableSet initializebackwardLV(VariableSet lo){
-		return lo;
-	}
-	
-	public String toString(){
+	@Override
+	public VariableSet initializebackwardLV(VariableSet lo){return lo;}
+
+	@Override
+	public String toString() {
 		StringBuilder sb = new StringBuilder();
-		 sb.append(Statement.OUTPUTSTATEMENT + " ( " );
-		 sb.append( _id.toString() + ", " +  _paramsExpr.getVarParam(DataExpression.IO_FILENAME).toString());
-		 for (String key : _paramsExpr.getVarParams().keySet()){
-			 if (!key.equals(DataExpression.IO_FILENAME))
-				 sb.append(", " + key + "=" + _paramsExpr.getVarParam(key));
-		 }
-		 sb.append(" );");
-		 return sb.toString(); 
+		sb.append(Statement.OUTPUTSTATEMENT + "(");
+		sb.append("id=" + _id.toString());
+		for (String key : _paramsExpr.getVarParams().keySet()) {
+			sb.append(", ");
+			sb.append(key);
+			sb.append("=");
+			Expression exp = _paramsExpr.getVarParam(key);
+			if (exp instanceof StringIdentifier) {
+				sb.append("\"");
+				sb.append(exp.toString());
+				sb.append("\"");
+			} else {
+				sb.append(exp.toString());
+			}
+		}
+		sb.append(");");
+		return sb.toString();
 	}
-	
+
 	@Override
 	public VariableSet variablesRead() {
 		VariableSet result = new VariableSet();

@@ -51,17 +51,13 @@ public class ReaderColumnSelectionDenseSample extends ReaderColumnSelection
 	public DblArray nextRow() {
 		if (_skipZeros) {
 			while ((nonZeroReturn = getNextRow()) != null
-					&& DblArray.isZero(nonZeroReturn));
+					&& DblArray.isZero(nonZeroReturn)){}
 			return nonZeroReturn;
 		} else {
 			return getNextRow();
 		}
 	}
 
-	/**
-	 * 
-	 * @return
-	 */
 	private DblArray getNextRow() {
 		if (lastIndex == _sampleIndexes.length - 1)
 			return null;

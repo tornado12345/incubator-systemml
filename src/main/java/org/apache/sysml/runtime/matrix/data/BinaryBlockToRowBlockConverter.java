@@ -43,7 +43,7 @@ public class BinaryBlockToRowBlockConverter implements Converter<MatrixIndexes, 
 	{
 		_destIx = new MatrixIndexes();
 		_destBlock = new MatrixBlock();
-		_pair=new Pair<MatrixIndexes, MatrixBlock>(_destIx, _destBlock);
+		_pair=new Pair<>(_destIx, _destBlock);
 	}
 	
 	private void reset()
@@ -90,10 +90,9 @@ public class BinaryBlockToRowBlockConverter implements Converter<MatrixIndexes, 
 		//slice next row
 		try {
 			//rowlow, rowup, collow, colup (1-based specification)
-			_srcBlock.sliceOperations( _pos, _pos, 0, _srcBlock.getNumColumns()-1, _destBlock );
+			_srcBlock.slice( _pos, _pos, 0, _srcBlock.getNumColumns()-1, _destBlock );
 		}
-		catch(DMLException ex)
-		{
+		catch(DMLException ex) {
 			throw new RuntimeException("Failed to slice matrix block into row blocks.", ex);
 		}
 			

@@ -41,27 +41,13 @@ import org.apache.sysml.runtime.matrix.data.MatrixIndexes;
 import org.apache.sysml.runtime.matrix.operators.CMOperator;
 import org.apache.sysml.runtime.matrix.operators.CMOperator.AggregateOperationTypes;
 
-/**
- * 
- */
-public class CentralMomentSPInstruction extends UnarySPInstruction
-{
-	
-	public CentralMomentSPInstruction(CMOperator op, CPOperand in1, CPOperand in2, 
-			CPOperand in3, CPOperand out, String opcode, String str)
-	{
-		super(op, in1, in2, in3, out, opcode, str);
+public class CentralMomentSPInstruction extends UnarySPInstruction {
+
+	private CentralMomentSPInstruction(CMOperator op, CPOperand in1, CPOperand in2, CPOperand in3, CPOperand out, String opcode, String str) {
+		super(SPType.CentralMoment, op, in1, in2, in3, out, opcode, str);
 	}
-	
-	/**
-	 * 
-	 * @param str
-	 * @return
-	 * @throws DMLRuntimeException
-	 */
-	public static CentralMomentSPInstruction parseInstruction(String str)
-		throws DMLRuntimeException 
-	{
+
+	public static CentralMomentSPInstruction parseInstruction(String str) {
 		CPOperand in1 = new CPOperand("", ValueType.UNKNOWN, DataType.UNKNOWN);
 		CPOperand in2 = null; 
 		CPOperand in3 = null; 
@@ -110,9 +96,7 @@ public class CentralMomentSPInstruction extends UnarySPInstruction
 	}
 	
 	@Override
-	public void processInstruction( ExecutionContext ec )
-		throws DMLRuntimeException
-	{
+	public void processInstruction( ExecutionContext ec ) {
 		SparkExecutionContext sec = (SparkExecutionContext)ec;
 		
 		//parse 'order' input argument 
@@ -143,13 +127,9 @@ public class CentralMomentSPInstruction extends UnarySPInstruction
 
 		//create scalar output (no lineage information required)
 		double val = cmobj.getRequiredResult(_optr);
-		DoubleObject ret = new DoubleObject(output.getName(), val);
-		ec.setScalarOutput(output.getName(), ret);
+		ec.setScalarOutput(output.getName(), new DoubleObject(val));
 	}
 
-	/**
-	 * 
-	 */
 	private static class RDDCMFunction implements Function<MatrixBlock, CM_COV_Object> 
 	{
 		private static final long serialVersionUID = 2293839116041610644L;
@@ -168,10 +148,7 @@ public class CentralMomentSPInstruction extends UnarySPInstruction
 			return arg0.cmOperations(_op);
 		}
 	}
-	
-	/**
-	 * 
-	 */
+
 	private static class RDDCMWeightsFunction implements Function<Tuple2<MatrixBlock,MatrixBlock>, CM_COV_Object> 
 	{
 		private static final long serialVersionUID = -8949715516574052497L;

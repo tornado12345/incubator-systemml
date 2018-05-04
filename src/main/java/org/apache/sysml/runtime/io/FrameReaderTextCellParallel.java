@@ -24,7 +24,6 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 
 import org.apache.hadoop.fs.FileSystem;
@@ -36,6 +35,7 @@ import org.apache.hadoop.mapred.TextInputFormat;
 import org.apache.sysml.hops.OptimizerUtils;
 import org.apache.sysml.parser.Expression.ValueType;
 import org.apache.sysml.runtime.matrix.data.FrameBlock;
+import org.apache.sysml.runtime.util.CommonThreadPool;
 
 /**
  * Multi-threaded frame textcell reader.
@@ -43,18 +43,7 @@ import org.apache.sysml.runtime.matrix.data.FrameBlock;
  */
 public class FrameReaderTextCellParallel extends FrameReaderTextCell
 {	
-	/**
-	 * 
-	 * @param path
-	 * @param job
-	 * @param fs
-	 * @param dest
-	 * @param schema
-	 * @param names
-	 * @param rlen
-	 * @param clen
-	 * @throws IOException
-	 */
+
 	@Override
 	protected void readTextCellFrameFromHDFS( Path path, JobConf job, FileSystem fs, FrameBlock dest, 
 			ValueType[] schema, String[] names, long rlen, long clen)
@@ -69,14 +58,14 @@ public class FrameReaderTextCellParallel extends FrameReaderTextCell
 		try 
 		{
 			//create read tasks for all splits
-			ExecutorService pool = Executors.newFixedThreadPool(numThreads);
+			ExecutorService pool = CommonThreadPool.get(numThreads);
 			InputSplit[] splits = informat.getSplits(job, numThreads);
-			ArrayList<ReadTask> tasks = new ArrayList<ReadTask>();
+			ArrayList<ReadTask> tasks = new ArrayList<>();
 			for( InputSplit split : splits )
 				tasks.add(new ReadTask(split, informat, job, dest));
 			
 			//wait until all tasks have been executed
-			List<Future<Object>> rt = pool.invokeAll(tasks);	
+			List<Future<Object>> rt = pool.invokeAll(tasks);
 			pool.shutdown();
 				
 			//check for exceptions
@@ -87,10 +76,7 @@ public class FrameReaderTextCellParallel extends FrameReaderTextCell
 			throw new IOException("Failed parallel read of text cell input.", e);
 		}
 	}
-	
-	/**
-	 * 
-	 */
+
 	public class ReadTask implements Callable<Object> 
 	{
 		private InputSplit _split = null;

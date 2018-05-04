@@ -21,6 +21,7 @@ package org.apache.sysml.runtime.instructions.spark;
 
 
 import java.util.ArrayList;
+import java.util.Iterator;
 
 import org.apache.spark.api.java.JavaPairRDD;
 import org.apache.spark.api.java.function.PairFlatMapFunction;
@@ -54,26 +55,14 @@ import org.apache.sysml.runtime.matrix.operators.Operator;
  * not integrated in automatic operator selection yet.
  * 
  */
-public class PMapmmSPInstruction extends BinarySPInstruction 
-{
-	private static final int NUM_ROWBLOCKS=4;
-	
-	public PMapmmSPInstruction(Operator op, CPOperand in1, CPOperand in2, CPOperand out, 
-			                    String opcode, String istr )
-	{
-		super(op, in1, in2, out, opcode, istr);
-		_sptype = SPINSTRUCTION_TYPE.MAPMM;
+public class PMapmmSPInstruction extends BinarySPInstruction {
+	private static final int NUM_ROWBLOCKS = 4;
+
+	private PMapmmSPInstruction(Operator op, CPOperand in1, CPOperand in2, CPOperand out, String opcode, String istr) {
+		super(SPType.PMAPMM, op, in1, in2, out, opcode, istr);
 	}
 
-	/**
-	 * 
-	 * @param str
-	 * @return
-	 * @throws DMLRuntimeException
-	 */
-	public static PMapmmSPInstruction parseInstruction( String str ) 
-		throws DMLRuntimeException 
-	{
+	public static PMapmmSPInstruction parseInstruction( String str ) {
 		String parts[] = InstructionUtils.getInstructionPartsWithValueType(str);
 		String opcode = parts[0];
 
@@ -92,9 +81,7 @@ public class PMapmmSPInstruction extends BinarySPInstruction
 	}
 	
 	@Override
-	public void processInstruction(ExecutionContext ec) 
-		throws DMLRuntimeException
-	{	
+	public void processInstruction(ExecutionContext ec) {
 		SparkExecutionContext sec = (SparkExecutionContext)ec;
 		
 		//get inputs
@@ -102,9 +89,13 @@ public class PMapmmSPInstruction extends BinarySPInstruction
 		JavaPairRDD<MatrixIndexes,MatrixBlock> in2 = sec.getBinaryBlockRDDHandleForVariable( input2.getName() ); 
 		MatrixCharacteristics mc1 = sec.getMatrixCharacteristics(input1.getName());		
 		
+		// This avoids errors such as java.lang.UnsupportedOperationException: Cannot change storage level of an RDD after it was already assigned a level
+		// Ideally, we should ensure that we donot redundantly call persist on the same RDD.
+		StorageLevel pmapmmStorageLevel = StorageLevel.MEMORY_AND_DISK();
+		
 		//cache right hand side because accessed many times
 		in2 = in2.repartition(sec.getSparkContext().defaultParallelism())
-				 .persist(StorageLevel.MEMORY_AND_DISK());
+				 .persist(pmapmmStorageLevel);
 		
 		JavaPairRDD<MatrixIndexes,MatrixBlock> out = null;
 		for( int i=0; i<mc1.getRows(); i+=NUM_ROWBLOCKS*mc1.getRowsPerBlock() ) 
@@ -121,8 +112,8 @@ public class PMapmmSPInstruction extends BinarySPInstruction
 			//matrix multiplication
 			JavaPairRDD<MatrixIndexes,MatrixBlock> rdd2 = in2
 					.flatMapToPair(new PMapMMFunction(bpmb, i/mc1.getRowsPerBlock()));
-			rdd2 = RDDAggregateUtils.sumByKeyStable(rdd2);
-			rdd2.persist(StorageLevel.MEMORY_ONLY())
+			rdd2 = RDDAggregateUtils.sumByKeyStable(rdd2, false);
+			rdd2.persist(pmapmmStorageLevel)
 			    .count();
 			bpmb.unpersist(false);
 			
@@ -133,7 +124,7 @@ public class PMapmmSPInstruction extends BinarySPInstruction
 		}
 		
 		//cache final result
-		out = out.persist(StorageLevel.MEMORY_AND_DISK());
+		out = out.persist(pmapmmStorageLevel);
 		out.count();
 		
 		//put output RDD handle into symbol table
@@ -145,9 +136,6 @@ public class PMapmmSPInstruction extends BinarySPInstruction
 		updateBinaryMMOutputMatrixCharacteristics(sec, true);
 	}
 
-	/**
-	 * 
-	 */
 	private static class PMapMMRebaseBlocksFunction implements PairFunction<Tuple2<MatrixIndexes, MatrixBlock>, MatrixIndexes, MatrixBlock> 
 	{
 		private static final long serialVersionUID = 98051757210704132L;
@@ -164,15 +152,10 @@ public class PMapmmSPInstruction extends BinarySPInstruction
 		{
 			long rix = arg0._1().getRowIndex()-_offset;
 			MatrixIndexes ixout = new MatrixIndexes(rix, arg0._1().getColumnIndex());
-			return new Tuple2<MatrixIndexes,MatrixBlock>(ixout, arg0._2());
+			return new Tuple2<>(ixout, arg0._2());
 		}
 	}
-	
-	
-	/**
-	 * 
-	 * 
-	 */
+
 	private static class PMapMMFunction implements PairFlatMapFunction<Tuple2<MatrixIndexes, MatrixBlock>, MatrixIndexes, MatrixBlock> 
 	{
 		private static final long serialVersionUID = -4520080421816885321L;
@@ -192,7 +175,7 @@ public class PMapmmSPInstruction extends BinarySPInstruction
 		}
 
 		@Override
-		public Iterable<Tuple2<MatrixIndexes, MatrixBlock>> call(Tuple2<MatrixIndexes, MatrixBlock> arg0)
+		public Iterator<Tuple2<MatrixIndexes, MatrixBlock>> call(Tuple2<MatrixIndexes, MatrixBlock> arg0)
 			throws Exception 
 		{
 			PartitionedBlock<MatrixBlock> pm = _pbc.value();
@@ -203,22 +186,22 @@ public class PMapmmSPInstruction extends BinarySPInstruction
 			MatrixIndexes ixOut = new MatrixIndexes();
 			MatrixBlock blkOut = new MatrixBlock();
 			
-			ArrayList<Tuple2<MatrixIndexes, MatrixBlock>> ret = new ArrayList<Tuple2<MatrixIndexes, MatrixBlock>>();
+			ArrayList<Tuple2<MatrixIndexes, MatrixBlock>> ret = new ArrayList<>();
 			
 			//get the right hand side matrix
 			for( int i=1; i<=pm.getNumRowBlocks(); i++ ) {
 				MatrixBlock left = pm.getBlock(i, (int)ixIn.getRowIndex());
 			
 				//execute matrix-vector mult
-				OperationsOnMatrixValues.performAggregateBinary( 
-						new MatrixIndexes(i,ixIn.getRowIndex()), left, ixIn, blkIn, ixOut, blkOut, _op);						
+				OperationsOnMatrixValues.matMult(new MatrixIndexes(i,ixIn.getRowIndex()),
+					left, ixIn, blkIn, ixOut, blkOut, _op);
 				
 				//output new tuple
 				ixOut.setIndexes(_offset+i, ixOut.getColumnIndex());
-				ret.add(new Tuple2<MatrixIndexes, MatrixBlock>(ixOut, blkOut));
+				ret.add(new Tuple2<>(ixOut, blkOut));
 			}
 			
-			return ret;
+			return ret.iterator();
 		}
 	}
 }

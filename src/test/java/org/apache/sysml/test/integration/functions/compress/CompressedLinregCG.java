@@ -19,16 +19,19 @@
 
 package org.apache.sysml.test.integration.functions.compress;
 
+import java.io.File;
 import java.util.HashMap;
 
 import org.apache.sysml.api.DMLScript;
 import org.apache.sysml.api.DMLScript.RUNTIME_PLATFORM;
 import org.apache.sysml.lops.LopProperties.ExecType;
+import org.apache.sysml.runtime.compress.CompressedMatrixBlock;
 import org.apache.sysml.runtime.controlprogram.parfor.stat.InfrastructureAnalyzer;
 import org.apache.sysml.runtime.matrix.data.MatrixValue.CellIndex;
 import org.apache.sysml.test.integration.AutomatedTestBase;
 import org.apache.sysml.test.integration.TestConfiguration;
 import org.apache.sysml.test.utils.TestUtils;
+import org.junit.Assert;
 import org.junit.Test;
 
 /**
@@ -39,6 +42,7 @@ public class CompressedLinregCG extends AutomatedTestBase
 	private final static String TEST_NAME1 = "LinregCG";
 	private final static String TEST_DIR = "functions/compress/";
 	private final static String TEST_CONF = "SystemML-config-compress.xml";
+	private final static File   TEST_CONF_FILE = new File(SCRIPT_DIR + TEST_DIR, TEST_CONF);
 	
 	private final static double eps = 1e-4;
 	
@@ -51,6 +55,7 @@ public class CompressedLinregCG extends AutomatedTestBase
 	private final static int intercept = 0;
 	private final static double epsilon = 0.000000001;
 	private final static double maxiter = 10;
+	private final static double regular = 0.001;
 	
 	@Override
 	public void setUp() {
@@ -59,32 +64,26 @@ public class CompressedLinregCG extends AutomatedTestBase
 	}
 
 	@Test
-	public void testGDFOLinregCGDenseCP() {
-		runGDFOTest(TEST_NAME1, false, ExecType.CP);
+	public void testLinregCGDenseCP() {
+		runLinregCGTest(TEST_NAME1, false, ExecType.CP);
 	}
 	
 	@Test
-	public void testGDFOLinregCGSparseCP() {
-		runGDFOTest(TEST_NAME1, true, ExecType.CP);
+	public void testLinregCGSparseCP() {
+		runLinregCGTest(TEST_NAME1, true, ExecType.CP);
 	}
 	
 	@Test
-	public void testGDFOLinregCGDenseSP() {
-		runGDFOTest(TEST_NAME1, false, ExecType.SPARK);
+	public void testLinregCGDenseSP() {
+		runLinregCGTest(TEST_NAME1, false, ExecType.SPARK);
 	}
 	
 	@Test
-	public void testGDFOLinregCGSparseSP() {
-		runGDFOTest(TEST_NAME1, true, ExecType.SPARK);
+	public void testLinregCGSparseSP() {
+		runLinregCGTest(TEST_NAME1, true, ExecType.SPARK);
 	}
 	
-	/**
-	 * 
-	 * @param sparseM1
-	 * @param sparseM2
-	 * @param instType
-	 */
-	private void runGDFOTest( String testname,boolean sparse, ExecType instType)
+	private void runLinregCGTest( String testname,boolean sparse, ExecType instType)
 	{
 		//rtplatform for MR
 		RUNTIME_PLATFORM platformOld = rtplatform;
@@ -101,28 +100,23 @@ public class CompressedLinregCG extends AutomatedTestBase
 		
 		try
 		{
-			String TEST_NAME = testname;
-			TestConfiguration config = getTestConfiguration(TEST_NAME);
+			TestConfiguration config = getTestConfiguration(testname);
+			loadTestConfiguration(config);
 			
 			/* This is for running the junit test the new way, i.e., construct the arguments directly */
-			String HOME = SCRIPT_DIR + TEST_DIR;
-			fullDMLScriptName = HOME + TEST_NAME + ".dml";
-			programArgs = new String[]{ "-explain","-stats",
-					                    "-config="+HOME+TEST_CONF,
-					                    "-args", HOME + INPUT_DIR + "X",
-					                             HOME + INPUT_DIR + "y",
-					                             String.valueOf(intercept),
-					                             String.valueOf(epsilon),
-					                             String.valueOf(maxiter),
-					                            HOME + OUTPUT_DIR + "w"};
-			fullRScriptName = HOME + TEST_NAME + ".R";
+			String HOME1 = SCRIPT_DIR + "functions/compress/";
+			String HOME2 = SCRIPT_DIR + "functions/codegenalg/";
+			fullDMLScriptName = "scripts/algorithms/LinearRegCG.dml";
+			programArgs = new String[]{ "-explain", "-stats", "-nvargs", "X="+input("X"), "Y="+input("y"),
+					"icpt="+String.valueOf(intercept), "tol="+String.valueOf(epsilon),
+					"maxi="+String.valueOf(maxiter), "reg="+String.valueOf(regular), "B="+output("w")};
+
+			fullRScriptName = HOME2 + "Algorithm_LinregCG.R";
 			rCmd = "Rscript" + " " + fullRScriptName + " " + 
-			       HOME + INPUT_DIR + " " + 
-			       String.valueOf(intercept) + " " + String.valueOf(epsilon) + " " + 
-			       String.valueOf(maxiter) + " " + HOME + EXPECTED_DIR;
+					HOME1 + INPUT_DIR + " " +
+					String.valueOf(intercept) + " " + String.valueOf(epsilon) + " " + 
+					String.valueOf(maxiter) + " " + String.valueOf(regular) + " "+ HOME1 + EXPECTED_DIR;
 			
-			loadTestConfiguration(config);
-	
 			//generate actual datasets
 			double[][] X = getRandomMatrix(rows, cols, 1, 1, sparse?sparsity2:sparsity1, 7);
 			writeInputMatrixWithMTD("X", X, true);
@@ -139,13 +133,26 @@ public class CompressedLinregCG extends AutomatedTestBase
 			HashMap<CellIndex, Double> dmlfile = readDMLMatrixFromHDFS("w");
 			HashMap<CellIndex, Double> rfile  = readRMatrixFromFS("w");
 			TestUtils.compareMatrices(dmlfile, rfile, eps, "Stat-DML", "Stat-R");
+			
+			Assert.assertTrue(heavyHittersContainsSubString("compress")
+				|| heavyHittersContainsSubString("sp_compress"));
 		}
-		finally
-		{
+		finally {
 			rtplatform = platformOld;
 			DMLScript.USE_LOCAL_SPARK_CONFIG = sparkConfigOld;
-			InfrastructureAnalyzer.setLocalMaxMemory(memOld);		
+			InfrastructureAnalyzer.setLocalMaxMemory(memOld);
+			CompressedMatrixBlock.ALLOW_DDC_ENCODING = true;
 		}
 	}
 
+	/**
+	 * Override default configuration with custom test configuration to ensure
+	 * scratch space and local temporary directory locations are also updated.
+	 */
+	@Override
+	protected File getConfigTemplateFile() {
+		// Instrumentation in this test's output log to show custom configuration file used for template.
+		System.out.println("This test case overrides default configuration with " + TEST_CONF_FILE.getPath());
+		return TEST_CONF_FILE;
+	}
 }

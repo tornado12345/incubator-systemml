@@ -39,38 +39,59 @@ import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
-import org.w3c.dom.Document;
-import org.w3c.dom.Element;
-import org.w3c.dom.NodeList;
-import org.xml.sax.SAXException;
 import org.apache.sysml.hops.OptimizerUtils;
+import org.apache.sysml.hops.codegen.SpoofCompiler.CompilerType;
+import org.apache.sysml.hops.codegen.SpoofCompiler.PlanSelector;
+import org.apache.sysml.lops.Compression;
 import org.apache.sysml.parser.ParseException;
 import org.apache.sysml.runtime.DMLRuntimeException;
-import org.apache.sysml.runtime.util.LocalFileUtils;
+import org.apache.sysml.runtime.io.IOUtilFunctions;
+import org.w3c.dom.Document;
+import org.w3c.dom.Element;
+import org.w3c.dom.Node;
+import org.w3c.dom.NodeList;
+import org.xml.sax.SAXException;
 
 
-public class DMLConfig 
+public class DMLConfig
 {
-
 	public static final String DEFAULT_SYSTEMML_CONFIG_FILEPATH = "./SystemML-config.xml";
 	
 	private static final Log LOG = LogFactory.getLog(DMLConfig.class.getName());
 	
 	// external names of configuration properties 
 	// (single point of change for all internal refs)
-	public static final String LOCAL_TMP_DIR        = "localtmpdir";
-	public static final String SCRATCH_SPACE        = "scratch";
-	public static final String OPTIMIZATION_LEVEL   = "optlevel";	
-	public static final String NUM_REDUCERS         = "numreducers";
-	public static final String JVM_REUSE            = "jvmreuse";
-	public static final String DEFAULT_BLOCK_SIZE   = "defaultblocksize"; 	
-	public static final String YARN_APPMASTER       = "dml.yarn.appmaster"; 	
-	public static final String YARN_APPMASTERMEM    = "dml.yarn.appmaster.mem"; 
-	public static final String YARN_MAPREDUCEMEM    = "dml.yarn.mapreduce.mem"; 
-	public static final String YARN_APPQUEUE    	= "dml.yarn.app.queue"; 
-	public static final String CP_PARALLEL_MATRIXMULT = "cp.parallel.matrixmult";
-	public static final String CP_PARALLEL_TEXTIO   = "cp.parallel.textio";
-	public static final String COMPRESSED_LINALG    = "compressed.linalg";
+	public static final String LOCAL_TMP_DIR        = "sysml.localtmpdir";
+	public static final String SCRATCH_SPACE        = "sysml.scratch";
+	public static final String OPTIMIZATION_LEVEL   = "sysml.optlevel";
+	public static final String NUM_REDUCERS         = "sysml.numreducers";
+	public static final String JVM_REUSE            = "sysml.jvmreuse";
+	public static final String DEFAULT_BLOCK_SIZE   = "sysml.defaultblocksize";
+	public static final String YARN_APPMASTER       = "sysml.yarn.appmaster";
+	public static final String YARN_APPMASTERMEM    = "sysml.yarn.appmaster.mem";
+	public static final String YARN_MAPREDUCEMEM    = "sysml.yarn.mapreduce.mem";
+	public static final String YARN_APPQUEUE        = "sysml.yarn.app.queue"; 
+	public static final String CP_PARALLEL_OPS      = "sysml.cp.parallel.ops";
+	public static final String CP_PARALLEL_IO       = "sysml.cp.parallel.io";
+	public static final String COMPRESSED_LINALG    = "sysml.compressed.linalg"; //auto, true, false
+	public static final String NATIVE_BLAS          = "sysml.native.blas";
+	public static final String NATIVE_BLAS_DIR      = "sysml.native.blas.directory";
+	public static final String CODEGEN              = "sysml.codegen.enabled"; //boolean
+	public static final String CODEGEN_COMPILER     = "sysml.codegen.compiler"; //see SpoofCompiler.CompilerType
+	public static final String CODEGEN_OPTIMIZER    = "sysml.codegen.optimizer"; //see SpoofCompiler.PlanSelector
+	public static final String CODEGEN_PLANCACHE    = "sysml.codegen.plancache"; //boolean
+	public static final String CODEGEN_LITERALS     = "sysml.codegen.literals"; //1..heuristic, 2..always
+	
+	public static final String EXTRA_FINEGRAINED_STATS = "sysml.stats.finegrained"; //boolean
+	public static final String STATS_MAX_WRAP_LEN   = "sysml.stats.maxWrapLength"; //int
+	public static final String AVAILABLE_GPUS       = "sysml.gpu.availableGPUs"; // String to specify which GPUs to use (a range, all GPUs, comma separated list or a specific GPU)
+	public static final String SYNCHRONIZE_GPU      = "sysml.gpu.sync.postProcess"; // boolean: whether to synchronize GPUs after every instruction 
+	public static final String EAGER_CUDA_FREE		= "sysml.gpu.eager.cudaFree"; // boolean: whether to perform eager CUDA free on rmvar
+	public static final String GPU_EVICTION_POLICY	= "sysml.gpu.eviction.policy"; // string: can be lru, lfu, min_evict
+	// Fraction of available memory to use. The available memory is computer when the GPUContext is created
+	// to handle the tradeoff on calling cudaMemGetInfo too often.
+	public static final String GPU_MEMORY_UTILIZATION_FACTOR = "sysml.gpu.memory.util.factor";
+	public static final String FLOATING_POINT_PRECISION = "sysml.floating.point.precision"; // String to specify the datatype to use internally: supported values are double, single
 
 	// supported prefixes for custom map/reduce configurations
 	public static final String PREFIX_MAPRED = "mapred";
@@ -83,12 +104,14 @@ public class DMLConfig
 	//configuration default values
 	private static HashMap<String, String> _defaultVals = null;
 
-    private String _fileName = null;
+	private String _fileName = null;
 	private Element _xmlRoot = null;
+	private DocumentBuilder _documentBuilder = null;
+	private Document _document = null;
 	
 	static
 	{
-		_defaultVals = new HashMap<String, String>();
+		_defaultVals = new HashMap<>();
 		_defaultVals.put(LOCAL_TMP_DIR,          "/tmp/systemml" );
 		_defaultVals.put(SCRATCH_SPACE,          "scratch_space" );
 		_defaultVals.put(OPTIMIZATION_LEVEL,     String.valueOf(OptimizerUtils.DEFAULT_OPTLEVEL.ordinal()) );
@@ -99,24 +122,38 @@ public class DMLConfig
 		_defaultVals.put(YARN_APPMASTERMEM,      "2048" );
 		_defaultVals.put(YARN_MAPREDUCEMEM,      "-1" );
 		_defaultVals.put(YARN_APPQUEUE,    	     "default" );
-		_defaultVals.put(CP_PARALLEL_MATRIXMULT, "true" );
-		_defaultVals.put(CP_PARALLEL_TEXTIO,     "true" );
-		_defaultVals.put(COMPRESSED_LINALG,      "false" );
+		_defaultVals.put(CP_PARALLEL_OPS,        "true" );
+		_defaultVals.put(CP_PARALLEL_IO,         "true" );
+		_defaultVals.put(COMPRESSED_LINALG,      Compression.CompressConfig.AUTO.name() );
+		_defaultVals.put(CODEGEN,                "false" );
+		_defaultVals.put(CODEGEN_COMPILER,       CompilerType.AUTO.name() );
+		_defaultVals.put(CODEGEN_OPTIMIZER,      PlanSelector.FUSE_COST_BASED_V2.name() );
+		_defaultVals.put(CODEGEN_PLANCACHE,      "true" );
+		_defaultVals.put(CODEGEN_LITERALS,       "1" );
+		_defaultVals.put(NATIVE_BLAS,            "none" );
+		_defaultVals.put(NATIVE_BLAS_DIR,        "none" );
+		_defaultVals.put(EXTRA_FINEGRAINED_STATS,"false" );
+		_defaultVals.put(STATS_MAX_WRAP_LEN,     "30" );
+		_defaultVals.put(GPU_MEMORY_UTILIZATION_FACTOR,      "0.9" );
+		_defaultVals.put(AVAILABLE_GPUS,         "-1");
+		_defaultVals.put(GPU_EVICTION_POLICY,    "lru");
+		_defaultVals.put(SYNCHRONIZE_GPU,        "true" );
+		_defaultVals.put(EAGER_CUDA_FREE,        "false" );
+		_defaultVals.put(FLOATING_POINT_PRECISION,        	 "double" );
 	}
 	
-	public DMLConfig()
-	{
+	public DMLConfig() {
 		
 	}
-	
+
 	public DMLConfig(String fileName) 
-		throws ParseException, FileNotFoundException
+		throws FileNotFoundException
 	{
 		this( fileName, false );
 	}
 	
 	public DMLConfig(String fileName, boolean silent) 
-		throws ParseException, FileNotFoundException
+		throws FileNotFoundException
 	{
 		_fileName = fileName;
 		try {
@@ -134,45 +171,21 @@ public class DMLConfig
 		LOCAL_MR_MODE_STAGING_DIR = getTextValue(LOCAL_TMP_DIR) + "/hadoop/mapred/staging";
 	}
 	
-	public DMLConfig( Element root )
-	{
+	public DMLConfig( Element root ) {
 		_xmlRoot = root;
 	}
 	
-	public void merge(DMLConfig otherConfig) 
-		throws ParseException
-	{
-		if (otherConfig == null) 
-			return;
-	
-		try {
-			// for each element in otherConfig, either overwrite existing value OR add to defaultConfig
-			NodeList otherConfigNodeList = otherConfig._xmlRoot.getChildNodes();
-			if (otherConfigNodeList != null && otherConfigNodeList.getLength() > 0){
-				for (int i=0; i<otherConfigNodeList.getLength(); i++){
-					org.w3c.dom.Node optionalConfigNode = otherConfigNodeList.item(i);
-					
-					if (optionalConfigNode.getNodeType() == org.w3c.dom.Node.ELEMENT_NODE){
-					
-						// try to find optional config node in default config node
-						String paramName = optionalConfigNode.getNodeName();
-						String paramValue = ((Element)optionalConfigNode).getFirstChild().getNodeValue();
-					
-						if (_xmlRoot.getElementsByTagName(paramName) != null)
-							LOG.info("Updating " + paramName + " with value " + paramValue);
-						else 
-							LOG.info("Defining new attribute" + paramName + " with value " + paramValue);
-						DMLConfig.setTextValue(_xmlRoot, paramName, paramValue);
-					}
-					
-				}
-			} // end if (otherConfigNodeList != null && otherConfigNodeList.getLength() > 0){
-		} catch (Exception e){
-			LOG.error("Failed in merge default config file with optional config file",e);
-			throw new ParseException("ERROR: error merging config file " + otherConfig._fileName + " with " + _fileName);
-		}
+	public DMLConfig( DMLConfig dmlconf ) {
+		set(dmlconf);
 	}
 	
+	public void set(DMLConfig dmlconf) {
+		_fileName = dmlconf._fileName;
+		_xmlRoot = dmlconf._xmlRoot;
+		_documentBuilder = dmlconf._documentBuilder;
+		_document = dmlconf._document;
+	}
+
 	/**
 	 * Method to parse configuration
 	 * @throws ParserConfigurationException
@@ -181,29 +194,32 @@ public class DMLConfig
 	 */
 	private void parseConfig () throws ParserConfigurationException, SAXException, IOException 
 	{
-		DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
-		factory.setIgnoringComments(true); //ignore XML comments
-		DocumentBuilder builder = factory.newDocumentBuilder();
-		Document domTree = null;
-		if (_fileName.startsWith("hdfs:") ||
-		    _fileName.startsWith("gpfs:") )  // config file from DFS
+		DocumentBuilder builder = getDocumentBuilder();
+		_document = null;
+		if( _fileName.startsWith("hdfs:") || _fileName.startsWith("gpfs:")
+			|| IOUtilFunctions.isObjectStoreFileScheme(new Path(_fileName)) )
 		{
-			if( !LocalFileUtils.validateExternalFilename(_fileName, true) )
-				throw new IOException("Invalid (non-trustworthy) hdfs config filename.");
-			FileSystem DFS = FileSystem.get(ConfigurationManager.getCachedJobConf());
-            Path configFilePath = new Path(_fileName);
-            domTree = builder.parse(DFS.open(configFilePath));  
+			Path configFilePath = new Path(_fileName);
+			FileSystem DFS = IOUtilFunctions.getFileSystem(configFilePath);
+			_document = builder.parse(DFS.open(configFilePath));
 		}
 		else  // config from local file system
 		{
-			if( !LocalFileUtils.validateExternalFilename(_fileName, false) )
-				throw new IOException("Invalid (non-trustworthy) local config filename.");
-			domTree = builder.parse(_fileName);
+			_document = builder.parse(_fileName);
 		}
-		
-		_xmlRoot = domTree.getDocumentElement();		
+
+		_xmlRoot = _document.getDocumentElement();
 	}
-	
+
+	private DocumentBuilder getDocumentBuilder() throws ParserConfigurationException {
+		if (_documentBuilder == null) {
+			DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
+			factory.setIgnoringComments(true); //ignore XML comments
+			_documentBuilder = factory.newDocumentBuilder();
+		}
+		return _documentBuilder;
+	}
+
 	/**
 	 * Method to get string value of a configuration parameter
 	 * Handles processing of configuration parameters 
@@ -236,6 +252,10 @@ public class DMLConfig
 		return Boolean.parseBoolean( getTextValue(tagName) );
 	}
 	
+	public double getDoubleValue( String tagName )
+	{
+		return Double.parseDouble( getTextValue(tagName) );
+	}
 	
 	/**
 	 * Method to get the string value of an element identified by a tag name
@@ -254,39 +274,30 @@ public class DMLConfig
 		return textVal;
 	}
 	
-	/**
-	 * Method to update the string value of an element identified by a tag name
-	 * @param element the DOM element
-	 * @param tagName the tag name
-	 * @param newTextValue the new string value
-	 */
-	private static void setTextValue(Element element, String tagName, String newTextValue) {
-		
-		NodeList list = element.getElementsByTagName(tagName);
-		if (list != null && list.getLength() > 0) {
-			Element elem = (Element) list.item(0);
-			elem.getFirstChild().setNodeValue(newTextValue);	
-		}
-	}
-	
+
 	/**
 	 * Method to update the key value
 	 * @param paramName parameter name
 	 * @param paramValue parameter value
-	 * @throws DMLRuntimeException if DMLRuntimeException occurs
 	 */
-	public void setTextValue(String paramName, String paramValue) throws DMLRuntimeException {
-		if(_xmlRoot != null)
-			DMLConfig.setTextValue(_xmlRoot, paramName, paramValue);
-		else {
-			DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
-			factory.setIgnoringComments(true); //ignore XML comments
-			DocumentBuilder builder;
+	public void setTextValue(String paramName, String paramValue) {
+		if(_xmlRoot != null) {
+			NodeList list = _xmlRoot.getElementsByTagName(paramName);
+			if (list != null && list.getLength() > 0) {
+				Element elem = (Element) list.item(0);
+				elem.getFirstChild().setNodeValue(paramValue);
+			} else {
+				Node value = _document.createTextNode(paramValue);
+				Node element = _document.createElement(paramName);
+				element.appendChild(value);
+				_xmlRoot.appendChild(element);
+			}
+		} else {
 			try {
-				builder = factory.newDocumentBuilder();
+				DocumentBuilder builder = getDocumentBuilder();
 				String configString = "<root><" + paramName + ">"+paramValue+"</" + paramName + "></root>";
-				Document domTree = builder.parse(new ByteArrayInputStream(configString.getBytes("UTF-8")));
-				_xmlRoot = domTree.getDocumentElement();
+				_document = builder.parse(new ByteArrayInputStream(configString.getBytes("UTF-8")));
+				_xmlRoot = _document.getDocumentElement();
 			} catch (Exception e) {
 				throw new DMLRuntimeException("Unable to set config value", e);
 			}
@@ -301,7 +312,7 @@ public class DMLConfig
 	 */
 	public Map<String, String> getCustomMRConfig()
 	{
-		HashMap<String, String> ret = new HashMap<String, String>();
+		HashMap<String, String> ret = new HashMap<>();
 	
 		//check for non-existing config xml tree
 		if( _xmlRoot == null )
@@ -324,11 +335,9 @@ public class DMLConfig
 	}
 	
 	public synchronized String serializeDMLConfig() 
-		throws DMLRuntimeException
 	{
 		String ret = null;
-		try
-		{		
+		try {
 			Transformer transformer = TransformerFactory.newInstance().newTransformer();
 			transformer.setOutputProperty(OutputKeys.OMIT_XML_DECLARATION, "yes");
 			//transformer.setOutputProperty(OutputKeys.INDENT, "yes");
@@ -337,29 +346,23 @@ public class DMLConfig
 			transformer.transform(source, result);
 			ret = result.getWriter().toString();
 		}
-		catch(Exception ex)
-		{
+		catch(Exception ex) {
 			throw new DMLRuntimeException("Unable to serialize DML config.", ex);
 		}
 		
 		return ret;
 	}
 	
-	public static DMLConfig parseDMLConfig( String content ) 
-		throws DMLRuntimeException
-	{
+	public static DMLConfig parseDMLConfig( String content ) {
 		DMLConfig ret = null;
-		try
-		{
-			//System.out.println(content);
+		try {
 			DocumentBuilder builder = DocumentBuilderFactory.newInstance().newDocumentBuilder();
 			Document domTree = null;
 			domTree = builder.parse( new ByteArrayInputStream(content.getBytes("utf-8")) );
 			Element root = domTree.getDocumentElement();
 			ret = new DMLConfig( root );
 		}
-		catch(Exception ex)
-		{
+		catch(Exception ex) {
 			throw new DMLRuntimeException("Unable to parse DML config.", ex);
 		}
 		
@@ -374,11 +377,10 @@ public class DMLConfig
 	 *
 	 * @param configPath User-defined path of the configuration file.
 	 * @return dml configuration
-	 * @throws ParseException if ParseException occurs
 	 * @throws FileNotFoundException if FileNotFoundException occurs
 	 */
 	public static DMLConfig readConfigurationFile(String configPath)
-		throws ParseException, FileNotFoundException
+		throws FileNotFoundException
 	{
 		// Always start with the internal defaults
 		DMLConfig config = new DMLConfig();
@@ -415,7 +417,11 @@ public class DMLConfig
 				LOCAL_TMP_DIR,SCRATCH_SPACE,OPTIMIZATION_LEVEL,
 				NUM_REDUCERS, DEFAULT_BLOCK_SIZE,
 				YARN_APPMASTER, YARN_APPMASTERMEM, YARN_MAPREDUCEMEM, 
-				CP_PARALLEL_MATRIXMULT, CP_PARALLEL_TEXTIO
+				CP_PARALLEL_OPS, CP_PARALLEL_IO, NATIVE_BLAS, NATIVE_BLAS_DIR,
+				COMPRESSED_LINALG, 
+				CODEGEN, CODEGEN_COMPILER, CODEGEN_OPTIMIZER, CODEGEN_PLANCACHE, CODEGEN_LITERALS,
+				EXTRA_FINEGRAINED_STATS, STATS_MAX_WRAP_LEN,
+				AVAILABLE_GPUS, SYNCHRONIZE_GPU, EAGER_CUDA_FREE, FLOATING_POINT_PRECISION, GPU_EVICTION_POLICY
 		}; 
 		
 		StringBuilder sb = new StringBuilder();
@@ -447,27 +453,12 @@ public class DMLConfig
 			elem.getFirstChild().setNodeValue(String.valueOf(mrMem));
 		}
 	}
-	
-	@SuppressWarnings("deprecation")
-	public void makeQualifiedScratchSpacePath() 
-		throws IOException
-	{
-		NodeList list2 = _xmlRoot.getElementsByTagName(SCRATCH_SPACE);
-		if (list2 != null && list2.getLength() > 0) {
-			Element elem = (Element) list2.item(0);
-			
-			FileSystem fs = FileSystem.get(ConfigurationManager.getCachedJobConf());
-			String fname = elem.getFirstChild().getNodeValue();
-			Path path = new Path(fname).makeQualified(fs);
-			
-			elem.getFirstChild().setNodeValue(path.toString());
-		}
-	}
-	
+
 	public static String getDefaultTextValue( String key ) {
 		return _defaultVals.get( key );
 	}
 	
+	@Override
 	public DMLConfig clone() {
 		DMLConfig conf = new DMLConfig();
 		conf._fileName = _fileName;

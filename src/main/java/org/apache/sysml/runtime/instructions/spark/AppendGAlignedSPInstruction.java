@@ -36,20 +36,16 @@ import org.apache.sysml.runtime.matrix.data.MatrixIndexes;
 import org.apache.sysml.runtime.matrix.operators.Operator;
 import org.apache.sysml.runtime.matrix.operators.ReorgOperator;
 
-public class AppendGAlignedSPInstruction extends BinarySPInstruction
-{
+public class AppendGAlignedSPInstruction extends BinarySPInstruction {
 	private boolean _cbind = true;
-	
-	public AppendGAlignedSPInstruction(Operator op, CPOperand in1, CPOperand in2, CPOperand in3, CPOperand out, boolean cbind, String opcode, String istr)
-	{
-		super(op, in1, in2, out, opcode, istr);
-		_sptype = SPINSTRUCTION_TYPE.GAppend;
+
+	private AppendGAlignedSPInstruction(Operator op, CPOperand in1, CPOperand in2, CPOperand in3, CPOperand out,
+			boolean cbind, String opcode, String istr) {
+		super(SPType.GAppend, op, in1, in2, out, opcode, istr);
 		_cbind = cbind;
 	}
-	
-	public static AppendGAlignedSPInstruction parseInstruction ( String str ) 
-		throws DMLRuntimeException
-	{
+
+	public static AppendGAlignedSPInstruction parseInstruction ( String str ) {
 		String[] parts = InstructionUtils.getInstructionPartsWithValueType(str);
 		InstructionUtils.checkNumFields (parts, 5);
 		
@@ -69,9 +65,7 @@ public class AppendGAlignedSPInstruction extends BinarySPInstruction
 	}
 	
 	@Override
-	public void processInstruction(ExecutionContext ec)
-		throws DMLRuntimeException 
-	{
+	public void processInstruction(ExecutionContext ec) {
 		// general case append (map-extend, aggregate)
 		SparkExecutionContext sec = (SparkExecutionContext)ec;
 		checkBinaryAppendInputCharacteristics(sec, _cbind, false, true);
@@ -82,7 +76,7 @@ public class AppendGAlignedSPInstruction extends BinarySPInstruction
 		JavaPairRDD<MatrixIndexes,MatrixBlock> out = null;
 		
 		// Simple changing of matrix indexes of RHS
-		long shiftBy = _cbind ? mc1.getNumColBlocks() : mc1.getNumRowBlocks();		
+		long shiftBy = _cbind ? mc1.getNumColBlocks() : mc1.getNumRowBlocks();
 		out = in2.mapToPair(new ShiftColumnIndex(shiftBy, _cbind));
 		out = in1.union( out );
 		
@@ -92,10 +86,7 @@ public class AppendGAlignedSPInstruction extends BinarySPInstruction
 		sec.addLineageRDD(output.getName(), input1.getName());
 		sec.addLineageRDD(output.getName(), input2.getName());
 	}
-	
-	/**
-	 * 
-	 */
+
 	public static class ShiftColumnIndex implements PairFunction<Tuple2<MatrixIndexes,MatrixBlock>, MatrixIndexes,MatrixBlock> 
 	{
 		private static final long serialVersionUID = -5185023611319654242L;
@@ -113,8 +104,8 @@ public class AppendGAlignedSPInstruction extends BinarySPInstruction
 			throws Exception 
 		{	
 			long rix = _cbind ? kv._1.getRowIndex() : kv._1.getRowIndex() + _shiftBy;
-			long cix = _cbind ? kv._1.getColumnIndex() + _shiftBy : kv._1.getColumnIndex();			
-			return new Tuple2<MatrixIndexes, MatrixBlock>(new MatrixIndexes(rix, cix), kv._2);
+			long cix = _cbind ? kv._1.getColumnIndex() + _shiftBy : kv._1.getColumnIndex();
+			return new Tuple2<>(new MatrixIndexes(rix, cix), kv._2);
 		}
 	}
 }

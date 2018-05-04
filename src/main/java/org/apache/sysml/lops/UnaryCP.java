@@ -34,10 +34,10 @@ public class UnaryCP extends Lop
 {
 	
 	public enum OperationTypes {
-		NOT, ABS, SIN, COS, TAN, ASIN, ACOS, ATAN, SQRT, LOG, EXP, 
+		NOT, ABS, SIN, COS, TAN, ASIN, ACOS, ATAN, SQRT, LOG, EXP, SINH, COSH, TANH,
 		CAST_AS_SCALAR, CAST_AS_MATRIX, CAST_AS_FRAME, CAST_AS_DOUBLE, CAST_AS_INT, CAST_AS_BOOLEAN, 
-		PRINT, NROW, NCOL, LENGTH, ROUND, STOP, CEIL, FLOOR, CUMSUM, NOTSUPPORTED
-	};
+		PRINT, ASSERT, NROW, NCOL, LENGTH, EXISTS, ROUND, STOP, CEIL, FLOOR, CUMSUM, SOFTMAX
+	}
 	
 	public static final String CAST_AS_SCALAR_OPCODE = "castdts";
 	public static final String CAST_AS_MATRIX_OPCODE = "castdtm";
@@ -57,8 +57,9 @@ public class UnaryCP extends Lop
 	 * @param op operation type
 	 * @param dt data type
 	 * @param vt value type
+	 * @param et exec type
 	 */
-	public UnaryCP(Lop input, OperationTypes op, DataType dt, ValueType vt) {
+	public UnaryCP(Lop input, OperationTypes op, DataType dt, ValueType vt, ExecType et) {
 		super(Lop.Type.UnaryCP, dt, vt);
 		operation = op;
 		this.addInput(input);
@@ -70,7 +71,11 @@ public class UnaryCP extends Lop
 		boolean aligner = false;
 		boolean definesMRJob = false;
 		lps.addCompatibility(JobType.INVALID);
-		this.lps.setProperties(inputs, ExecType.CP, ExecLocation.ControlProgram, breaksAlignment, aligner, definesMRJob);
+		this.lps.setProperties(inputs, et, ExecLocation.ControlProgram, breaksAlignment, aligner, definesMRJob);
+	}
+	
+	public UnaryCP(Lop input, OperationTypes op, DataType dt, ValueType vt) {
+		this(input, op, dt, vt, ExecType.CP);
 	}
 
 	@Override
@@ -80,7 +85,7 @@ public class UnaryCP extends Lop
 
 	}
 
-	private String getOpCode() throws LopsException {
+	private String getOpCode() {
 		switch (operation) {
 		case NOT:
 			return "!";
@@ -106,6 +111,15 @@ public class UnaryCP extends Lop
 		case ATAN:
 			return "atan";
 
+		case SINH:
+			return "sinh";
+
+		case COSH:
+			return "cosh";
+
+		case TANH:
+			return "tanh";
+			
 		case SQRT:
 			return "sqrt";
 
@@ -120,6 +134,9 @@ public class UnaryCP extends Lop
 
 		case PRINT:
 			return "print";
+		
+		case ASSERT:
+			return "assert";
 
 		case CAST_AS_MATRIX:
 			return CAST_AS_MATRIX_OPCODE;
@@ -153,23 +170,21 @@ public class UnaryCP extends Lop
 		case CAST_AS_BOOLEAN:
 			return CAST_AS_BOOLEAN_OPCODE; 
 
-		case NROW:
-			return "nrow";
-		
-		case NCOL:
-			return "ncol";
+		case NROW:   return "nrow";
+		case NCOL:   return "ncol";
+		case LENGTH: return "length";
+		case EXISTS: return "exists";
 
-		case LENGTH:
-			return "length";
-
+		case SOFTMAX:
+			return "softmax";
+			
 		default:
 			throw new LopsException(this.printErrorLocation() + "Unknown operation: " + operation);
 		}
 	}
 	
 	@Override
-	public String getInstructions(String input, String output)
-			throws LopsException {
+	public String getInstructions(String input, String output) {
 		StringBuilder sb = new StringBuilder();
 		sb.append(getExecType());
 		sb.append( OPERAND_DELIMITOR );

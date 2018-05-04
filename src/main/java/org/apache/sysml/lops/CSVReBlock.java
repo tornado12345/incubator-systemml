@@ -21,12 +21,10 @@ package org.apache.sysml.lops;
 
 import org.apache.sysml.lops.LopProperties.ExecLocation;
 import org.apache.sysml.lops.LopProperties.ExecType;
-import org.apache.sysml.lops.ParameterizedBuiltin.OperationTypes;
 import org.apache.sysml.lops.compile.JobType;
 import org.apache.sysml.parser.DataExpression;
 import org.apache.sysml.parser.Expression.DataType;
 import org.apache.sysml.parser.Expression.ValueType;
-import org.apache.sysml.parser.ParameterizedBuiltinFunctionExpression;
 
 
 /**
@@ -34,45 +32,30 @@ import org.apache.sysml.parser.ParameterizedBuiltinFunctionExpression;
  */
 public class CSVReBlock extends Lop 
 {
-	
 	public static final String OPCODE = "csvrblk"; 
 	
-	Long rows_per_block;
-	Long cols_per_block;
+	private int _rows_per_block;
+	private int _cols_per_block;
 
-	public CSVReBlock(Lop input, Long rows_per_block, Long cols_per_block, DataType dt, ValueType vt, ExecType et) throws LopsException 
+	public CSVReBlock(Lop input, int rows_per_block, int cols_per_block, DataType dt, ValueType vt, ExecType et)
 	{
-		super(Lop.Type.CSVReBlock, dt, vt);		
-		this.addInput(input);
+		super(Lop.Type.CSVReBlock, dt, vt);
+		addInput(input);
 		input.addOutput(this);
 		
-		this.rows_per_block = rows_per_block;
-		this.cols_per_block = cols_per_block;
+		_rows_per_block = rows_per_block;
+		_cols_per_block = cols_per_block;
 		
-		/*
-		 * This lop can be executed only in CSVREBLOCK job.
-		 */
 		boolean breaksAlignment = false;
 		boolean aligner = false;
 		boolean definesMRJob = true;
-		
-		// If the input to reblock is a tranform, then piggyback it along with transform
-		if ( input instanceof ParameterizedBuiltin 
-				&& ((ParameterizedBuiltin)input).getOp() == OperationTypes.TRANSFORM ) 
-		{
-			definesMRJob = false;
-			lps.addCompatibility(JobType.TRANSFORM);
-		}
-		else 
-		{
-			lps.addCompatibility(JobType.CSV_REBLOCK);
-		}
+		lps.addCompatibility(JobType.CSV_REBLOCK);
 		
 		if(et == ExecType.MR) {
-			this.lps.setProperties( inputs, ExecType.MR, ExecLocation.MapAndReduce, breaksAlignment, aligner, definesMRJob );
+			lps.setProperties( inputs, ExecType.MR, ExecLocation.MapAndReduce, breaksAlignment, aligner, definesMRJob );
 		}
 		else if(et == ExecType.SPARK) {
-			this.lps.setProperties( inputs, ExecType.SPARK, ExecLocation.ControlProgram, breaksAlignment, aligner, definesMRJob );
+			lps.setProperties( inputs, ExecType.SPARK, ExecLocation.ControlProgram, breaksAlignment, aligner, definesMRJob );
 		}
 		else {
 			throw new LopsException("Incorrect execution type for CSVReblock:" + et);
@@ -80,27 +63,23 @@ public class CSVReBlock extends Lop
 	}
 
 	@Override
-	public String toString() {
-	
-		return "CSVReblock - rows per block = " + rows_per_block + " cols per block  " + cols_per_block ;
+	public String toString() {	
+		return "CSVReblock - rows per block = " + _rows_per_block + " cols per block  " + _cols_per_block ;
 	}
 	
-	private String prepCSVProperties() throws LopsException {
+	private String prepCSVProperties() {
 		StringBuilder sb = new StringBuilder();
 
-		boolean isSparkTransformInput = false;
-		Data dataInput = null;
-		if(getInputs().get(0).getType() == Type.Data)
-			dataInput = (Data)getInputs().get(0);
-		else if ( getInputs().get(0).getType() == Type.ParameterizedBuiltin && ((ParameterizedBuiltin)getInputs().get(0)).getOp() == OperationTypes.TRANSFORM) {
-			isSparkTransformInput = (getExecType() == ExecType.SPARK);
-			dataInput = (Data) ((ParameterizedBuiltin)getInputs().get(0)).getNamedInput(ParameterizedBuiltinFunctionExpression.TF_FN_PARAM_DATA);
-		}
+		Data dataInput = (Data)getInputs().get(0);
 		
-		Lop headerLop = dataInput.getNamedInputLop(DataExpression.DELIM_HAS_HEADER_ROW, String.valueOf(DataExpression.DEFAULT_DELIM_HAS_HEADER_ROW));
-		Lop delimLop = dataInput.getNamedInputLop(DataExpression.DELIM_DELIMITER, DataExpression.DEFAULT_DELIM_DELIMITER);
-		Lop fillLop = dataInput.getNamedInputLop(DataExpression.DELIM_FILL, String.valueOf(DataExpression.DEFAULT_DELIM_FILL)); 
-		Lop fillValueLop = dataInput.getNamedInputLop(DataExpression.DELIM_FILL_VALUE, String.valueOf(DataExpression.DEFAULT_DELIM_FILL_VALUE));
+		Lop headerLop = dataInput.getNamedInputLop(DataExpression.DELIM_HAS_HEADER_ROW, 
+			String.valueOf(DataExpression.DEFAULT_DELIM_HAS_HEADER_ROW));
+		Lop delimLop = dataInput.getNamedInputLop(DataExpression.DELIM_DELIMITER, 
+			DataExpression.DEFAULT_DELIM_DELIMITER);
+		Lop fillLop = dataInput.getNamedInputLop(DataExpression.DELIM_FILL, 
+			String.valueOf(DataExpression.DEFAULT_DELIM_FILL)); 
+		Lop fillValueLop = dataInput.getNamedInputLop(DataExpression.DELIM_FILL_VALUE, 
+			String.valueOf(DataExpression.DEFAULT_DELIM_FILL_VALUE));
 		
 		if (headerLop.isVariable())
 			throw new LopsException(this.printErrorLocation()
@@ -119,10 +98,7 @@ public class CSVReBlock extends Lop
 					+ "Parameter " + DataExpression.DELIM_FILL_VALUE
 					+ " must be a literal.");
 
-		// Output from transform() does not have a header
-		// On MR, reblock is piggybacked along with transform, and hence 
-		// specific information about header needn't be passed through instruction
-		sb.append( ((Data)headerLop).getBooleanValue() && !isSparkTransformInput );
+		sb.append( ((Data)headerLop).getBooleanValue() );
 		sb.append( OPERAND_DELIMITOR );
 		sb.append( ((Data)delimLop).getStringValue() );
 		sb.append( OPERAND_DELIMITOR );
@@ -134,62 +110,28 @@ public class CSVReBlock extends Lop
 }
 
 	@Override
-	public String getInstructions(int input_index, int output_index) throws LopsException
-	{
+	public String getInstructions(int input_index, int output_index) {
+		return getInstructions(String.valueOf(input_index), String.valueOf(output_index));
+	}
+	
+	@Override
+	public String getInstructions(String input1, String output) {
 		StringBuilder sb = new StringBuilder();
 		sb.append( getExecType() );
 		sb.append( Lop.OPERAND_DELIMITOR );
 		sb.append( OPCODE );
 		sb.append( OPERAND_DELIMITOR );
-		
-		Lop input = getInputs().get(0);
-		
-		sb.append( input.prepInputOperand(input_index) );
+		sb.append( getInputs().get(0).prepInputOperand(input1));
 		sb.append( OPERAND_DELIMITOR );
-		
-		sb.append( this.prepOutputOperand(output_index) );
+		sb.append( prepOutputOperand(output));
 		sb.append( OPERAND_DELIMITOR );
-		
-		sb.append( rows_per_block );
+		sb.append( _rows_per_block );
 		sb.append( OPERAND_DELIMITOR );
-		sb.append( cols_per_block );
+		sb.append( _cols_per_block );
 		sb.append( OPERAND_DELIMITOR );
 		
 		sb.append( prepCSVProperties() );
-		
+
 		return sb.toString();
 	}
-	
-	@Override
-	public String getInstructions(String input1, String output) throws LopsException {
-		if(getExecType() != ExecType.SPARK) {
-			throw new LopsException("The method getInstructions(String,String) for CSVReblock should be called only for Spark execution type");
-		}
-		
-		if (this.getInputs().size() == 1) {
-			
-			StringBuilder sb = new StringBuilder();
-			sb.append( getExecType() );
-			sb.append( Lop.OPERAND_DELIMITOR );
-			sb.append( OPCODE );
-			sb.append( OPERAND_DELIMITOR );
-			sb.append( getInputs().get(0).prepInputOperand(input1));
-			sb.append( OPERAND_DELIMITOR );
-			sb.append( this.prepOutputOperand(output));
-			sb.append( OPERAND_DELIMITOR );
-			sb.append( rows_per_block );
-			sb.append( OPERAND_DELIMITOR );
-			sb.append( cols_per_block );
-			sb.append( OPERAND_DELIMITOR );
-			
-			sb.append( prepCSVProperties() );
-
-			return sb.toString();
-
-		} else {
-			throw new LopsException(this.printErrorLocation() + "Invalid number of operands ("
-					+ this.getInputs().size() + ") for CSVReblock operation");
-		}
-	}
- 
 }

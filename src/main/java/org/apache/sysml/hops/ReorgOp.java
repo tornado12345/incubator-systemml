@@ -21,7 +21,7 @@ package org.apache.sysml.hops;
 
 import java.util.ArrayList;
 
-import org.apache.sysml.conf.ConfigurationManager;
+import org.apache.sysml.api.DMLScript;
 import org.apache.sysml.hops.Hop.MultiThreadedHop;
 import org.apache.sysml.hops.rewrite.HopRewriteUtils;
 import org.apache.sysml.lops.Aggregate;
@@ -40,7 +40,7 @@ import org.apache.sysml.runtime.matrix.MatrixCharacteristics;
  *  Reorg (cell) operation: aij
  * 		Properties: 
  * 			Symbol: ', rdiag, rshape, rsort
- * 			1 Operand
+ * 			1 Operand (except sort and reshape take additional arguments)
  * 	
  * 		Semantic: change indices (in mapper or reducer)
  * 
@@ -51,10 +51,7 @@ import org.apache.sysml.runtime.matrix.MatrixCharacteristics;
 
 public class ReorgOp extends Hop implements MultiThreadedHop
 {
-	
 	public static boolean FORCE_DIST_SORT_INDEXES = false;
-	
-	public boolean bSortSPRewriteApplicable = false;
 	
 	private ReOrgOp op;
 	private int _maxNumThreads = -1; //-1 for unlimited
@@ -90,6 +87,24 @@ public class ReorgOp extends Hop implements MultiThreadedHop
 	}
 
 	@Override
+	public void checkArity() {
+		int sz = _input.size();
+		switch( op ) {
+		case TRANS:
+		case DIAG:
+		case REV:
+			HopsException.check(sz == 1, this, "should have arity 1 for op %s but has arity %d", op, sz);
+			break;
+		case RESHAPE:
+		case SORT:
+			HopsException.check(sz == 4, this, "should have arity 4 for op %s but has arity %d", op, sz);
+			break;
+		default:
+			throw new HopsException("Unsupported lops construction for operation type '" + op + "'.");
+		}
+	}
+
+	@Override
 	public void setMaxNumThreads( int k ) {
 		_maxNumThreads = k;
 	}
@@ -110,10 +125,38 @@ public class ReorgOp extends Hop implements MultiThreadedHop
 		s += "r(" + HopsTransf2String.get(op) + ")";
 		return s;
 	}
+	
+	@Override
+	public boolean isGPUEnabled() {
+		if(!DMLScript.USE_ACCELERATOR)
+			return false;
+		switch( op ) {
+			case TRANS: {
+				Lop lin;
+				try {
+					lin = getInput().get(0).constructLops();
+				} catch (HopsException | LopsException e) {
+					throw new RuntimeException("Unable to create child lop", e);
+				}
+				if( lin instanceof Transform && ((Transform)lin).getOperationType()==OperationTypes.Transpose )
+					return false; //if input is already a transpose, avoid redundant transpose ops
+				else if( getDim1()==1 && getDim2()==1 )
+					return false; //if input of size 1x1, avoid unnecessary transpose
+				else
+					return true;
+			}
+			case DIAG:
+			case REV:
+			case RESHAPE:
+			case SORT:
+				return false;
+			default:
+				throw new RuntimeException("Unsupported operator:" + op.name());
+		}
+	}
 
 	@Override
 	public Lop constructLops()
-		throws HopsException, LopsException 
 	{
 		//return already created lops
 		if( getLops() != null )
@@ -123,7 +166,7 @@ public class ReorgOp extends Hop implements MultiThreadedHop
 		
 		switch( op )
 		{
-			case TRANSPOSE:
+			case TRANS:
 			{
 				Lop lin = getInput().get(0).constructLops();
 				if( lin instanceof Transform && ((Transform)lin).getOperationType()==OperationTypes.Transpose )
@@ -182,29 +225,24 @@ public class ReorgOp extends Hop implements MultiThreadedHop
 			}
 			case RESHAPE:
 			{
+				Lop[] linputs = new Lop[4]; //main, rows, cols, byrow
+				for( int i=0; i<4; i++ )
+					linputs[i] = getInput().get(i).constructLops();
+				
 				if( et==ExecType.MR )
 				{
-					Transform transform1 = new Transform( getInput().get(0).constructLops(), 
-							HopsTransf2Lops.get(op), getDataType(), getValueType(), et);
+					Transform transform1 = new Transform( linputs,
+						HopsTransf2Lops.get(op), getDataType(), getValueType(), true, et);
 					setOutputDimensions(transform1);
 					setLineNumbers(transform1);
-					for( int i=1; i<=3; i++ ) //rows, cols, byrow
-					{
-						Lop ltmp = getInput().get(i).constructLops();
-						transform1.addInput(ltmp);
-						ltmp.addOutput(transform1);
-					}
-					transform1.setLevel(); //force order of added lops
 					
-					Group group1 = new Group(
-							transform1, Group.OperationTypes.Sort, DataType.MATRIX,
-							getValueType());
+					Group group1 = new Group(transform1,
+						Group.OperationTypes.Sort, DataType.MATRIX, getValueType());
 					setOutputDimensions(group1);
 					setLineNumbers(group1);
 	
-					Aggregate agg1 = new Aggregate(
-							group1, Aggregate.OperationTypes.Sum, DataType.MATRIX,
-							getValueType(), et);
+					Aggregate agg1 = new Aggregate(group1,
+						Aggregate.OperationTypes.Sum, DataType.MATRIX, getValueType(), et);
 					setOutputDimensions(agg1);
 					setLineNumbers(agg1);
 					
@@ -212,18 +250,12 @@ public class ReorgOp extends Hop implements MultiThreadedHop
 				}
 				else //CP/SPARK
 				{
-					Transform transform1 = new Transform( getInput().get(0).constructLops(), 
-							HopsTransf2Lops.get(op), getDataType(), getValueType(), et);
+					_outputEmptyBlocks = (et==ExecType.SPARK &&
+						!OptimizerUtils.allowsToFilterEmptyBlockOutputs(this)); 
+					Transform transform1 = new Transform( linputs,
+						HopsTransf2Lops.get(op), getDataType(), getValueType(), _outputEmptyBlocks, et);
 					setOutputDimensions(transform1);
 					setLineNumbers(transform1);
-					
-					for( int i=1; i<=3; i++ ) //rows, cols, byrow
-					{
-						Lop ltmp = getInput().get(i).constructLops();
-						transform1.addInput(ltmp);
-						ltmp.addOutput(transform1);
-					}
-					transform1.setLevel(); //force order of added lops
 					
 					setLops(transform1);
 				}
@@ -252,7 +284,7 @@ public class ReorgOp extends Hop implements MultiThreadedHop
 						vinput = new IndexingOp("tmp1", getDataType(), getValueType(), input, new LiteralOp(1L), 
 								HopRewriteUtils.createValueHop(input, true), by, by, false, true);
 						vinput.refreshSizeInformation();
-						HopRewriteUtils.setOutputBlocksizes(vinput, getRowsInBlock(), getColsInBlock());
+						vinput.setOutputBlocksizes(getRowsInBlock(), getColsInBlock());
 						HopRewriteUtils.copyLineNumbers(this, vinput);	
 					}
 					
@@ -284,7 +316,7 @@ public class ReorgOp extends Hop implements MultiThreadedHop
 					else
 					{
 						//small vector, use in-memory sort
-						ArrayList<Hop> sinputs = new ArrayList<Hop>();
+						ArrayList<Hop> sinputs = new ArrayList<>();
 						sinputs.add(vinput);
 						sinputs.add(new LiteralOp(1)); //by (always vector)
 						sinputs.add(desc);
@@ -294,7 +326,7 @@ public class ReorgOp extends Hop implements MultiThreadedHop
 						//explicitly construct CP lop; otherwise there is danger of infinite recursion if forced runtime platform.
 						voutput.setLops( constructCPOrSparkSortLop(vinput, sinputs.get(1), sinputs.get(2), sinputs.get(3), ExecType.CP, false) );
 						voutput.getLops().getOutputParameters().setDimensions(vinput.getDim1(), vinput.getDim2(), vinput.getRowsInBlock(), vinput.getColsInBlock(), vinput.getNnz());
-						setLops( voutput.constructLops() );								
+						setLops( voutput.constructLops() );
 					}
 					
 					//Step 3: Data permutation (only required for sorting data) 
@@ -310,7 +342,7 @@ public class ReorgOp extends Hop implements MultiThreadedHop
 						
 						//generate table
 						TernaryOp table = new TernaryOp("tmp5", DataType.MATRIX, ValueType.DOUBLE, OpOp3.CTABLE, seq, voutput, new LiteralOp(1L) );
-						HopRewriteUtils.setOutputBlocksizes(table, getRowsInBlock(), getColsInBlock());
+						table.setOutputBlocksizes(getRowsInBlock(), getColsInBlock());
 						table.refreshSizeInformation();
 						table.setForcedExecType(ExecType.MR); //force MR 
 						HopRewriteUtils.copyLineNumbers(this, table);
@@ -324,18 +356,22 @@ public class ReorgOp extends Hop implements MultiThreadedHop
 						setLops( mmult.constructLops() );
 						
 						//cleanups
-						HopRewriteUtils.removeChildReference(table, input);		
+						HopRewriteUtils.removeChildReference(table, input);
 					}
 				}
-				else //CP or Spark
-				{
-					if( et==ExecType.SPARK && !FORCE_DIST_SORT_INDEXES)
-						bSortSPRewriteApplicable = isSortSPRewriteApplicable();
-					
-					Lop transform1 = constructCPOrSparkSortLop(input, by, desc, ixret, et, bSortSPRewriteApplicable);
+				else if( et==ExecType.SPARK ) {
+					boolean sortRewrite = !FORCE_DIST_SORT_INDEXES 
+						&& isSortSPRewriteApplicable() && by.getDataType().isScalar();
+					Lop transform1 = constructCPOrSparkSortLop(input, by, desc, ixret, et, sortRewrite);
 					setOutputDimensions(transform1);
 					setLineNumbers(transform1);
-					
+					setLops(transform1);
+				}
+				else //CP
+				{
+					Lop transform1 = constructCPOrSparkSortLop(input, by, desc, ixret, et, false);
+					setOutputDimensions(transform1);
+					setLineNumbers(transform1);
 					setLops(transform1);
 				}
 				break;
@@ -352,25 +388,17 @@ public class ReorgOp extends Hop implements MultiThreadedHop
 	}
 
 	private static Lop constructCPOrSparkSortLop( Hop input, Hop by, Hop desc, Hop ixret, ExecType et, boolean bSortIndInMem ) 
-		throws HopsException, LopsException
 	{
-		Transform transform1 = new Transform( input.constructLops(), HopsTransf2Lops.get(ReOrgOp.SORT), 
-				     input.getDataType(), input.getValueType(), et, bSortIndInMem);
-		
-		for( Hop c : new Hop[]{by,desc,ixret} ) {
-			Lop ltmp = c.constructLops();
-			transform1.addInput(ltmp);
-			ltmp.addOutput(transform1);
-		}
-		
-		transform1.setLevel(); //force order of added lops
-		
-		return transform1;
+		Hop[] hinputs = new Hop[]{input, by, desc, ixret};
+		Lop[] linputs = new Lop[4];
+		for( int i=0; i<4; i++ )
+			linputs[i] = hinputs[i].constructLops();
+		return new Transform( linputs, HopsTransf2Lops.get(ReOrgOp.SORT), 
+			input.getDataType(), input.getValueType(), et, bSortIndInMem);
 	}
-			
+	
 	@Override
-	protected double computeOutputMemEstimate( long dim1, long dim2, long nnz )
-	{		
+	protected double computeOutputMemEstimate( long dim1, long dim2, long nnz ) {
 		//no dedicated mem estimation per op type, because always propagated via refreshSizeInformation
 		double sparsity = OptimizerUtils.getSparsity(dim1, dim2, nnz);
 		return OptimizerUtils.estimateSizeExactSparsity(dim1, dim2, sparsity);
@@ -409,7 +437,7 @@ public class ReorgOp extends Hop implements MultiThreadedHop
 			
 		switch(op) 
 		{
-			case TRANSPOSE:
+			case TRANS:
 			{
 				// input is a [k1,k2] matrix and output is a [k2,k1] matrix
 				// #nnz in output is exactly the same as in input
@@ -449,9 +477,9 @@ public class ReorgOp extends Hop implements MultiThreadedHop
 				// input is a [k1,k2] matrix and output is a [k3,k4] matrix with k1*k2=k3*k4
 				// #nnz in output is exactly the same as in input		
 				if( mc.dimsKnown() ) {
-					if( _dim1 > 0  )
+					if( _dim1 >= 0  )
 						ret = new long[]{ _dim1, mc.getRows()*mc.getCols()/_dim1, mc.getNonZeros()};
-					else if( _dim2 > 0 )	 
+					else if( _dim2 >= 0 ) 
 						ret = new long[]{ mc.getRows()*mc.getCols()/_dim2, _dim2, mc.getNonZeros()};
 				}
 				break;
@@ -486,13 +514,13 @@ public class ReorgOp extends Hop implements MultiThreadedHop
 	}
 	
 	@Override
-	protected ExecType optFindExecType() throws HopsException {
+	protected ExecType optFindExecType() {
 		
 		checkAndSetForcedPlatform();
 	
 		ExecType REMOTE = OptimizerUtils.isSparkExecutionMode() ? ExecType.SPARK : ExecType.MR;
 		
-		if( _etypeForced != null ) 			
+		if( _etypeForced != null )
 		{
 			_etype = _etypeForced;
 		}
@@ -516,9 +544,8 @@ public class ReorgOp extends Hop implements MultiThreadedHop
 		}
 		
 		//mark for recompile (forever)
-		if( ConfigurationManager.isDynamicRecompilation() && !dimsKnown(true) && _etype==REMOTE )
-			setRequiresRecompile();
-	
+		setRequiresRecompileIfNecessary();
+		
 		return _etype;
 	}
 	
@@ -529,7 +556,7 @@ public class ReorgOp extends Hop implements MultiThreadedHop
 		
 		switch(op) 
 		{
-			case TRANSPOSE:
+			case TRANS:
 			{
 				// input is a [k1,k2] matrix and output is a [k2,k1] matrix
 				// #nnz in output is exactly the same as in input
@@ -581,9 +608,9 @@ public class ReorgOp extends Hop implements MultiThreadedHop
  				refreshColsParameterInformation(input3); //refresh cols
  				setNnz(input1.getNnz());
  				if( !dimsKnown() &&input1.dimsKnown() ) { //reshape allows to infer dims, if input and 1 dim known
-	 				if(_dim1 > 0) 
+	 				if(_dim1 >= 0) 
 						_dim2 = (input1._dim1*input1._dim2)/_dim1;
-					else if(_dim2 > 0)	
+					else if(_dim2 >= 0)
 						_dim1 = (input1._dim1*input1._dim2)/_dim2; 
  				}
 				break;
@@ -642,22 +669,6 @@ public class ReorgOp extends Hop implements MultiThreadedHop
 				ret &= getInput().get(i) == that2.getInput().get(i);
 		
 		return ret;
-	}
-	
-	
-	@Override
-	public void printMe() throws HopsException 
-	{
-		if (LOG.isDebugEnabled()){
-			if (getVisited() != VisitStatus.DONE) {
-				super.printMe();
-				LOG.debug("  Operation: " + op);
-				for (Hop h : getInput()) {
-					h.printMe();
-				}
-			}
-			setVisited(VisitStatus.DONE);
-		}
 	}
 
 	/**

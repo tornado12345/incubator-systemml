@@ -23,13 +23,11 @@ import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 
 import org.apache.sysml.hops.Hop;
-import org.apache.sysml.parser.Expression.DataType;
-import org.apache.sysml.parser.Expression.ValueType;
 import org.apache.sysml.runtime.DMLRuntimeException;
 import org.apache.sysml.runtime.controlprogram.ParForProgramBlock.PDataPartitionFormat;
 import org.apache.sysml.runtime.controlprogram.caching.MatrixObject;
 import org.apache.sysml.runtime.matrix.MatrixCharacteristics;
-import org.apache.sysml.runtime.matrix.MatrixFormatMetaData;
+import org.apache.sysml.runtime.matrix.MetaDataFormat;
 import org.apache.sysml.runtime.matrix.data.InputInfo;
 import org.apache.sysml.runtime.matrix.data.MatrixBlock;
 import org.apache.sysml.runtime.matrix.data.OutputInfo;
@@ -57,44 +55,17 @@ public abstract class DataPartitioner
 	protected int _n = -1; //blocksize if applicable
 	protected boolean _allowBinarycell = true;
 	
-	protected DataPartitioner( PDataPartitionFormat dpf, int n )
-	{
+	protected DataPartitioner( PDataPartitionFormat dpf, int n ) {
 		_format = dpf;
 		_n = n;
 	}
-	
-	
-	
-	/**
-	 * 
-	 * @param in
-	 * @param fnameNew
-	 * @return
-	 * @throws DMLRuntimeException
-	 */
-	public MatrixObject createPartitionedMatrixObject( MatrixObject in, String fnameNew )
-		throws DMLRuntimeException
-	{
+
+	public MatrixObject createPartitionedMatrixObject( MatrixObject in, String fnameNew ) {
 		return createPartitionedMatrixObject(in, fnameNew, false);
 	}
-	
-	/**
-	 * 
-	 * @param in
-	 * @param fnameNew
-	 * @param force
-	 * @return
-	 * @throws DMLRuntimeException
-	 */
-	public MatrixObject createPartitionedMatrixObject( MatrixObject in, String fnameNew, boolean force )
-		throws DMLRuntimeException
-	{
-		ValueType vt = in.getValueType();
-		String varname = in.getVarName();
-		MatrixObject out = new MatrixObject(vt, fnameNew );
-		out.setDataType( DataType.MATRIX );
-		out.setVarName( varname+NAME_SUFFIX );		
-		
+
+	public MatrixObject createPartitionedMatrixObject( MatrixObject in, String fnameNew, boolean force ) {
+		MatrixObject out = new MatrixObject(in.getValueType(), fnameNew);
 		return createPartitionedMatrixObject(in, out, force);
 	}
 	
@@ -106,20 +77,18 @@ public abstract class DataPartitioner
 	 * created matrix object can be used transparently for obtaining the full matrix
 	 * or reading 1 or multiple partitions based on given index ranges. 
 	 * 
-	 * @param in
-	 * @param force
-	 * @return
-	 * @throws DMLRuntimeException
+	 * @param in input matrix object
+	 * @param out output matrix object
+	 * @param force if false, try to optimize
+	 * @return partitioned matrix object
 	 */
-	public MatrixObject createPartitionedMatrixObject( MatrixObject in, MatrixObject out, boolean force )
-		throws DMLRuntimeException
-	{
+	public MatrixObject createPartitionedMatrixObject( MatrixObject in, MatrixObject out, boolean force ) {
 		//check for naive partitioning
 		if( _format == PDataPartitionFormat.NONE )
 			return in;
 		
 		//analyze input matrix object
-		MatrixFormatMetaData meta = (MatrixFormatMetaData)in.getMetaData();
+		MetaDataFormat meta = (MetaDataFormat)in.getMetaData();
 		MatrixCharacteristics mc = meta.getMatrixCharacteristics();
 		InputInfo ii = meta.getInputInfo();
 		OutputInfo oi = meta.getOutputInfo();
@@ -128,7 +97,7 @@ public abstract class DataPartitioner
 		int brlen = mc.getRowsPerBlock();
 		int bclen = mc.getColsPerBlock();
 		long nonZeros = mc.getNonZeros();
-		double sparsity = (nonZeros>=0 && rows>0 && cols>0)?
+		double sparsity = mc.dimsKnown(true) ?
 				((double)nonZeros)/(rows*cols) : 1.0;
 		
 		if( !force ) //try to optimize, if format not forced
@@ -184,35 +153,19 @@ public abstract class DataPartitioner
 		mcNew.setNonZeros( nonZeros );
 		if( convertBlock2Cell )
 			ii = InputInfo.BinaryCellInputInfo;
-		MatrixFormatMetaData metaNew = new MatrixFormatMetaData(mcNew,oi,ii);
+		MetaDataFormat metaNew = new MetaDataFormat(mcNew,oi,ii);
 		out.setMetaData(metaNew);	 
 		
 		return out;
 		
 	}
-	
-	/**
-	 * 
-	 */
+
 	public void disableBinaryCell()
 	{
 		_allowBinarycell = false;
 	}
-	
-	/**
-	 * 
-	 * @param fname
-	 * @param fnameNew
-	 * @param ii
-	 * @param oi
-	 * @param rlen
-	 * @param clen
-	 * @param brlen
-	 * @param bclen
-	 * @throws DMLRuntimeException
-	 */
-	protected abstract void partitionMatrix( MatrixObject in, String fnameNew, InputInfo ii, OutputInfo oi, long rlen, long clen, int brlen, int bclen )
-		throws DMLRuntimeException;
+
+	protected abstract void partitionMatrix( MatrixObject in, String fnameNew, InputInfo ii, OutputInfo oi, long rlen, long clen, int brlen, int bclen );
 
 	
 	public static MatrixBlock createReuseMatrixBlock( PDataPartitionFormat dpf, int rows, int cols ) 

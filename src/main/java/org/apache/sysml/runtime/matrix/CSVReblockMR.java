@@ -26,7 +26,7 @@ import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.util.HashSet;
 
-import org.apache.hadoop.filecache.DistributedCache;
+import org.apache.hadoop.mapreduce.filecache.DistributedCache;
 import org.apache.hadoop.fs.FileStatus;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
@@ -55,7 +55,6 @@ import org.apache.sysml.runtime.matrix.mapred.MRConfigurationNames;
 import org.apache.sysml.runtime.matrix.mapred.MRJobConfiguration;
 import org.apache.sysml.runtime.matrix.mapred.MRJobConfiguration.ConvertTarget;
 import org.apache.sysml.runtime.matrix.mapred.MRJobConfiguration.MatrixChar_N_ReducerGroups;
-import org.apache.sysml.runtime.transform.TfUtils;
 import org.apache.sysml.runtime.util.MapReduceTool;
 
 
@@ -119,8 +118,8 @@ public class CSVReblockMR
 			out.writeLong(count);
 		}
 		
-		public String toString()
-		{
+		@Override
+		public String toString() {
 			return filename+", "+fileOffset+", "+count;
 		}
 
@@ -181,8 +180,8 @@ public class CSVReblockMR
 		public long[] rlens=null;
 		public long[] clens=null;
 		
-		public String toString()
-		{
+		@Override
+		public String toString() {
 			StringBuilder sb = new StringBuilder();
 			sb.append(counterFile.toString());
 			sb.append("\n");
@@ -203,11 +202,11 @@ public class CSVReblockMR
 	/**
 	 * Method to find the first (part)file in the order given by <code>fs.listStatus()</code> among all (part)files in <code>inpathPath</code>.
 	 * 
-	 * @param job
-	 * @param inputPath
-	 * @return
-	 * @throws IOException 
-	 * @throws FileNotFoundException 
+	 * @param job job configuration
+	 * @param inputPath path to input file
+	 * @return file name
+	 * @throws IOException if IOException occurs
+	 * @throws FileNotFoundException if FileNotFoundException occurs
 	 */
 	public static String findSmallestFile(JobConf job, String inputPath) throws FileNotFoundException, IOException {
 		
@@ -275,23 +274,15 @@ public class CSVReblockMR
 		AssignRowIDMRReturn ret1 = CSVReblockMR.runAssignRowIDMRJob(inputs, inputInfos, brlens, bclens, reblockInstructions, 
 				replication, smallestFiles);
 		for(int i=0; i<rlens.length; i++)
-			if( (rlens[i]>0 && rlens[i]!=ret1.rlens[i]) || (clens[i]>0 && clens[i]!=ret1.clens[i]) )
+			if( (rlens[i]>=0 && rlens[i]!=ret1.rlens[i]) || (clens[i]>=0 && clens[i]!=ret1.clens[i]) )
 				throw new RuntimeException("Dimension doesn't mach for input matrix "+i+", expected ("+rlens[i]+", "+clens[i]+") but real ("+ret1.rlens[i]+", "+ret1.clens[i]+")");
 		JobReturn ret= CSVReblockMR.runCSVReblockJob(null, inputs, inputInfos, ret1.rlens, ret1.clens, brlens, bclens, reblockInstructions, 
 				otherInstructionsInReducer, numReducers, replication, resultIndexes, outputs, outputInfos, ret1.counterFile, smallestFiles);
 		return ret;
 	}
-	
-	public static AssignRowIDMRReturn runAssignRowIDMRJob(String[] inputs, InputInfo[] inputInfos, int[] brlens, int[] bclens, 
-			String reblockInstructions, int replication, String[] smallestFiles) 
-	throws Exception
-	{
-		return runAssignRowIDMRJob(inputs, inputInfos, brlens, bclens, reblockInstructions, replication, smallestFiles, false, null, null);
-	}
-
 		
 	public static AssignRowIDMRReturn runAssignRowIDMRJob(String[] inputs, InputInfo[] inputInfos, int[] brlens, int[] bclens, 
-			String reblockInstructions, int replication, String[] smallestFiles, boolean transform, String naStrings, String spec) 
+			String reblockInstructions, int replication, String[] smallestFiles) 
 	throws Exception
 	{
 		AssignRowIDMRReturn ret=new AssignRowIDMRReturn();
@@ -346,16 +337,6 @@ public class CSVReblockMR
 		FileOutputFormat.setOutputPath(job, ret.counterFile);
 		job.setOutputKeyClass(ByteWritable.class);
 		job.setOutputValueClass(OffsetCount.class);
-		
-		// setup properties relevant to transform
-		job.setBoolean(MRJobConfiguration.TF_TRANSFORM, transform);
-		if (transform)
-		{
-			if ( naStrings != null)
-				// Adding "dummy" string to handle the case of na_strings = ""
-				job.set(MRJobConfiguration.TF_NA_STRINGS, TfUtils.prepNAStrings(naStrings) );
-			job.set(MRJobConfiguration.TF_SPEC, spec);
-		}
 		
 		RunningJob runjob=JobClient.runJob(job);
 		
@@ -470,12 +451,9 @@ public class CSVReblockMR
 		MapReduceTool.deleteFileIfExistOnHDFS(counterFile, job);
 		
 		/* Process different counters */
-		
 		Group group=runjob.getCounters().getGroup(MRJobConfiguration.NUM_NONZERO_CELLS);
 		for(int i=0; i<resultIndexes.length; i++) {
-			// number of non-zeros
 			stats[i].setNonZeros(group.getCounter(Integer.toString(i)));
-			//	System.out.println("result #"+resultIndexes[i]+" ===>\n"+stats[i]);
 		}
 		return new JobReturn(stats, outputInfos, runjob.isSuccessful());
 	}

@@ -37,9 +37,11 @@ import org.apache.hadoop.mapred.TextInputFormat;
 
 import org.apache.sysml.conf.ConfigurationManager;
 import org.apache.sysml.runtime.DMLRuntimeException;
+import org.apache.sysml.runtime.matrix.data.DenseBlock;
 import org.apache.sysml.runtime.matrix.data.InputInfo;
 import org.apache.sysml.runtime.matrix.data.MatrixBlock;
 import org.apache.sysml.runtime.util.FastStringTokenizer;
+import org.apache.sysml.runtime.util.MapReduceTool;
 
 public class ReaderTextCell extends MatrixReader
 {
@@ -54,13 +56,15 @@ public class ReaderTextCell extends MatrixReader
 	public MatrixBlock readMatrixFromHDFS(String fname, long rlen, long clen, int brlen, int bclen, long estnnz) 
 		throws IOException, DMLRuntimeException 
 	{
-		//allocate output matrix block
-		MatrixBlock ret = createOutputMatrixBlock(rlen, clen, (int)rlen, (int)clen, estnnz, true, false);
-		
 		//prepare file access
-		JobConf job = new JobConf(ConfigurationManager.getCachedJobConf());	
-		FileSystem fs = FileSystem.get(job);
+		JobConf job = new JobConf(ConfigurationManager.getCachedJobConf());
 		Path path = new Path( fname );
+		FileSystem fs = IOUtilFunctions.getFileSystem(path, job);
+		
+		//allocate output matrix block
+		if( estnnz < 0 )
+			estnnz = MapReduceTool.estimateNnzBasedOnFileSize(path, rlen, clen, brlen, bclen, 3);
+		MatrixBlock ret = createOutputMatrixBlock(rlen, clen, (int)rlen, (int)clen, estnnz, true, false);
 		
 		//check existence and non-empty file
 		checkValidInputFile(fs, path); 
@@ -79,6 +83,7 @@ public class ReaderTextCell extends MatrixReader
 		return ret;
 	}
 
+	@Override
 	public MatrixBlock readMatrixFromInputStream(InputStream is, long rlen, long clen, int brlen, int bclen, long estnnz) 
 		throws IOException, DMLRuntimeException 
 	{
@@ -95,22 +100,8 @@ public class ReaderTextCell extends MatrixReader
 		
 		return ret;
 	}
-	
 
-	/**
-	 * 
-	 * @param path
-	 * @param job
-	 * @param dest
-	 * @param rlen
-	 * @param clen
-	 * @param brlen
-	 * @param bclen
-	 * @throws IOException
-	 * @throws IllegalAccessException
-	 * @throws InstantiationException
-	 */
-	private void readTextCellMatrixFromHDFS( Path path, JobConf job, MatrixBlock dest, long rlen, long clen, int brlen, int bclen )
+	private static void readTextCellMatrixFromHDFS( Path path, JobConf job, MatrixBlock dest, long rlen, long clen, int brlen, int bclen )
 		throws IOException
 	{
 		boolean sparse = dest.isInSparseFormat();
@@ -140,6 +131,7 @@ public class ReaderTextCell extends MatrixReader
 							st.reset( value.toString() ); //reinit tokenizer
 							row = st.nextInt() - 1;
 							col = st.nextInt() - 1;
+							if(row == -1 || col == -1) continue;
 							double lvalue = st.nextDouble();
 							dest.appendValue(row, col, lvalue);
 						}
@@ -148,12 +140,14 @@ public class ReaderTextCell extends MatrixReader
 					} 
 					else //DENSE<-value
 					{
+						DenseBlock a = dest.getDenseBlock();
 						while( reader.next(key, value) ) {
 							st.reset( value.toString() ); //reinit tokenizer
 							row = st.nextInt()-1;
 							col = st.nextInt()-1;
+							if(row == -1 || col == -1) continue;
 							double lvalue = st.nextDouble();
-							dest.setValueDenseUnsafe( row, col, lvalue );
+							a.set( row, col, lvalue );
 						}
 					}
 				}
@@ -172,21 +166,7 @@ public class ReaderTextCell extends MatrixReader
 		}
 	}
 
-	
-	/**
-	 * 
-	 * @param path
-	 * @param job
-	 * @param dest
-	 * @param rlen
-	 * @param clen
-	 * @param brlen
-	 * @param bclen
-	 * @throws IOException
-	 * @throws IllegalAccessException
-	 * @throws InstantiationException
-	 */
-	private void readRawTextCellMatrixFromHDFS( Path path, JobConf job, FileSystem fs, MatrixBlock dest, long rlen, long clen, int brlen, int bclen, boolean matrixMarket )
+	private static void readRawTextCellMatrixFromHDFS( Path path, JobConf job, FileSystem fs, MatrixBlock dest, long rlen, long clen, int brlen, int bclen, boolean matrixMarket )
 		throws IOException
 	{
 		//create input stream for path
@@ -195,24 +175,11 @@ public class ReaderTextCell extends MatrixReader
 		//actual read
 		readRawTextCellMatrixFromInputStream(inputStream, dest, rlen, clen, brlen, bclen, matrixMarket);
 	}
-	
-	/**
-	 * 
-	 * @param is
-	 * @param dest
-	 * @param rlen
-	 * @param clen
-	 * @param brlen
-	 * @param bclen
-	 * @param matrixMarket
-	 * @throws IOException
-	 * @throws IllegalAccessException
-	 * @throws InstantiationException
-	 */
-	private void readRawTextCellMatrixFromInputStream( InputStream is, MatrixBlock dest, long rlen, long clen, int brlen, int bclen, boolean matrixMarket )
+
+	private static void readRawTextCellMatrixFromInputStream( InputStream is, MatrixBlock dest, long rlen, long clen, int brlen, int bclen, boolean matrixMarket )
 			throws IOException
 	{
-		BufferedReader br = new BufferedReader(new InputStreamReader( is ));	
+		BufferedReader br = new BufferedReader(new InputStreamReader( is ));
 		
 		boolean sparse = dest.isInSparseFormat();
 		String value = null;
@@ -252,6 +219,7 @@ public class ReaderTextCell extends MatrixReader
 					st.reset( value ); //reinit tokenizer
 					row = st.nextInt()-1;
 					col = st.nextInt()-1;
+					if(row == -1 || col == -1) continue;
 					double lvalue = st.nextDouble();
 					dest.appendValue(row, col, lvalue);
 				}
@@ -260,13 +228,14 @@ public class ReaderTextCell extends MatrixReader
 			} 
 			else //DENSE<-value
 			{
-				while( (value=br.readLine())!=null )
-				{
+				DenseBlock a = dest.getDenseBlock();
+				while( (value=br.readLine())!=null ) {
 					st.reset( value ); //reinit tokenizer
 					row = st.nextInt()-1;
-					col = st.nextInt()-1;	
+					col = st.nextInt()-1;
+					if(row == -1 || col == -1) continue;
 					double lvalue = st.nextDouble();
-					dest.setValueDenseUnsafe( row, col, lvalue );
+					a.set( row, col, lvalue );
 				}
 			}
 		}

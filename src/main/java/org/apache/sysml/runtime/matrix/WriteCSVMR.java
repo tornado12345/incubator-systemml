@@ -19,6 +19,7 @@
 
 package org.apache.sysml.runtime.matrix;
 
+import java.io.IOException;
 import java.util.HashMap;
 
 import org.apache.commons.logging.Log;
@@ -61,6 +62,12 @@ public class WriteCSVMR
 		JobConf job = new JobConf(WriteCSVMR.class);
 		job.setJobName("WriteCSV-MR");
 		
+		//check for valid output dimensions
+		for( int i=0; i<rlens.length; i++ )
+			if( rlens[i] == 0 || clens[i] == 0 )
+				throw new IOException("Write of matrices with zero"
+					+ " rows or columns not supported ("+rlens[i]+"x"+clens[i]+").");
+		
 		byte[] realIndexes=new byte[inputs.length];
 		for(byte b=0; b<realIndexes.length; b++)
 			realIndexes[b]=b;
@@ -99,7 +106,7 @@ public class WriteCSVMR
 		byte[] resultDimsUnknown = new byte[resultIndexes.length];
 		MatrixCharacteristics[] stats=new MatrixCharacteristics[resultIndexes.length];
 		OutputInfo[] outputInfos=new OutputInfo[outputs.length];
-		HashMap<Byte, Integer> indexmap=new HashMap<Byte, Integer>();
+		HashMap<Byte, Integer> indexmap=new HashMap<>();
 		for(int i=0; i<stats.length; i++)
 		{
 			indexmap.put(resultIndexes[i], i);
@@ -155,15 +162,7 @@ public class WriteCSVMR
 		
 		return new JobReturn(stats, outputInfos, runjob.isSuccessful());
 	}
-	
-	/**
-	 * 
-	 * @param rlen
-	 * @param clen
-	 * @param defaultNumRed
-	 * @param numRedGroups
-	 * @return
-	 */
+
 	public static int determineNumReducers( long[] rlen, long[] clen, int defaultNumRed, long numRedGroups )
 	{
 		//init return with default value

@@ -22,21 +22,12 @@ package org.apache.sysml.runtime.matrix.data;
 
 public abstract class SparseBlockFactory
 {
-	/**
-	 * 
-	 * @param rlen
-	 */
+
 	public static SparseBlock createSparseBlock(int rlen) {
 		return createSparseBlock(MatrixBlock.DEFAULT_SPARSEBLOCK, rlen);
 	}
-	
-	/**
-	 * 
-	 * @param type
-	 * @param rlen
-	 * @return
-	 */
-	public static SparseBlock createSparseBlock( SparseBlock.Type type, int rlen ) {
+
+	public static SparseBlock createSparseBlock(SparseBlock.Type type, int rlen) {
 		switch( type ) {
 			case MCSR: return new SparseBlockMCSR(rlen, -1);
 			case CSR: return new SparseBlockCSR(rlen);
@@ -46,23 +37,12 @@ public abstract class SparseBlockFactory
 		}
 	}
 	
-	/**
-	 * 
-	 * @param type
-	 * @param sblock
-	 * @return
-	 */
-	public static SparseBlock copySparseBlock( SparseBlock.Type type, SparseBlock sblock ) {
-		return copySparseBlock(type, sblock, false);
+	public static SparseBlock createSparseBlock(SparseBlock.Type type, SparseRow row) {
+		SparseBlock ret = createSparseBlock(type, 1);
+		ret.set(0, row, true);
+		return ret;
 	}
-	
-	/**
-	 * 
-	 * @param type
-	 * @param sblock
-	 * @param forceCopy
-	 * @return
-	 */
+
 	public static SparseBlock copySparseBlock( SparseBlock.Type type, SparseBlock sblock, boolean forceCopy )
 	{
 		//sanity check for empty inputs
@@ -70,11 +50,7 @@ public abstract class SparseBlockFactory
 			return null;
 		
 		//check for existing target type
-		if( !forceCopy && 
-			( (sblock instanceof SparseBlockMCSR && type == SparseBlock.Type.MCSR)
-			||(sblock instanceof SparseBlockCSR && type == SparseBlock.Type.CSR)
-			||(sblock instanceof SparseBlockCOO && type == SparseBlock.Type.COO))  )
-		{
+		if( !forceCopy && isSparseBlockType(sblock, type) ){
 			return sblock;
 		}
 		
@@ -88,14 +64,16 @@ public abstract class SparseBlockFactory
 		}
 	}
 	
-	/**
-	 * 
-	 * @param type
-	 * @param nrows
-	 * @param ncols
-	 * @param sparsity
-	 * @return
-	 */
+	public static boolean isSparseBlockType(SparseBlock sblock, SparseBlock.Type type) {
+		return (getSparseBlockType(sblock) == type);
+	}
+	
+	public static SparseBlock.Type getSparseBlockType(SparseBlock sblock) {
+		return (sblock instanceof SparseBlockMCSR) ? SparseBlock.Type.MCSR :
+			(sblock instanceof SparseBlockCSR) ? SparseBlock.Type.CSR : 
+			(sblock instanceof SparseBlockCOO) ? SparseBlock.Type.COO : null;
+	}
+
 	public static long estimateSizeSparseInMemory(SparseBlock.Type type, long nrows, long ncols, double sparsity) {
 		switch( type ) {
 			case MCSR: return SparseBlockMCSR.estimateMemory(nrows, ncols, sparsity);

@@ -24,13 +24,10 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.HashSet;
 
-import org.apache.commons.logging.Log;
-import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.io.Writable;
 import org.apache.hadoop.mapred.JobConf;
 import org.apache.hadoop.mapred.OutputCollector;
 import org.apache.hadoop.mapred.Reporter;
-
 import org.apache.sysml.runtime.DMLRuntimeException;
 import org.apache.sysml.runtime.instructions.mr.AggregateBinaryInstruction;
 import org.apache.sysml.runtime.instructions.mr.CSVReblockInstruction;
@@ -43,13 +40,10 @@ import org.apache.sysml.runtime.matrix.data.MatrixBlock;
 import org.apache.sysml.runtime.matrix.data.MatrixIndexes;
 import org.apache.sysml.runtime.matrix.data.MatrixValue;
 import org.apache.sysml.runtime.matrix.data.Pair;
-import org.apache.sysml.runtime.matrix.data.TaggedMatrixValue;
 
 @SuppressWarnings("rawtypes")
 public abstract class MapperBase extends MRBaseForCommonInstructions
 {
-	
-	protected static final Log LOG = LogFactory.getLog(MapperBase.class);
 	
 	//the indexes that this particular input matrix file represents
 	protected ArrayList<Byte> representativeMatrixes=null;
@@ -72,19 +66,19 @@ public abstract class MapperBase extends MRBaseForCommonInstructions
 	protected int[] lastblockclens=null;
 	
 	//rand instructions that need to be performed in mapper
-	protected ArrayList<DataGenMRInstruction> dataGen_instructions=new ArrayList<DataGenMRInstruction>();
+	protected ArrayList<DataGenMRInstruction> dataGen_instructions=new ArrayList<>();
 	
 	//instructions that need to be performed in mapper
-	protected ArrayList<ArrayList<MRInstruction>> mapper_instructions=new ArrayList<ArrayList<MRInstruction>>();
+	protected ArrayList<ArrayList<MRInstruction>> mapper_instructions=new ArrayList<>();
 	
 	//block instructions that need to be performed in part by mapper
-	protected ArrayList<ArrayList<ReblockInstruction>> reblock_instructions=new ArrayList<ArrayList<ReblockInstruction>>();
+	protected ArrayList<ArrayList<ReblockInstruction>> reblock_instructions=new ArrayList<>();
 	
 	//csv block instructions that need to be performed in part by mapper
-	protected ArrayList<ArrayList<CSVReblockInstruction>> csv_reblock_instructions=new ArrayList<ArrayList<CSVReblockInstruction>>();
+	protected ArrayList<ArrayList<CSVReblockInstruction>> csv_reblock_instructions=new ArrayList<>();
 	
 	//the indexes of the matrices that needed to be outputted
-	protected ArrayList<ArrayList<Byte>> outputIndexes=new ArrayList<ArrayList<Byte>>();
+	protected ArrayList<ArrayList<Byte>> outputIndexes=new ArrayList<>();
 	
 	//converter to convert the input record into indexes and matrix value (can be a cell or a block)
 	protected Converter inputConverter=null;
@@ -92,7 +86,7 @@ public abstract class MapperBase extends MRBaseForCommonInstructions
 	//a counter to measure the time spent in a mapper
 	protected static enum Counters {
 		MAP_TIME 
-	};
+	}
 	
 	
 	@SuppressWarnings("unchecked")
@@ -100,8 +94,6 @@ public abstract class MapperBase extends MRBaseForCommonInstructions
 		throws IOException 
 	{
 		long start=System.currentTimeMillis();
-		
-		//System.out.println("read in Mapper: "+rawKey+": "+rawValue);
 		
 		//for each representative matrix, read the record and apply instructions
 		for(int i=0; i<representativeMatrixes.size(); i++)
@@ -162,7 +154,7 @@ public abstract class MapperBase extends MRBaseForCommonInstructions
 	 * Determines if empty blocks can be discarded on map input. Conceptually, this is true
 	 * if the individual instruction don't need to output empty blocks and if they are sparsesafe.
 	 * 
-	 * @return
+	 * @return true if empty blocks can be discarded on map input
 	 */
 	public boolean allowsFilterEmptyInputBlocks()
 	{
@@ -180,6 +172,7 @@ public abstract class MapperBase extends MRBaseForCommonInstructions
 		return ret && count>0;
 	}
 	
+	@Override
 	public void configure(JobConf job)
 	{
 		super.configure(job);
@@ -221,22 +214,17 @@ public abstract class MapperBase extends MRBaseForCommonInstructions
 		//get the dimension of all the representative matrices
 		rlens=new long[representativeMatrixes.size()];
 		clens=new long[representativeMatrixes.size()];
-		for(int i=0; i<representativeMatrixes.size(); i++)
-		{
+		for(int i=0; i<representativeMatrixes.size(); i++) {
 			rlens[i]=MRJobConfiguration.getNumRows(job, representativeMatrixes.get(i));
 			clens[i]=MRJobConfiguration.getNumColumns(job, representativeMatrixes.get(i));
-		//	System.out.println("get dimension for "+representativeMatrixes.get(i)+": "+rlens[i]+", "+clens[i]);
 		}
 		
 		//get the block sizes of the representative matrices
 		brlens=new int[representativeMatrixes.size()];
 		bclens=new int[representativeMatrixes.size()];
-		
-		for(int i=0; i<representativeMatrixes.size(); i++)
-		{
+		for(int i=0; i<representativeMatrixes.size(); i++) {
 			brlens[i]=MRJobConfiguration.getNumRowsPerBlock(job, representativeMatrixes.get(i));
 			bclens[i]=MRJobConfiguration.getNumColumnsPerBlock(job, representativeMatrixes.get(i));
-		//	System.out.println("get blocksize for "+representativeMatrixes.get(i)+": "+brlens[i]+", "+bclens[i]);
 		}
 		
 		rbounds=new long[representativeMatrixes.size()];
@@ -247,10 +235,9 @@ public abstract class MapperBase extends MRBaseForCommonInstructions
 		//calculate upper boundaries for key value pairs
 		if(valueClass.equals(MatrixBlock.class))
 		{
-			for(int i=0; i<representativeMatrixes.size(); i++)
-			{
-				rbounds[i]=(long)Math.ceil((double)rlens[i]/(double)brlens[i]);
-				cbounds[i]=(long)Math.ceil((double)clens[i]/(double)bclens[i]);
+			for(int i=0; i<representativeMatrixes.size(); i++) {
+				rbounds[i]=(long)Math.max(Math.ceil((double)rlens[i]/brlens[i]),1);
+				cbounds[i]=(long)Math.max(Math.ceil((double)clens[i]/bclens[i]),1);
 				
 				lastblockrlens[i]=(int) (rlens[i]%brlens[i]);
 				lastblockclens[i]=(int) (clens[i]%bclens[i]);
@@ -258,24 +245,17 @@ public abstract class MapperBase extends MRBaseForCommonInstructions
 					lastblockrlens[i]=brlens[i];
 				if(lastblockclens[i]==0)
 					lastblockclens[i]=bclens[i];
-				
-				/*
-				 * what is this for????
-				// DRB: the row indexes need to be fixed 
-				rbounds[i] = rlens[i];*/
 			}
-		}else
-		{
-			for(int i=0; i<representativeMatrixes.size(); i++)
-			{
+		}
+		else {
+			for(int i=0; i<representativeMatrixes.size(); i++) {
 				rbounds[i]=rlens[i];
 				cbounds[i]=clens[i];
 				lastblockrlens[i]=1;
 				lastblockclens[i]=1;
-			//	System.out.println("get bound for "+representativeMatrixes.get(i)+": "+rbounds[i]+", "+cbounds[i]);
 			}
 		}
-				
+		
 		//load data from distributed cache (if required, reuse if jvm_reuse)
 		try {
 			setupDistCacheFiles(job);
@@ -286,14 +266,14 @@ public abstract class MapperBase extends MRBaseForCommonInstructions
 		}
 
 		//collect unary instructions for each representative matrix
-		HashSet<Byte> set=new HashSet<Byte>();
+		HashSet<Byte> set=new HashSet<>();
 		for(int i=0; i<representativeMatrixes.size(); i++)
 		{
 			set.clear();
 			set.add(representativeMatrixes.get(i));
 			
 			//collect the relavent datagen instructions for this representative matrix
-			ArrayList<DataGenMRInstruction> dataGensForThisMatrix=new ArrayList<DataGenMRInstruction>();
+			ArrayList<DataGenMRInstruction> dataGensForThisMatrix=new ArrayList<>();
 			if(allDataGenIns!=null)
 			{
 				for(DataGenMRInstruction ins:allDataGenIns)
@@ -313,7 +293,7 @@ public abstract class MapperBase extends MRBaseForCommonInstructions
 				dataGen_instructions.add(dataGensForThisMatrix.get(0));
 						
 			//collect the relavent instructions for this representative matrix
-			ArrayList<MRInstruction> opsForThisMatrix=new ArrayList<MRInstruction>();
+			ArrayList<MRInstruction> opsForThisMatrix=new ArrayList<>();
 			
 			if(allMapperIns!=null)
 			{
@@ -351,7 +331,7 @@ public abstract class MapperBase extends MRBaseForCommonInstructions
 			mapper_instructions.add(opsForThisMatrix);
 			
 			//collect the relavent reblock instructions for this representative matrix
-			ArrayList<ReblockInstruction> reblocksForThisMatrix=new ArrayList<ReblockInstruction>();
+			ArrayList<ReblockInstruction> reblocksForThisMatrix=new ArrayList<>();
 			if(allReblockIns!=null)
 			{
 				for(ReblockInstruction ins:allReblockIns)
@@ -367,7 +347,7 @@ public abstract class MapperBase extends MRBaseForCommonInstructions
 			reblock_instructions.add(reblocksForThisMatrix);
 			
 			//collect the relavent reblock instructions for this representative matrix
-			ArrayList<CSVReblockInstruction> csvReblocksForThisMatrix=new ArrayList<CSVReblockInstruction>();
+			ArrayList<CSVReblockInstruction> csvReblocksForThisMatrix=new ArrayList<>();
 			if(allCSVReblockIns!=null)
 			{
 				for(CSVReblockInstruction ins:allCSVReblockIns)
@@ -383,7 +363,7 @@ public abstract class MapperBase extends MRBaseForCommonInstructions
 			csv_reblock_instructions.add(csvReblocksForThisMatrix);
 			
 			//collect the output indexes for this representative matrix
-			ArrayList<Byte> outsForThisMatrix=new ArrayList<Byte>();
+			ArrayList<Byte> outsForThisMatrix=new ArrayList<>();
 			for(byte output: outputs)
 			{
 				if(set.contains(output))
@@ -402,31 +382,5 @@ public abstract class MapperBase extends MRBaseForCommonInstructions
 		} catch (Exception e) {
 			throw new IOException(e);
 		}
-	}
-	
-	protected void processMapOutputToReducer(int index, MatrixIndexes indexBuffer, 
-			TaggedMatrixValue taggedValueBuffer, OutputCollector<Writable, Writable> out) throws IOException
-	{
-			
-		for(byte output: outputIndexes.get(index))
-		{
-			ArrayList<IndexedMatrixValue> results= cachedValues.get(output);
-			if(results==null)
-				continue;
-			for(IndexedMatrixValue result: results)
-			{
-				if(result==null)
-					continue;
-				indexBuffer.setIndexes(result.getIndexes());
-				////////////////////////////////////////
-			//	taggedValueBuffer.getBaseObject().copy(result.getValue());
-				taggedValueBuffer.setBaseObject(result.getValue());
-				////////////////////////////////////////
-				taggedValueBuffer.setTag(output);
-				out.collect(indexBuffer, taggedValueBuffer);
-			//	System.out.println("map output: "+indexBuffer+"\n"+taggedValueBuffer);
-			}
-			
-		}	
 	}
 }

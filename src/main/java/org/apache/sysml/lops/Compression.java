@@ -27,12 +27,19 @@ import org.apache.sysml.parser.Expression.ValueType;
 
 public class Compression extends Lop 
 {
-	public static final String OPCODE = "compress"; 
-
-	public Compression(Lop input, DataType dt, ValueType vt, ExecType et) 
-		throws LopsException
-	{
-		super(Lop.Type.Checkpoint, dt, vt);		
+	public static final String OPCODE = "compress";
+	
+	public enum CompressConfig {
+		TRUE,
+		FALSE,
+		AUTO;
+		public boolean isEnabled() {
+			return this == TRUE || this == AUTO;
+		}
+	}
+	
+	public Compression(Lop input, DataType dt, ValueType vt, ExecType et) {
+		super(Lop.Type.Checkpoint, dt, vt);
 		this.addInput(input);
 		input.addOutput(this);
 		
@@ -51,9 +58,7 @@ public class Compression extends Lop
 	}
 	
 	@Override
-	public String getInstructions(String input1, String output) 
-		throws LopsException 
-	{
+	public String getInstructions(String input1, String output) {
 		StringBuilder sb = new StringBuilder();
 		sb.append( getExecType() );
 		sb.append( Lop.OPERAND_DELIMITOR );
@@ -62,7 +67,6 @@ public class Compression extends Lop
 		sb.append( getInputs().get(0).prepInputOperand(input1));
 		sb.append( OPERAND_DELIMITOR );
 		sb.append( prepOutputOperand(output));
-		
 		return sb.toString();
 	}
 }

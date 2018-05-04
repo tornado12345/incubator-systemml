@@ -29,7 +29,6 @@ import org.apache.sysml.hops.rewrite.HopRewriteUtils;
 import org.apache.sysml.hops.Hop.MultiThreadedHop;
 import org.apache.sysml.lops.Lop;
 import org.apache.sysml.lops.DataGen;
-import org.apache.sysml.lops.LopsException;
 import org.apache.sysml.lops.LopProperties.ExecType;
 import org.apache.sysml.parser.DataIdentifier;
 import org.apache.sysml.parser.DataExpression;
@@ -37,10 +36,14 @@ import org.apache.sysml.parser.Expression.DataType;
 import org.apache.sysml.parser.Expression.ValueType;
 import org.apache.sysml.parser.Statement;
 import org.apache.sysml.runtime.controlprogram.parfor.ProgramConverter;
+import org.apache.sysml.runtime.util.UtilFunctions;
 
+/**
+ * A DataGenOp can be rand (or matrix constructor), sequence, and sample -
+ * these operators have different parameters and use a map of parameter type to hop position.
+ */
 public class DataGenOp extends Hop implements MultiThreadedHop
 {
-	
 	public static final long UNSPECIFIED_SEED = -1;
 	
 	 // defines the specific data generation method
@@ -55,7 +58,7 @@ public class DataGenOp extends Hop implements MultiThreadedHop
 	 * i.e., getInput().get(_paramIndexMap.get(parameterName)) refers to the Hop
 	 * that is associated with parameterName.
 	 */
-	private HashMap<String, Integer> _paramIndexMap = new HashMap<String, Integer>();
+	private HashMap<String, Integer> _paramIndexMap = new HashMap<>();
 		
 
 	/** target identifier which will hold the random object */
@@ -100,8 +103,10 @@ public class DataGenOp extends Hop implements MultiThreadedHop
 			_paramIndexMap.put(s, index);
 			index++;
 		}
-		if ( mthd == DataGenMethod.RAND )
-			_sparsity = Double.valueOf(((LiteralOp)inputParameters.get(DataExpression.RAND_SPARSITY)).getName());
+		
+		Hop sparsityOp = inputParameters.get(DataExpression.RAND_SPARSITY);
+		if ( mthd == DataGenMethod.RAND && sparsityOp instanceof LiteralOp)
+			_sparsity = Double.valueOf(((LiteralOp)sparsityOp).getName());
 		
 		//generate base dir
 		String scratch = ConfigurationManager.getScratchSpace();
@@ -111,7 +116,14 @@ public class DataGenOp extends Hop implements MultiThreadedHop
 		//compute unknown dims and nnz
 		refreshSizeInformation();
 	}
-	
+
+	@Override
+	public void checkArity() {
+		int sz = _input.size();
+		int pz = _paramIndexMap.size();
+		HopsException.check(sz == pz, this, "has %d inputs but %d parameters", sz, pz);
+	}
+
 	@Override
 	public String getOpString() {
 		return "dg(" + _op.toString().toLowerCase() +")";
@@ -132,8 +144,12 @@ public class DataGenOp extends Hop implements MultiThreadedHop
 	}
 	
 	@Override
+	public boolean isGPUEnabled() {
+		return false;
+	}
+	
+	@Override
 	public Lop constructLops() 
-		throws HopsException, LopsException
 	{
 		//return already created lops
 		if( getLops() != null )
@@ -141,11 +157,11 @@ public class DataGenOp extends Hop implements MultiThreadedHop
 
 		ExecType et = optFindExecType();
 		
-		HashMap<String, Lop> inputLops = new HashMap<String, Lop>();
+		HashMap<String, Lop> inputLops = new HashMap<>();
 		for (Entry<String, Integer> cur : _paramIndexMap.entrySet()) {
-			if( cur.getKey().equals(DataExpression.RAND_ROWS) && _dim1>0 )
+			if( cur.getKey().equals(DataExpression.RAND_ROWS) && rowsKnown() )
 				inputLops.put(cur.getKey(), new LiteralOp(_dim1).constructLops());
-			else if( cur.getKey().equals(DataExpression.RAND_COLS) && _dim2>0 )
+			else if( cur.getKey().equals(DataExpression.RAND_COLS) && colsKnown() )
 				inputLops.put(cur.getKey(), new LiteralOp(_dim2).constructLops());
 			else
 				inputLops.put(cur.getKey(), getInput().get(cur.getValue()).constructLops());
@@ -174,19 +190,6 @@ public class DataGenOp extends Hop implements MultiThreadedHop
 		
 		return getLops();
 	}
-	
-	@Override
-	public void printMe() throws HopsException
-	{	
-		if (LOG.isDebugEnabled()){
-			if(getVisited() != VisitStatus.DONE)
-			{
-				super.printMe();
-			}
-
-			setVisited(VisitStatus.DONE);
-		}
-	}
 
 	@Override
 	public boolean allowsAllExecTypes()
@@ -199,7 +202,7 @@ public class DataGenOp extends Hop implements MultiThreadedHop
 	{		
 		double ret = 0;
 		
-		if ( _op == DataGenMethod.RAND ) {
+		if ( _op == DataGenMethod.RAND && _sparsity != -1 ) {
 			if( hasConstantValue(0.0) ) { //if empty block
 				ret = OptimizerUtils.estimateSizeEmptyBlock(dim1, dim2);
 			}
@@ -237,8 +240,8 @@ public class DataGenOp extends Hop implements MultiThreadedHop
 		{
 			long dim1 = computeDimParameterInformation(getInput().get(_paramIndexMap.get(DataExpression.RAND_ROWS)), memo);
 			long dim2 = computeDimParameterInformation(getInput().get(_paramIndexMap.get(DataExpression.RAND_COLS)), memo);
-			long nnz = (long)(_sparsity * dim1 * dim2);
-			if( dim1>0 && dim2>0 )
+			long nnz = _sparsity >= 0 ? (long)(_sparsity * dim1 * dim2) : -1;
+			if( dim1>=0 && dim2>=0 )
 				return new long[]{ dim1, dim2, nnz };
 		}
 		else if ( _op == DataGenMethod.SEQ )
@@ -269,13 +272,12 @@ public class DataGenOp extends Hop implements MultiThreadedHop
 	}
 
 	@Override
-	protected ExecType optFindExecType() throws HopsException {
-		
+	protected ExecType optFindExecType() {
 		checkAndSetForcedPlatform();
 
 		ExecType REMOTE = OptimizerUtils.isSparkExecutionMode() ? ExecType.SPARK : ExecType.MR;
 		
-		if( _etypeForced != null ) 			
+		if( _etypeForced != null )
 			_etype = _etypeForced;
 		else 
 		{
@@ -292,9 +294,8 @@ public class DataGenOp extends Hop implements MultiThreadedHop
 		}
 
 		//mark for recompile (forever)
-		if( ConfigurationManager.isDynamicRecompilation() && !dimsKnown(true) && _etype==REMOTE )
-			setRequiresRecompile();
-
+		setRequiresRecompileIfNecessary();
+		
 		//always force string initialization into CP (not supported in MR)
 		//similarly, sample is currently not supported in MR either
 		if( _op == DataGenMethod.SINIT )
@@ -344,7 +345,8 @@ public class DataGenOp extends Hop implements MultiThreadedHop
 			}
 			
 			if ( fromKnown && toKnown && incrKnown ) {
-				setDim1(1 + (long)Math.floor(((double)(to-from))/incr));
+				//TODO fix parser exception handling and enable check by default
+				setDim1(UtilFunctions.getSeqLength(from, to, incr, false));
 				setDim2(1);
 				_incr = incr;
 			}
@@ -355,17 +357,27 @@ public class DataGenOp extends Hop implements MultiThreadedHop
 			_nnz = 0;
 		else if ( dimsKnown() && _sparsity>=0 ) //general case
 			_nnz = (long) (_sparsity * _dim1 * _dim2);
+		else
+			_nnz = -1;
 	}
 	
 
-	public HashMap<String, Integer> getParamIndexMap()
-	{
+	public HashMap<String, Integer> getParamIndexMap() {
 		return _paramIndexMap;
 	}
 	
-	public int getParamIndex(String key)
-	{
+	public int getParamIndex(String key) {
 		return _paramIndexMap.get(key);
+	}
+	
+	public Hop getInput(String key) {
+		return getInput().get(getParamIndex(key));
+	}
+	
+	public void setInput(String key, Hop hop, boolean linkParent) {
+		getInput().set(getParamIndex(key), hop);
+		if( linkParent )
+			hop.getParent().add(this);
 	}
 
 	public boolean hasConstantValue() 
@@ -424,6 +436,10 @@ public class DataGenOp extends Hop implements MultiThreadedHop
 		}
 		
 		return ret;
+	}
+	
+	public Hop getConstantValue() {
+		return getInput().get(_paramIndexMap.get(DataExpression.RAND_MIN));
 	}
 	
 	public void setIncrementValue(double incr)
@@ -499,4 +515,5 @@ public class DataGenOp extends Hop implements MultiThreadedHop
 		
 		return ret;
 	}
+
 }

@@ -35,7 +35,6 @@ import org.apache.sysml.conf.ConfigurationManager;
 import org.apache.sysml.conf.DMLConfig;
 import org.apache.sysml.lops.Lop;
 import org.apache.sysml.parser.Expression.DataType;
-import org.apache.sysml.runtime.DMLRuntimeException;
 import org.apache.sysml.runtime.controlprogram.ParForProgramBlock.PDataPartitionFormat;
 import org.apache.sysml.runtime.controlprogram.parfor.stat.InfrastructureAnalyzer;
 import org.apache.sysml.runtime.instructions.Instruction;
@@ -47,7 +46,6 @@ import org.apache.sysml.runtime.instructions.mr.MRInstruction;
 import org.apache.sysml.runtime.instructions.mr.PickByCountInstruction;
 import org.apache.sysml.runtime.matrix.data.InputInfo;
 import org.apache.sysml.runtime.matrix.data.MatrixIndexes;
-import org.apache.sysml.runtime.matrix.data.NumItemsByEachReducerMetaData;
 import org.apache.sysml.runtime.matrix.data.OutputInfo;
 import org.apache.sysml.runtime.matrix.data.TaggedMatrixBlock;
 import org.apache.sysml.runtime.matrix.data.TaggedMatrixPackedCell;
@@ -72,26 +70,35 @@ public class GMR
 	private GMR() {
 		//prevent instantiation via private constructor
 	}
-	
+
 	/**
-	 * inBlockRepresentation: indicate whether to use block representation or cell representation
-	 * inputs: input matrices, the inputs are indexed by 0, 1, 2, .. based on the position in this string
-	 * inputInfos: the input format information for the input matrices
-	 * rlen: the number of rows for each matrix
-	 * clen: the number of columns for each matrix
-	 * brlen: the number of rows per block
-	 * bclen: the number of columns per block
-	 * instructionsInMapper: in Mapper, the set of unary operations that need to be performed on each input matrix
-	 * aggInstructionsInReducer: in Reducer, right after sorting, the set of aggreagte operations that need 
-	 * 							to be performed on each input matrix, 
-	 * otherInstructionsInReducer: the mixed operations that need to be performed on matrices after the aggregate operations
-	 * numReducers: the number of reducers
-	 * replication: the replication factor for the output
-	 * resulltIndexes: the indexes of the result matrices that needs to be outputted.
-	 * outputs: the names for the output directories, one for each result index
-	 * outputInfos: output format information for the output matrices
+	 * Execute job.
+	 * 
+	 * @param inst MR job instruction
+	 * @param inputs input matrices, the inputs are indexed by 0, 1, 2, .. based on the position in this string
+	 * @param inputInfos the input format information for the input matrices
+	 * @param rlens array of number of rows
+	 * @param clens array of number of columns
+	 * @param brlens array of number of rows in block
+	 * @param bclens array of number of columns in block
+	 * @param partitioned boolean array of partitioned status
+	 * @param pformats array of data partition formats
+	 * @param psizes does nothing
+	 * @param recordReaderInstruction record reader instruction
+	 * @param instructionsInMapper in Mapper, the set of unary operations that need to be performed on each input matrix
+	 * @param aggInstructionsInReducer in Reducer, right after sorting, the set of aggreagte operations
+	 * that need to be performed on each input matrix
+	 * @param otherInstructionsInReducer the mixed operations that need to be performed on matrices after the aggregate operations
+	 * @param numReducers the number of reducers
+	 * @param replication the replication factor for the output
+	 * @param jvmReuse if true, reuse JVM
+	 * @param resultIndexes the indexes of the result matrices that needs to be outputted
+	 * @param dimsUnknownFilePrefix file path prefix when dimensions unknown
+	 * @param outputs the names for the output directories, one for each result index
+	 * @param outputInfos output format information for the output matrices
+	 * @return job return object
+	 * @throws Exception if Exception occurs
 	 */
-	
 	@SuppressWarnings({ "unchecked", "rawtypes" })
 	public static JobReturn runJob(MRJobInstruction inst, String[] inputs, InputInfo[] inputInfos, long[] rlens, long[] clens, 
 			int[] brlens, int[] bclens, 
@@ -127,13 +134,13 @@ public class GMR
 			PickFromCompactInputFormat.setKeyValueClasses(job, (Class<? extends WritableComparable>) inputInfos[ins.input1].inputKeyClass, 
 					inputInfos[ins.input1].inputValueClass);
 		    job.setInputFormat(PickFromCompactInputFormat.class);
-		    PickFromCompactInputFormat.setZeroValues(job, (NumItemsByEachReducerMetaData)inputInfos[ins.input1].metadata);
+		    PickFromCompactInputFormat.setZeroValues(job, (MetaDataNumItemsByEachReducer)inputInfos[ins.input1].metadata);
 		    
 			if(ins.isValuePick)
 			{
 				double[] probs=MapReduceTool.readColumnVectorFromHDFS(inputs[ins.input2], inputInfos[ins.input2], rlens[ins.input2], 
 						clens[ins.input2], brlens[ins.input2], bclens[ins.input2]);
-			    PickFromCompactInputFormat.setPickRecordsInEachPartFile(job, (NumItemsByEachReducerMetaData) inputInfos[ins.input1].metadata, probs);
+			    PickFromCompactInputFormat.setPickRecordsInEachPartFile(job, (MetaDataNumItemsByEachReducer) inputInfos[ins.input1].metadata, probs);
 			    
 			    realinputs=new String[inputs.length-1];
 				realinputInfos=new InputInfo[inputs.length-1];
@@ -170,8 +177,8 @@ public class GMR
 			}else
 			{
 			    //PickFromCompactInputFormat.setPickRecordsInEachPartFile(job, (NumItemsByEachReducerMetaData) inputInfos[ins.input1].metadata, ins.cst, 1-ins.cst);
-			    PickFromCompactInputFormat.setRangePickPartFiles(job, (NumItemsByEachReducerMetaData) inputInfos[ins.input1].metadata, ins.cst, 1-ins.cst);
-			    realrlens[ins.input1]=UtilFunctions.getLengthForInterQuantile((NumItemsByEachReducerMetaData)inputInfos[ins.input1].metadata, ins.cst);
+			    PickFromCompactInputFormat.setRangePickPartFiles(job, (MetaDataNumItemsByEachReducer) inputInfos[ins.input1].metadata, ins.cst, 1-ins.cst);
+			    realrlens[ins.input1]=UtilFunctions.getLengthForInterQuantile((MetaDataNumItemsByEachReducer)inputInfos[ins.input1].metadata, ins.cst);
 				realclens[ins.input1]=clens[ins.input1];
 				realbrlens[ins.input1]=1;
 				realbclens[ins.input1]=1;
@@ -179,7 +186,8 @@ public class GMR
 			}
 		}
 		
-		setupDistributedCache(job, instructionsInMapper, otherInstructionsInReducer, realinputs, realrlens, realclens);
+		boolean resetDistCache = setupDistributedCache(job, instructionsInMapper, 
+				otherInstructionsInReducer, realinputs, realrlens, realclens);
 
 		//set up the input files and their format information
 		boolean[] distCacheOnly = getDistCacheOnlyInputs(realIndexes, recordReaderInstruction, instructionsInMapper, aggInstructionsInReducer, otherInstructionsInReducer);
@@ -292,32 +300,20 @@ public class GMR
 		RunningJob runjob=JobClient.runJob(job);
 		
 		Group group=runjob.getCounters().getGroup(MRJobConfiguration.NUM_NONZERO_CELLS);
-		//MatrixCharacteristics[] stats=new MatrixCharacteristics[resultIndexes.length];
-		for(int i=0; i<resultIndexes.length; i++) {
-			// number of non-zeros
+		for(int i=0; i<resultIndexes.length; i++)
 			stats[i].setNonZeros(group.getCounter(Integer.toString(i)));
-		}
 		
+		//cleanups
 		String dir = dimsUnknownFilePrefix + "/" + runjob.getID().toString() + "_dimsFile";
 		stats = MapReduceTool.processDimsFiles(dir, stats);
 		MapReduceTool.deleteFileIfExistOnHDFS(dir);
+		if( resetDistCache )
+			MRBaseForCommonInstructions.resetDistCache();
 		
 		return new JobReturn(stats, outputInfos, runjob.isSuccessful());
 	}
 
-
-	/**
-	 * 
-	 * @param job
-	 * @param instructionsInMapper
-	 * @param inputs
-	 * @param rlens
-	 * @param clens
-	 * @throws DMLRuntimeException 
-	 */
-	private static void setupDistributedCache(JobConf job, String instMap, String instRed, String[] inputs, long[] rlens, long[] clens) 
-		throws DMLRuntimeException 
-	{
+	private static boolean setupDistributedCache(JobConf job, String instMap, String instRed, String[] inputs, long[] rlens, long[] clens) {
 		//concatenate mapper and reducer instructions
 		String allInsts = (instMap!=null && !instMap.trim().isEmpty() ) ? instMap : null;
 		if( allInsts==null )
@@ -330,12 +326,12 @@ public class GMR
 			&& InstructionUtils.isDistributedCacheUsed(allInsts) ) 
 		{
 			//get all indexes of distributed cache inputs
-			ArrayList<Byte> indexList = new ArrayList<Byte>();
+			ArrayList<Byte> indexList = new ArrayList<>();
 			String[] inst = allInsts.split(Instruction.INSTRUCTION_DELIM);
 			for( String tmp : inst ) {
 				if( InstructionUtils.isDistributedCacheUsed(tmp) )
 				{
-					ArrayList<Byte> tmpindexList = new ArrayList<Byte>();
+					ArrayList<Byte> tmpindexList = new ArrayList<>();
 					
 					MRInstruction mrinst = MRInstructionParser.parseSingleInstruction(tmp);
 					if( mrinst instanceof IDistributedCacheConsumer )
@@ -349,7 +345,7 @@ public class GMR
 			}
 
 			//construct index and path strings
-			ArrayList<String> pathList = new ArrayList<String>(); // list of paths to be placed in Distributed cache
+			ArrayList<String> pathList = new ArrayList<>(); // list of paths to be placed in Distributed cache
 			StringBuilder indexString = new StringBuilder(); // input indices to be placed in Distributed Cache (concatenated) 
 			StringBuilder pathString = new StringBuilder();  // input paths to be placed in Distributed Cache (concatenated) 
 			for( byte index : indexList )
@@ -368,26 +364,27 @@ public class GMR
 			MRJobConfiguration.setupDistCacheInputs(job, indexString.toString(), pathString.toString(), pathList);
 			
 			//clean in-memory cache (prevent job interference in local mode)
-			if( InfrastructureAnalyzer.isLocalMode(job) )
+			if( InfrastructureAnalyzer.isLocalMode(job) ) {
 				MRBaseForCommonInstructions.resetDistCache();
+				return true;
+			}
 		}
+		
+		return false;
 	}
 
 	/**
 	 * Determine which indices are only used as inputs through distributed cache and hence would
 	 * be redundant job inputs.
 	 * 
-	 * @param realIndexes
-	 * @param inst1
-	 * @param inst2
-	 * @param inst3
-	 * @param inst4
-	 * @return
-	 * @throws DMLRuntimeException 
+	 * @param realIndexes array of byte indexes
+	 * @param inst1 instruction 1
+	 * @param inst2 instruction 2
+	 * @param inst3 instruction 3
+	 * @param inst4 instruction 4
+	 * @return array of byte indexes
 	 */
-	private static boolean[] getDistCacheOnlyInputs(byte[] realIndexes, String inst1, String inst2, String inst3, String inst4) 
-		throws DMLRuntimeException
-	{
+	private static boolean[] getDistCacheOnlyInputs(byte[] realIndexes, String inst1, String inst2, String inst3, String inst4) {
 		boolean[] ret = new boolean[realIndexes.length];
 		String[] inst = new String[]{inst1, inst2, inst3, inst4};
 		

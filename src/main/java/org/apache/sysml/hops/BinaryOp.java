@@ -19,35 +19,36 @@
 
 package org.apache.sysml.hops;
 
+import org.apache.sysml.api.DMLScript;
 import org.apache.sysml.conf.ConfigurationManager;
 import org.apache.sysml.hops.rewrite.HopRewriteUtils;
 import org.apache.sysml.lops.Aggregate;
+import org.apache.sysml.lops.Append;
+import org.apache.sysml.lops.AppendG;
 import org.apache.sysml.lops.AppendGAlignedSP;
 import org.apache.sysml.lops.AppendM;
-import org.apache.sysml.lops.AppendCP;
-import org.apache.sysml.lops.AppendG;
 import org.apache.sysml.lops.AppendR;
 import org.apache.sysml.lops.Binary;
-import org.apache.sysml.lops.BinaryScalar;
 import org.apache.sysml.lops.BinaryM;
+import org.apache.sysml.lops.BinaryScalar;
 import org.apache.sysml.lops.BinaryUAggChain;
 import org.apache.sysml.lops.CentralMoment;
 import org.apache.sysml.lops.CoVariance;
 import org.apache.sysml.lops.CombineBinary;
+import org.apache.sysml.lops.CombineBinary.OperationTypes;
 import org.apache.sysml.lops.CombineUnary;
+import org.apache.sysml.lops.ConvolutionTransform;
 import org.apache.sysml.lops.Data;
 import org.apache.sysml.lops.DataPartition;
 import org.apache.sysml.lops.Group;
 import org.apache.sysml.lops.Lop;
-import org.apache.sysml.lops.LopsException;
+import org.apache.sysml.lops.LopProperties.ExecType;
 import org.apache.sysml.lops.PartialAggregate;
 import org.apache.sysml.lops.PickByCount;
 import org.apache.sysml.lops.RepMat;
 import org.apache.sysml.lops.SortKeys;
 import org.apache.sysml.lops.Unary;
 import org.apache.sysml.lops.UnaryCP;
-import org.apache.sysml.lops.CombineBinary.OperationTypes;
-import org.apache.sysml.lops.LopProperties.ExecType;
 import org.apache.sysml.parser.Expression.DataType;
 import org.apache.sysml.parser.Expression.ValueType;
 import org.apache.sysml.runtime.controlprogram.ParForProgramBlock.PDataPartitionFormat;
@@ -72,16 +73,18 @@ public class BinaryOp extends Hop
 	private boolean outer = false;
 	
 	public static AppendMethod FORCED_APPEND_METHOD = null;
+	
+	
 	public enum AppendMethod { 
-		CP_APPEND, //in-memory general case append
+		CP_APPEND, //in-memory general case append (implicitly selected for CP)
 		MR_MAPPEND, //map-only append (rhs must be vector and fit in mapper mem)
 		MR_RAPPEND, //reduce-only append (output must have at most one column block)
 		MR_GAPPEND, //map-reduce general case append (map-extend, aggregate)
 		SP_GAlignedAppend // special case for general case in Spark where left.getCols() % left.getColsPerBlock() == 0
-	};
+	}
 	
-	private enum MMBinaryMethod{
-		CP_BINARY,
+	private enum MMBinaryMethod {
+		CP_BINARY, //(implicitly selected for CP) 
 		MR_BINARY_R, //both mm, mv 
 		MR_BINARY_M, //only mv (mr/spark)
 		MR_BINARY_OUTER_M,
@@ -107,6 +110,11 @@ public class BinaryOp extends Hop
 		refreshSizeInformation();
 	}
 
+	@Override
+	public void checkArity() {
+		HopsException.check(_input.size() == 2, this, "should have arity 2 but has arity %d", _input.size());
+	}
+
 	public OpOp2 getOp() {
 		return op;
 	}
@@ -124,9 +132,58 @@ public class BinaryOp extends Hop
 	}
 	
 	@Override
+	public boolean isGPUEnabled() {
+		if(!DMLScript.USE_ACCELERATOR)
+			return false;
+		
+		switch(op) 
+		{
+			case IQM:
+			case MOMENT:
+			case COV:
+			case QUANTILE:
+			case INTERQUANTILE:
+			case MEDIAN:
+				return false;
+			case CBIND: 
+			case RBIND: {
+				DataType dt1 = getInput().get(0).getDataType();
+				return dt1 == DataType.MATRIX; // only matrix cbind, rbind supported on GPU
+			}
+			default: {
+				DataType dt1 = getInput().get(0).getDataType();
+				DataType dt2 = getInput().get(1).getDataType();
+				
+				boolean isMatrixScalar = (dt1 == DataType.MATRIX && dt2 == DataType.SCALAR) || (dt1 == DataType.SCALAR && dt2 == DataType.MATRIX);
+				boolean isMatrixMatrix = (dt1 == DataType.MATRIX && dt2 == DataType.MATRIX);
+				
+				OpOp2 [] supportedOps = { OpOp2.MULT, OpOp2.PLUS, OpOp2.MINUS, OpOp2.DIV, OpOp2.POW, OpOp2.MINUS1_MULT, 
+						OpOp2.MODULUS, OpOp2.INTDIV, OpOp2.LESS, OpOp2.LESSEQUAL, OpOp2.EQUAL, OpOp2.NOTEQUAL, OpOp2.GREATER, OpOp2.GREATEREQUAL};
+			
+				if(isMatrixScalar && (op == OpOp2.MINUS_NZ || op == OpOp2.MIN || op == OpOp2.MAX)) {
+					// Only supported for matrix scalar:
+					return true;
+				}
+				else if(isMatrixMatrix && op == OpOp2.SOLVE) {
+					// Only supported for matrix matrix:
+					return true;
+				}
+				else if(isMatrixScalar || isMatrixMatrix) {
+					for(OpOp2 supportedOp : supportedOps) {
+						if(op == supportedOp)
+							return true;
+					}
+					return false;
+				}
+				else
+					return false;
+			}
+		}
+	}
+	
+	@Override
 	public Lop constructLops() 
-		throws HopsException, LopsException 
-	{	
+	{
 		//return already created lops
 		if( getLops() != null )
 			return getLops();
@@ -140,11 +197,11 @@ public class BinaryOp extends Hop
 				constructLopsIQM(et);
 				break;
 			}
-			case CENTRALMOMENT: {
+			case MOMENT: {
 				constructLopsCentralMoment(et);
 				break;
 			}	
-			case COVARIANCE: {
+			case COV: {
 				constructLopsCovariance(et);
 				break;
 			}
@@ -163,7 +220,7 @@ public class BinaryOp extends Hop
 				break;
 			}
 			default:
-				constructLopsBinaryDefault();	
+				constructLopsBinaryDefault();
 		}
 
 		//add reblock/checkpoint lops if necessary
@@ -172,7 +229,7 @@ public class BinaryOp extends Hop
 		return getLops();
 	}
 	
-	private void constructLopsIQM(ExecType et) throws HopsException, LopsException {
+	private void constructLopsIQM(ExecType et) {
 		if ( et == ExecType.MR ) {
 			CombineBinary combine = CombineBinary.constructCombineLop(
 					OperationTypes.PreSort, (Lop) getInput().get(0)
@@ -270,7 +327,7 @@ public class BinaryOp extends Hop
 		}
 	}
 	
-	private void constructLopsMedian(ExecType et) throws HopsException, LopsException {
+	private void constructLopsMedian(ExecType et) {
 		if ( et == ExecType.MR ) {
 			CombineBinary combine = CombineBinary
 					.constructCombineLop(
@@ -308,7 +365,7 @@ public class BinaryOp extends Hop
 			pick.getOutputParameters().setDimensions(getDim1(),
 					getDim2(), getRowsInBlock(), getColsInBlock(), getNnz());
 			
-			pick.setAllPositions(this.getBeginLine(), this.getBeginColumn(), this.getEndLine(), this.getEndColumn());
+			pick.setAllPositions(this.getFilename(), this.getBeginLine(), this.getBeginColumn(), this.getEndLine(), this.getEndColumn());
 
 			setLops(pick);
 		}
@@ -334,14 +391,13 @@ public class BinaryOp extends Hop
 			pick.getOutputParameters().setDimensions(getDim1(),
 					getDim2(), getRowsInBlock(), getColsInBlock(), getNnz());
 			
-			pick.setAllPositions(this.getBeginLine(), this.getBeginColumn(), this.getEndLine(), this.getEndColumn());
+			pick.setAllPositions(this.getFilename(), this.getBeginLine(), this.getBeginColumn(), this.getEndLine(), this.getEndColumn());
 
 			setLops(pick);
 		}
 	}
 	
 	private void constructLopsCentralMoment(ExecType et) 
-		throws HopsException, LopsException 
 	{
 		// The output data type is a SCALAR if central moment 
 		// gets computed in CP/SPARK, and it will be MATRIX otherwise.
@@ -368,9 +424,7 @@ public class BinaryOp extends Hop
 		}
 	}
 
-	private void constructLopsCovariance(ExecType et) 
-		throws LopsException, HopsException 
-	{
+	private void constructLopsCovariance(ExecType et) {
 		if ( et == ExecType.MR ) {
 			// combineBinary -> CoVariance -> CastAsScalar
 			CombineBinary combine = CombineBinary.constructCombineLop(
@@ -410,7 +464,7 @@ public class BinaryOp extends Hop
 		}
 	}
 	
-	private void constructLopsQuantile(ExecType et) throws HopsException, LopsException {
+	private void constructLopsQuantile(ExecType et) {
 		// 1st arguments needs to be a 1-dimensional matrix
 		// For QUANTILE: 2nd argument is scalar or 1-dimensional matrix
 		// For INTERQUANTILE: 2nd argument is always a scalar
@@ -455,7 +509,7 @@ public class BinaryOp extends Hop
 			pick.getOutputParameters().setDimensions(getDim1(),
 					getDim2(), getRowsInBlock(), getColsInBlock(), getNnz());
 			
-			pick.setAllPositions(this.getBeginLine(), this.getBeginColumn(), this.getEndLine(), this.getEndColumn());
+			pick.setAllPositions(this.getFilename(), this.getBeginLine(), this.getBeginColumn(), this.getEndLine(), this.getEndColumn());
 
 			setLops(pick);
 		}
@@ -481,7 +535,6 @@ public class BinaryOp extends Hop
 	}
 
 	private void constructLopsAppend(ExecType et) 
-		throws HopsException, LopsException 
 	{
 		DataType dt1 = getInput().get(0).getDataType();
 		DataType dt2 = getInput().get(1).getDataType();
@@ -518,14 +571,14 @@ public class BinaryOp extends Hop
 			else //CP
 			{
 				Lop offset = createOffsetLop( getInput().get(0), cbind ); //offset 1st input
-				append = new AppendCP(getInput().get(0).constructLops(), getInput().get(1).constructLops(), offset, getDataType(), getValueType(), cbind);
+				append = new Append(getInput().get(0).constructLops(), getInput().get(1).constructLops(), offset, getDataType(), getValueType(), cbind, et);
 				append.getOutputParameters().setDimensions(rlen, clen, getRowsInBlock(), getColsInBlock(), getNnz());
 			}
 		}
 		else //SCALAR-STRING and SCALAR-STRING (always CP)
 		{
-			append = new AppendCP(getInput().get(0).constructLops(), getInput().get(1).constructLops(), 
-				     Data.createLiteralLop(ValueType.INT, "-1"), getDataType(), getValueType(), cbind);
+			append = new Append(getInput().get(0).constructLops(), getInput().get(1).constructLops(),
+				     Data.createLiteralLop(ValueType.INT, "-1"), getDataType(), getValueType(), cbind, ExecType.CP);
 			append.getOutputParameters().setDimensions(0,0,-1,-1,-1);
 		}
 		
@@ -534,7 +587,6 @@ public class BinaryOp extends Hop
 	}
 
 	private void constructLopsBinaryDefault() 
-		throws HopsException, LopsException 
 	{
 		/* Default behavior for BinaryOp */
 		// it depends on input data types
@@ -542,12 +594,10 @@ public class BinaryOp extends Hop
 		DataType dt2 = getInput().get(1).getDataType();
 		
 		if (dt1 == dt2 && dt1 == DataType.SCALAR) {
-
 			// Both operands scalar
 			BinaryScalar binScalar1 = new BinaryScalar(getInput().get(0)
-					.constructLops(),
-					getInput().get(1).constructLops(), HopsOpOp2LopsBS
-							.get(op), getDataType(), getValueType());
+				.constructLops(),getInput().get(1).constructLops(),
+				HopsOpOp2LopsBS.get(op), getDataType(), getValueType());
 			binScalar1.getOutputParameters().setDimensions(0, 0, 0, 0, -1);
 			setLineNumbers(binScalar1);
 			setLops(binScalar1);
@@ -568,23 +618,49 @@ public class BinaryOp extends Hop
 				ot = Unary.OperationTypes.MULTIPLY2;
 			else //general case
 				ot = HopsOpOp2LopsU.get(op);
-			
-			
+
 			Unary unary1 = new Unary(getInput().get(0).constructLops(),
-						   getInput().get(1).constructLops(), ot, getDataType(), getValueType(), et);
+				getInput().get(1).constructLops(), ot, getDataType(), getValueType(), et);
 		
 			setOutputDimensions(unary1);
 			setLineNumbers(unary1);
 			setLops(unary1);
-			
 		} 
 		else 
 		{
 			// Both operands are Matrixes
 			ExecType et = optFindExecType();
-			if ( et == ExecType.CP ) 
+			boolean isGPUSoftmax = et == ExecType.GPU && op == Hop.OpOp2.DIV && 
+					getInput().get(0) instanceof UnaryOp && getInput().get(1) instanceof AggUnaryOp && 
+					((UnaryOp)getInput().get(0)).getOp() == OpOp1.EXP && ((AggUnaryOp)getInput().get(1)).getOp() == AggOp.SUM &&
+					((AggUnaryOp)getInput().get(1)).getDirection() == Direction.Row &&
+					getInput().get(0) == getInput().get(1).getInput().get(0);
+			if(isGPUSoftmax) {
+				UnaryCP softmax = new UnaryCP(getInput().get(0).getInput().get(0).constructLops(), UnaryCP.OperationTypes.SOFTMAX, 
+						getDataType(), getValueType(), et);
+				setOutputDimensions(softmax);
+				setLineNumbers(softmax);
+				setLops(softmax);
+			}
+			else if ( et == ExecType.CP || et == ExecType.GPU ) 
 			{
-				Binary binary = new Binary(getInput().get(0).constructLops(), getInput().get(1).constructLops(), HopsOpOp2LopsB.get(op),
+				Lop binary = null;
+				
+				boolean isLeftXGt = (getInput().get(0) instanceof BinaryOp) && ((BinaryOp) getInput().get(0)).getOp() == OpOp2.GREATER;
+				Hop potentialZero = isLeftXGt ? ((BinaryOp) getInput().get(0)).getInput().get(1) : null;
+				
+				boolean isLeftXGt0 = isLeftXGt && potentialZero != null
+						&& potentialZero instanceof LiteralOp && ((LiteralOp) potentialZero).getDoubleValue() == 0;
+						
+				if(op == OpOp2.MULT && isLeftXGt0 && 
+					!getInput().get(0).isVector() && !getInput().get(1).isVector()
+					&& getInput().get(0).dimsKnown() && getInput().get(1).dimsKnown()) {
+					binary = new ConvolutionTransform(getInput().get(0).getInput().get(0).constructLops(), 
+									getInput().get(1).constructLops(),
+									ConvolutionTransform.OperationTypes.RELU_BACKWARD, getDataType(), getValueType(), et, -1);
+				}
+				else
+					binary = new Binary(getInput().get(0).constructLops(), getInput().get(1).constructLops(), HopsOpOp2LopsB.get(op),
 						getDataType(), getValueType(), et);
 				
 				setOutputDimensions(binary);
@@ -636,7 +712,7 @@ public class BinaryOp extends Hop
 						          < OptimizerUtils.getLocalMemBudget()) ? ExecType.CP : ExecType.MR; //operator selection
 						dcInput = new DataPartition(dcInput, DataType.MATRIX, ValueType.DOUBLE, etPart, (right.getDim2()==1)?PDataPartitionFormat.ROW_BLOCK_WISE_N:PDataPartitionFormat.COLUMN_BLOCK_WISE_N);
 						dcInput.getOutputParameters().setDimensions(right.getDim1(), right.getDim2(), right.getRowsInBlock(), right.getColsInBlock(), right.getNnz());
-						dcInput.setAllPositions(right.getBeginLine(), right.getBeginColumn(), right.getEndLine(), right.getEndColumn());
+						dcInput.setAllPositions(right.getFilename(), right.getBeginLine(), right.getBeginColumn(), right.getEndLine(), right.getEndColumn());
 					}					
 					
 					BinaryM binary = new BinaryM(left.constructLops(), dcInput, HopsOpOp2LopsB.get(op),
@@ -728,20 +804,6 @@ public class BinaryOp extends Hop
 		return s;
 	}
 
-	public void printMe() throws HopsException {
-		if (LOG.isDebugEnabled()){
-			if (getVisited() != VisitStatus.DONE) {
-				super.printMe();
-				LOG.debug("  Operation: " + op );
-				for (Hop h : getInput()) {
-					h.printMe();
-				}
-				;
-			}
-			setVisited(VisitStatus.DONE);
-		}
-	}
-
 	@Override
 	protected double computeOutputMemEstimate( long dim1, long dim2, long nnz )
 	{		
@@ -796,10 +858,24 @@ public class BinaryOp extends Hop
 			ret = getInput().get(0).getMemEstimate() * 3; 
 		}
 		else if ( op == OpOp2.SOLVE ) {
-			// x=solve(A,b) relies on QR decomposition of A, which is done using Apache commons-math
-			// matrix of size same as the first input
-			double interOutput = OptimizerUtils.estimateSizeExactSparsity(getInput().get(0).getDim1(), getInput().get(0).getDim2(), 1.0); 
-			return interOutput;
+			if (isGPUEnabled()) {
+				// Solve on the GPU takes an awful lot of intermediate space
+				// First the inputs are converted from row-major to column major
+				// Then a workspace and a temporary output (workSize, tauSize) are needed
+				long m = getInput().get(0).getDim1();
+				long n = getInput().get(0).getDim2();
+				long tauSize = OptimizerUtils.estimateSize(m, 1);
+				long workSize = OptimizerUtils.estimateSize(m, n);
+				long AtmpSize = OptimizerUtils.estimateSize(m, n);
+				long BtmpSize = OptimizerUtils.estimateSize(n, 1);
+				return (tauSize + workSize + AtmpSize + BtmpSize);
+			} else {
+				// x=solve(A,b) relies on QR decomposition of A, which is done using Apache commons-math
+				// matrix of size same as the first input
+				double interOutput = OptimizerUtils
+						.estimateSizeExactSparsity(getInput().get(0).getDim1(), getInput().get(0).getDim2(), 1.0);
+				return interOutput;
+			}
 
 		}
 
@@ -827,10 +903,10 @@ public class BinaryOp extends Hop
 			if( mc[0].nnzKnown() && mc[1].nnzKnown() )
 				lnnz = mc[0].getNonZeros() + mc[1].getNonZeros();
 			
-			if( ldim1 > 0 || ldim2 > 0 || lnnz >= 0 )
+			if( ldim1 >= 0 || ldim2 >= 0 || lnnz >= 0 )
 				return new long[]{ldim1, ldim2, lnnz};
 		}
-		else if( op== OpOp2.CBIND ) {
+		else if( op == OpOp2.RBIND ) {
 			long ldim1 = -1, ldim2 = -1, lnnz = -1;
 			
 			if( mc[0].colsKnown() || mc[1].colsKnown() )
@@ -840,12 +916,12 @@ public class BinaryOp extends Hop
 			if( mc[0].nnzKnown() && mc[1].nnzKnown() )
 				lnnz = mc[0].getNonZeros() + mc[1].getNonZeros();
 			
-			if( ldim1 > 0 || ldim2 > 0 || lnnz >= 0 )
+			if( ldim1 >= 0 || ldim2 >= 0 || lnnz >= 0 )
 				return new long[]{ldim1, ldim2, lnnz};
 		}
 		else if ( op == OpOp2.SOLVE ) {
 			// Output is a (likely to be dense) vector of size number of columns in the first input
-			if ( mc[0].getCols() > 0 ) {
+			if ( mc[0].getCols() >= 0 ) {
 				ret = new long[]{ mc[0].getCols(), 1, mc[0].getCols()};
 			}
 		}
@@ -877,20 +953,20 @@ public class BinaryOp extends Hop
 				}
 				else //GENERAL CASE
 				{
-					ldim1 = (mc[0].getRows()>0) ? mc[0].getRows() : 
+					ldim1 = (mc[0].rowsKnown()) ? mc[0].getRows() : 
 					        (mc[1].getRows()>1) ? mc[1].getRows() : -1;
-					ldim2 = (mc[0].getCols()>0) ? mc[0].getCols() : 
+					ldim2 = (mc[0].colsKnown()) ? mc[0].getCols() : 
 						    (mc[1].getCols()>1) ? mc[1].getCols() : -1;
 				}
 				sp1 = (mc[0].getNonZeros()>0)?OptimizerUtils.getSparsity(ldim1, ldim2, mc[0].getNonZeros()):1.0;
 				sp2 = (mc[1].getNonZeros()>0)?OptimizerUtils.getSparsity(ldim1, ldim2, mc[1].getNonZeros()):1.0;
 			}
 			
-			if( ldim1>0 && ldim2>0 )
+			if( ldim1>=0 && ldim2>=0 )
 			{
 				if( OptimizerUtils.isBinaryOpConditionalSparseSafe(op) && input2 instanceof LiteralOp ) {
 					long lnnz = (long) (ldim1*ldim2*OptimizerUtils.getBinaryOpSparsityConditionalSparseSafe(sp1, op,(LiteralOp)input2));
-					ret = new long[]{ldim1, ldim2, lnnz};	
+					ret = new long[]{ldim1, ldim2, lnnz};
 				}
 				else
 				{
@@ -912,7 +988,7 @@ public class BinaryOp extends Hop
 	}
 	
 	@Override
-	protected ExecType optFindExecType() throws HopsException {
+	protected ExecType optFindExecType() {
 		
 		checkAndSetForcedPlatform();
 		
@@ -982,13 +1058,14 @@ public class BinaryOp extends Hop
 		}
 
 		//mark for recompile (forever)
-		if( ConfigurationManager.isDynamicRecompilation() && !dimsKnown(true) && _etype==REMOTE ) {
-			setRequiresRecompile();
-		}
+		setRequiresRecompileIfNecessary();
 		
 		//ensure cp exec type for single-node operations
 		if ( op == OpOp2.SOLVE ) {
-			_etype = ExecType.CP;
+			if (isGPUEnabled())
+				_etype = ExecType.GPU;
+			else
+				_etype = ExecType.CP;
 		}
 		
 		return _etype;
@@ -1004,20 +1081,17 @@ public class BinaryOp extends Hop
 	 * @param cbind true if cbind
 	 * @param current current high-level operator
 	 * @return low-level operator
-	 * @throws HopsException if HopsException occurs
-	 * @throws LopsException if LopsException occurs
 	 */
-	public static Lop constructMRAppendLop( Hop left, Hop right, DataType dt, ValueType vt, boolean cbind, Hop current ) 
-		throws HopsException, LopsException
+	public static Lop constructMRAppendLop( Hop left, Hop right, DataType dt, ValueType vt, boolean cbind, Hop current )
 	{
 		Lop ret = null;
 		
 		long m1_dim1 = left.getDim1();
-		long m1_dim2 = left.getDim2();		
+		long m1_dim2 = left.getDim2();
 		long m2_dim1 = right.getDim1();
 		long m2_dim2 = right.getDim2();
-		long m3_dim1 = cbind ? m1_dim1 : ((m1_dim1>0 && m2_dim1>0) ? (m1_dim1 + m2_dim1) : -1); //output rows
-		long m3_dim2 = cbind ? ((m1_dim2>0 && m2_dim2>0) ? (m1_dim2 + m2_dim2) : -1): m1_dim2; //output cols
+		long m3_dim1 = cbind ? m1_dim1 : ((m1_dim1>=0 && m2_dim1>=0) ? (m1_dim1 + m2_dim1) : -1); //output rows
+		long m3_dim2 = cbind ? ((m1_dim2>=0 && m2_dim2>=0) ? (m1_dim2 + m2_dim2) : -1): m1_dim2; //output cols
 		long m3_nnz = (left.getNnz()>0 && right.getNnz()>0) ? (left.getNnz() + right.getNnz()) : -1; //output nnz
 		long brlen = left.getRowsInBlock();
 		long bclen = left.getColsInBlock();
@@ -1038,11 +1112,11 @@ public class BinaryOp extends Hop
 					          < OptimizerUtils.getLocalMemBudget()) ? ExecType.CP : ExecType.MR; //operator selection
 					dcInput = new DataPartition(dcInput, DataType.MATRIX, ValueType.DOUBLE, etPart, PDataPartitionFormat.ROW_BLOCK_WISE_N);
 					dcInput.getOutputParameters().setDimensions(right.getDim1(), right.getDim2(), right.getRowsInBlock(), right.getColsInBlock(), right.getNnz());
-					dcInput.setAllPositions(right.getBeginLine(), right.getBeginColumn(), right.getEndLine(), right.getEndColumn());
+					dcInput.setAllPositions(right.getFilename(), right.getBeginLine(), right.getBeginColumn(), right.getEndLine(), right.getEndColumn());
 				}					
 				
 				AppendM appM = new AppendM(left.constructLops(), dcInput, offset, dt, vt, cbind, needPart, ExecType.MR);
-				appM.setAllPositions(current.getBeginLine(), current.getBeginColumn(), current.getEndLine(), current.getEndColumn());
+				appM.setAllPositions(current.getFilename(), current.getBeginLine(), current.getBeginColumn(), current.getEndLine(), current.getEndColumn());
 				appM.getOutputParameters().setDimensions(m3_dim1, m3_dim2, brlen, bclen, m3_nnz);
 				ret = appM;
 				break;
@@ -1052,15 +1126,15 @@ public class BinaryOp extends Hop
 				//group
 				Group group1 = new Group(left.constructLops(), Group.OperationTypes.Sort, DataType.MATRIX, vt);
 				group1.getOutputParameters().setDimensions(m1_dim1, m1_dim2, brlen, bclen, left.getNnz());
-				group1.setAllPositions(left.getBeginLine(), left.getBeginColumn(), left.getEndLine(), left.getEndColumn());
+				group1.setAllPositions(left.getFilename(), left.getBeginLine(), left.getBeginColumn(), left.getEndLine(), left.getEndColumn());
 				
 				Group group2 = new Group(right.constructLops(), Group.OperationTypes.Sort, DataType.MATRIX, vt);
 				group1.getOutputParameters().setDimensions(m2_dim1, m2_dim2, brlen, bclen, right.getNnz());
-				group1.setAllPositions(right.getBeginLine(), right.getBeginColumn(), right.getEndLine(), right.getEndColumn());
+				group1.setAllPositions(right.getFilename(), right.getBeginLine(), right.getBeginColumn(), right.getEndLine(), right.getEndColumn());
 				
 				AppendR appR = new AppendR(group1, group2, dt, vt, cbind, ExecType.MR);
 				appR.getOutputParameters().setDimensions(m3_dim1, m3_dim2, brlen, bclen, m3_nnz);
-				appR.setAllPositions(current.getBeginLine(), current.getBeginColumn(), current.getEndLine(), current.getEndColumn());
+				appR.setAllPositions(current.getFilename(), current.getBeginLine(), current.getBeginColumn(), current.getEndLine(), current.getEndColumn());
 				
 				ret = appR;
 				break;
@@ -1072,17 +1146,17 @@ public class BinaryOp extends Hop
 				
 				AppendG appG = new AppendG(left.constructLops(), right.constructLops(),	offset, offset2, dt, vt, cbind, ExecType.MR);
 				appG.getOutputParameters().setDimensions(m3_dim1, m3_dim2, brlen, bclen, m3_nnz);
-				appG.setAllPositions(current.getBeginLine(), current.getBeginColumn(), current.getEndLine(), current.getEndColumn());
+				appG.setAllPositions(current.getFilename(), current.getBeginLine(), current.getBeginColumn(), current.getEndLine(), current.getEndColumn());
 				
 				//group
 				Group group1 = new Group(appG, Group.OperationTypes.Sort, DataType.MATRIX, vt);
 				group1.getOutputParameters().setDimensions(m3_dim1, m3_dim2, brlen, bclen, m3_nnz);
-				group1.setAllPositions(current.getBeginLine(), current.getBeginColumn(), current.getEndLine(), current.getEndColumn());
+				group1.setAllPositions(current.getFilename(), current.getBeginLine(), current.getBeginColumn(), current.getEndLine(), current.getEndColumn());
 				
 				//aggregate
 				Aggregate agg1 = new Aggregate(group1, Aggregate.OperationTypes.Sum, DataType.MATRIX, vt, ExecType.MR);
 				agg1.getOutputParameters().setDimensions(m3_dim1, m3_dim2, brlen, bclen, m3_nnz);
-				agg1.setAllPositions(current.getBeginLine(), current.getBeginColumn(), current.getEndLine(), current.getEndColumn());
+				agg1.setAllPositions(current.getFilename(), current.getBeginLine(), current.getBeginColumn(), current.getEndLine(), current.getEndColumn());
 				ret = agg1;
 				break;
 			}	
@@ -1094,7 +1168,6 @@ public class BinaryOp extends Hop
 	}
 
 	public static Lop constructSPAppendLop( Hop left, Hop right, DataType dt, ValueType vt, boolean cbind, Hop current ) 
-		throws HopsException, LopsException
 	{
 		Lop ret = null;
 		
@@ -1133,14 +1206,14 @@ public class BinaryOp extends Hop
 				throw new HopsException("Invalid SP append method: "+am);
 		}
 		
-		ret.setAllPositions(current.getBeginLine(), current.getBeginColumn(), current.getEndLine(), current.getEndColumn());
+		ret.setAllPositions(current.getFilename(), current.getBeginLine(), current.getBeginColumn(), current.getEndLine(), current.getEndColumn());
 		
 		
 		return ret;
 	}
 	
 	/**
-	 * Special case tertiary append. Here, we also compile a MR_RAPPEND or MR_GAPPEND
+	 * Special case ternary append. Here, we also compile a MR_RAPPEND or MR_GAPPEND
 	 * 
 	 * @param left ?
 	 * @param right1 ?
@@ -1150,22 +1223,18 @@ public class BinaryOp extends Hop
 	 * @param cbind ?
 	 * @param current ?
 	 * @return low-level operator
-	 * @throws HopsException if HopsException occurs
-	 * @throws LopsException if LopsException occurs
 	 */
-	public static Lop constructAppendLopChain( Hop left, Hop right1, Hop right2, DataType dt, ValueType vt, boolean cbind, Hop current ) 
-		throws HopsException, LopsException
-	{
+	public static Lop constructAppendLopChain( Hop left, Hop right1, Hop right2, DataType dt, ValueType vt, boolean cbind, Hop current ) {
 		long m1_dim1 = left.getDim1();
-		long m1_dim2 = left.getDim2();		
+		long m1_dim2 = left.getDim2();
 		long m2_dim1 = right1.getDim1();
 		long m2_dim2 = right1.getDim2();
 		long m3_dim1 = right2.getDim1();
-		long m3_dim2 = right2.getDim2();		
-		long m41_dim2 = (m1_dim2>0 && m2_dim2>0) ? (m1_dim2 + m2_dim2) : -1; //output cols
+		long m3_dim2 = right2.getDim2();
+		long m41_dim2 = (m1_dim2>=0 && m2_dim2>=0) ? (m1_dim2 + m2_dim2) : -1; //output cols
 		long m41_nnz = (left.getNnz()>0 && right1.getNnz()>0) ? 
 				      (left.getNnz() + right1.getNnz()) : -1; //output nnz
-		long m42_dim2 = (m1_dim2>0 && m2_dim2>0 && m3_dim2>0) ? (m1_dim2 + m2_dim2 + m3_dim2) : -1; //output cols
+		long m42_dim2 = (m1_dim2>=0 && m2_dim2>=0 && m3_dim2>=0) ? (m1_dim2 + m2_dim2 + m3_dim2) : -1; //output cols
 		long m42_nnz = (left.getNnz()>0 && right1.getNnz()>0 && right2.getNnz()>0) ? 
 				      (left.getNnz() + right1.getNnz()+ right2.getNnz()) : -1; //output nnz
 		long brlen = left.getRowsInBlock();
@@ -1180,23 +1249,23 @@ public class BinaryOp extends Hop
 		
 		Group group1 = new Group(left.constructLops(), Group.OperationTypes.Sort, DataType.MATRIX, vt);
 		group1.getOutputParameters().setDimensions(m1_dim1, m1_dim2, brlen, bclen, left.getNnz());
-		group1.setAllPositions(left.getBeginLine(), left.getBeginColumn(), left.getEndLine(), left.getEndColumn());
+		group1.setAllPositions(left.getFilename(), left.getBeginLine(), left.getBeginColumn(), left.getEndLine(), left.getEndColumn());
 		
 		Group group2 = new Group(right1.constructLops(), Group.OperationTypes.Sort, DataType.MATRIX, vt);
 		group1.getOutputParameters().setDimensions(m2_dim1, m2_dim2, brlen, bclen, right1.getNnz());
-		group1.setAllPositions(right1.getBeginLine(), right1.getBeginColumn(), right1.getEndLine(), right1.getEndColumn());
+		group1.setAllPositions(right1.getFilename(), right1.getBeginLine(), right1.getBeginColumn(), right1.getEndLine(), right1.getEndColumn());
 		
 		Group group3 = new Group(right2.constructLops(), Group.OperationTypes.Sort, DataType.MATRIX, vt);
 		group1.getOutputParameters().setDimensions(m3_dim1, m3_dim2, brlen, bclen, right2.getNnz());
-		group1.setAllPositions(right2.getBeginLine(), right2.getBeginColumn(), right2.getEndLine(), right2.getEndColumn());
+		group1.setAllPositions(right2.getFilename(), right2.getBeginLine(), right2.getBeginColumn(), right2.getEndLine(), right2.getEndColumn());
 		
 		AppendR appR1 = new AppendR(group1, group2, dt, vt, cbind, ExecType.MR);
 		appR1.getOutputParameters().setDimensions(m1_dim1, m41_dim2, brlen, bclen, m41_nnz);
-		appR1.setAllPositions(current.getBeginLine(), current.getBeginColumn(), current.getEndLine(), current.getEndColumn());
+		appR1.setAllPositions(current.getFilename(), current.getBeginLine(), current.getBeginColumn(), current.getEndLine(), current.getEndColumn());
 		
 		AppendR appR2 = new AppendR(appR1, group3, dt, vt, cbind, ExecType.MR);
 		appR1.getOutputParameters().setDimensions(m1_dim1, m42_dim2, brlen, bclen, m42_nnz);
-		appR1.setAllPositions(current.getBeginLine(), current.getBeginColumn(), current.getEndLine(), current.getEndColumn());
+		appR1.setAllPositions(current.getFilename(), current.getBeginLine(), current.getBeginColumn(), current.getEndLine(), current.getEndColumn());
 	
 		return appR2;
 	}
@@ -1300,8 +1369,8 @@ public class BinaryOp extends Hop
 
 	private static boolean requiresPartitioning( Hop rightInput )
 	{
-		return (   rightInput.dimsKnown() //known input size 
-                && rightInput.getDim1()*rightInput.getDim2() > DistributedCacheInput.PARTITION_SIZE);
+		return ( rightInput.dimsKnown() //known input size 
+			&& rightInput.getDim1()*rightInput.getDim2() > DistributedCacheInput.PARTITION_SIZE);
 	}
 	
 	public static boolean requiresReplication( Hop left, Hop right )
@@ -1311,7 +1380,7 @@ public class BinaryOp extends Hop
 				||(left.getDim1() > 1 && right.getDim1()==1 && left.getDim1()>=left.getRowsInBlock() )); //row MV and more than 1 block
 	}
 
-	private MMBinaryMethod optFindMMBinaryMethodSpark(Hop left, Hop right) {
+	private static MMBinaryMethod optFindMMBinaryMethodSpark(Hop left, Hop right) {
 		long m1_dim1 = left.getDim1();
 		long m1_dim2 = left.getDim2();
 		long m2_dim1 =  right.getDim1();
@@ -1320,9 +1389,10 @@ public class BinaryOp extends Hop
 		long m1_cpb = left.getColsInBlock();
 		
 		//MR_BINARY_UAGG_CHAIN only applied if result is column/row vector of MV binary operation.
-		if( right instanceof AggUnaryOp && right.getInput().get(0) == left  //e.g., P / rowSums(P)
+		if( OptimizerUtils.ALLOW_OPERATOR_FUSION
+			&& right instanceof AggUnaryOp && right.getInput().get(0) == left  //e.g., P / rowSums(P)
 			&& ((((AggUnaryOp) right).getDirection() == Direction.Row && m1_dim2 > 1 && m1_dim2 <= m1_cpb ) //single column block
-		    ||  (((AggUnaryOp) right).getDirection() == Direction.Col && m1_dim1 > 1 && m1_dim1 <= m1_rpb ))) //single row block
+			|| (((AggUnaryOp) right).getDirection() == Direction.Col && m1_dim1 > 1 && m1_dim1 <= m1_rpb ))) //single row block
 		{
 			return MMBinaryMethod.MR_BINARY_UAGG_CHAIN;
 		}
@@ -1357,9 +1427,10 @@ public class BinaryOp extends Hop
 		}
 		
 		//MR_BINARY_UAGG_CHAIN only applied if result is column/row vector of MV binary operation.
-		if( right instanceof AggUnaryOp && right.getInput().get(0) == left  //e.g., P / rowSums(P)
+		if( OptimizerUtils.ALLOW_OPERATOR_FUSION
+			&& right instanceof AggUnaryOp && right.getInput().get(0) == left  //e.g., P / rowSums(P)
 			&& ((((AggUnaryOp) right).getDirection() == Direction.Row && m1_dim2 > 1 && m1_dim2 <= m1_cpb ) //single column block
-		    ||  (((AggUnaryOp) right).getDirection() == Direction.Col && m1_dim1 > 1 && m1_dim1 <= m1_rpb ))) //single row block
+			|| (((AggUnaryOp) right).getDirection() == Direction.Col && m1_dim1 > 1 && m1_dim1 <= m1_rpb ))) //single row block
 		{
 			return MMBinaryMethod.MR_BINARY_UAGG_CHAIN;
 		}
@@ -1399,10 +1470,10 @@ public class BinaryOp extends Hop
 			//TODO quantile
 			if( op == OpOp2.CBIND )
 			{
-				setDim1( (input1.getDim1()>0) ? input1.getDim1() : input2.getDim1() );
+				setDim1( input1.rowsKnown() ? input1.getDim1() : input2.getDim1() );
 					
 				//ensure both columns are known, otherwise dangerous underestimation due to +(-1)
-				if( input1.getDim2()>0 && input2.getDim2()>0 )
+				if( input1.colsKnown() && input2.colsKnown() )
 					setDim2( input1.getDim2() + input2.getDim2() );
 				else
 					setDim2(-1);
@@ -1414,10 +1485,10 @@ public class BinaryOp extends Hop
 			}
 			else if( op == OpOp2.RBIND )
 			{
-				setDim2( (input1.getDim2()>0) ? input1.getDim2() : input2.getDim2() );
+				setDim2( colsKnown() ? input1.getDim2() : input2.getDim2() );
 					
 				//ensure both rows are known, otherwise dangerous underestimation due to +(-1)
-				if( input1.getDim1()>0 && input2.getDim1()>0 )
+				if( input1.rowsKnown() && input2.rowsKnown() )
 					setDim1( input1.getDim1() + input2.getDim1() );
 				else
 					setDim1(-1);
@@ -1460,10 +1531,10 @@ public class BinaryOp extends Hop
 					}
 					else //GENERAL CASE
 					{
-						ldim1 = (input1.getDim1()>0) ? input1.getDim1()
-								: ((input2.getDim1()>1)?input2.getDim1():-1);
-						ldim2 = (input1.getDim2()>0) ? input1.getDim2() 
-								: ((input2.getDim2()>1)?input2.getDim2():-1);
+						ldim1 = (input1.rowsKnown()) ? input1.getDim1()
+							: ((input2.getDim1()>1)?input2.getDim1():-1);
+						ldim2 = (input1.colsKnown()) ? input1.getDim2() 
+							: ((input2.getDim2()>1)?input2.getDim2():-1);
 						lnnz1 = input1.getNnz();
 					}
 				}
@@ -1510,17 +1581,18 @@ public class BinaryOp extends Hop
 				&& getInput().get(1) == that2.getInput().get(1));
 	}
 	
-	public boolean supportsMatrixScalarOperations()
-	{
-		return (   op==OpOp2.PLUS    ||op==OpOp2.MINUS 
-		         ||op==OpOp2.MULT    ||op==OpOp2.DIV
-		         ||op==OpOp2.MODULUS ||op==OpOp2.INTDIV
-		         ||op==OpOp2.LESS    ||op==OpOp2.LESSEQUAL
-		         ||op==OpOp2.GREATER ||op==OpOp2.GREATEREQUAL
-		         ||op==OpOp2.EQUAL   ||op==OpOp2.NOTEQUAL
-		         ||op==OpOp2.MIN     ||op==OpOp2.MAX
-		         ||op==OpOp2.AND     ||op==OpOp2.OR
-		         ||op==OpOp2.LOG     ||op==OpOp2.POW );
+	public boolean supportsMatrixScalarOperations() {
+		return ( op==OpOp2.PLUS ||op==OpOp2.MINUS
+				||op==OpOp2.MULT ||op==OpOp2.DIV
+				||op==OpOp2.MODULUS ||op==OpOp2.INTDIV
+				||op==OpOp2.LESS ||op==OpOp2.LESSEQUAL
+				||op==OpOp2.GREATER ||op==OpOp2.GREATEREQUAL
+				||op==OpOp2.EQUAL ||op==OpOp2.NOTEQUAL
+				||op==OpOp2.MIN ||op==OpOp2.MAX
+				||op==OpOp2.LOG ||op==OpOp2.POW
+				||op==OpOp2.AND ||op==OpOp2.OR ||op==OpOp2.XOR
+				||op==OpOp2.BITWAND ||op==OpOp2.BITWOR ||op==OpOp2.BITWXOR
+				||op==OpOp2.BITWSHIFTL ||op==OpOp2.BITWSHIFTR);
 	}
 	
 	public boolean isPPredOperation()

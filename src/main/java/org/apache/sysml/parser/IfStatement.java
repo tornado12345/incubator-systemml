@@ -25,20 +25,20 @@ import java.util.ArrayList;
 
 public class IfStatement extends Statement
 {
-	
 	private ConditionalPredicate _predicate;
 	private ArrayList<StatementBlock> _ifBody;
 	private ArrayList<StatementBlock> _elseBody;
 	
-	public Statement rewriteStatement(String prefix) throws LanguageException{
+	@Override
+	public Statement rewriteStatement(String prefix) {
 		LOG.error(this.printErrorLocation() + "should not call rewriteStatement for IfStatement");
 		throw new LanguageException(this.printErrorLocation() + "should not call rewriteStatement for IfStatement");
 	}
 	
 	public IfStatement(){
 		 _predicate = null;
-		 _ifBody = new ArrayList<StatementBlock>();
-		 _elseBody = new ArrayList<StatementBlock>();
+		 _ifBody = new ArrayList<>();
+		 _elseBody = new ArrayList<>();
 	}
 	
 	public void setConditionalPredicate(ConditionalPredicate pred){
@@ -80,16 +80,14 @@ public class IfStatement extends Statement
 		return true;
 	}
 	
-	public void initializeforwardLV(VariableSet activeIn) throws LanguageException{
-		LOG.error(this.printErrorLocation() + "should never call initializeforwardLV for IfStatement");
+	@Override
+	public void initializeforwardLV(VariableSet activeIn) {
 		throw new LanguageException(this.printErrorLocation() + "should never call initializeforwardLV for IfStatement");
-		
 	}
 
-	public VariableSet initializebackwardLV(VariableSet lo) throws LanguageException{
-		LOG.error(this.printErrorLocation() + "should never call initializeforwardLV for IfStatement");
+	@Override
+	public VariableSet initializebackwardLV(VariableSet lo) {
 		throw new LanguageException(this.printErrorLocation() + "should never call initializeforwardLV for IfStatement");
-		
 	}
 
 	public void mergeStatementBlocksIfBody(){
@@ -100,32 +98,8 @@ public class IfStatement extends Statement
 		if (!_elseBody.isEmpty())
 			_elseBody = StatementBlock.mergeStatementBlocks(_elseBody);
 	}
-	
-	public VariableSet variablesReadIfBody() {
-		
-		return null;
-		
-	}
-	
-	public VariableSet variablesReadElseBody() {
-		
-		LOG.warn("WARNING: line " + this.getBeginLine() + ", column " + this.getBeginColumn() + " --  should not call variablesReadElseBody from IfStatement ");
-		return null;
-	}
-	
-	public  VariableSet variablesUpdatedIfBody() {
-		
-		LOG.warn("WARNING: line " + this.getBeginLine() + ", column " + this.getBeginColumn() + " --  should not call variablesUpdatedIfBody from IfStatement ");
-		return null;
-	}
-	
-	public  VariableSet variablesUpdatedElseBody() {
-		
-		LOG.warn("WARNING: line " + this.getBeginLine() + ", column " + this.getBeginColumn() + " --  should not call variablesUpdatedElseBody from IfStatement ");
-		return null;
-	}
-	
-	
+
+	@Override
 	public String toString(){
 		StringBuilder sb = new StringBuilder();
 		sb.append("if ( ");
@@ -143,11 +117,6 @@ public class IfStatement extends Statement
 			sb.append("}\n");
 		}
 		return sb.toString();
-	}
-
-	
-	public VariableSet variablesKill() {
-		return new VariableSet();
 	}
 
 	@Override

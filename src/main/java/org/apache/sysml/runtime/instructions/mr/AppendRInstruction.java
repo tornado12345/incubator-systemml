@@ -27,33 +27,25 @@ import org.apache.sysml.runtime.matrix.mapred.CachedValueMap;
 import org.apache.sysml.runtime.matrix.mapred.IndexedMatrixValue;
 import org.apache.sysml.runtime.matrix.operators.Operator;
 
-public class AppendRInstruction extends AppendInstruction 
-{
-	public AppendRInstruction(Operator op, byte in1, byte in2, byte out, boolean cbind, String istr)
-	{
+public class AppendRInstruction extends AppendInstruction {
+	private AppendRInstruction(Operator op, byte in1, byte in2, byte out, boolean cbind, String istr) {
 		super(op, in1, in2, out, cbind, istr);
 	}
 
-	public static AppendRInstruction parseInstruction ( String str ) 
-		throws DMLRuntimeException 
-	{
+	public static AppendRInstruction parseInstruction ( String str ) {
 		String[] parts = InstructionUtils.getInstructionParts ( str );
 		InstructionUtils.checkNumFields(parts, 4);
-		
 		byte in1 = Byte.parseByte(parts[1]);
 		byte in2 = Byte.parseByte(parts[2]);
 		byte out = Byte.parseByte(parts[3]);
 		boolean cbind = Boolean.parseBoolean(parts[4]);
-			
 		return new AppendRInstruction(null, in1, in2, out, cbind, str);
 	}
-	
 	
 	@Override
 	public void processInstruction(Class<? extends MatrixValue> valueClass,
 			CachedValueMap cachedValues, IndexedMatrixValue tempValue, IndexedMatrixValue zeroInput, int brlen, int bclen)
-			throws DMLRuntimeException 
-	{		
+	{
 		//get both inputs
 		IndexedMatrixValue left = cachedValues.getFirst(input1);
 		IndexedMatrixValue right = cachedValues.getFirst(input2);
@@ -66,7 +58,7 @@ public class AppendRInstruction extends AppendInstruction
 		MatrixBlock mbLeft = (MatrixBlock)left.getValue();
 		MatrixBlock mbRight = (MatrixBlock)right.getValue();
 		
-		MatrixBlock ret = mbLeft.appendOperations(mbRight, new MatrixBlock(), _cbind);
+		MatrixBlock ret = mbLeft.append(mbRight, new MatrixBlock(), _cbind);
 		
 		//put result into cache
 		cachedValues.add(output, new IndexedMatrixValue(left.getIndexes(), ret));

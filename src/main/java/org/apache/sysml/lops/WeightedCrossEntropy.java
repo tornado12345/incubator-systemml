@@ -42,10 +42,8 @@ public class WeightedCrossEntropy extends Lop
 	
 	private WCeMMType _wcemmType = null;
 	
-	public WeightedCrossEntropy(Lop input1, Lop input2, Lop input3, Lop input4, DataType dt, ValueType vt, WCeMMType wt, ExecType et) 
-		throws LopsException 
-	{
-		super(Lop.Type.WeightedCeMM, dt, vt);		
+	public WeightedCrossEntropy(Lop input1, Lop input2, Lop input3, Lop input4, DataType dt, ValueType vt, WCeMMType wt, ExecType et) {
+		super(Lop.Type.WeightedCeMM, dt, vt);
 		addInput(input1); //X
 		addInput(input2); //U
 		addInput(input3); //V
@@ -83,6 +81,7 @@ public class WeightedCrossEntropy extends Lop
 		}
 	}
 
+	@Override
 	public String toString() {
 		return "Operation = WeightedCrossEntropy";
 	}
@@ -144,21 +143,14 @@ public class WeightedCrossEntropy extends Lop
 	}
 	
 	@Override
-	public boolean usesDistributedCache() 
-	{
-		if( getExecType()==ExecType.MR )
-			return true;
-		else
-			return false;
+	public boolean usesDistributedCache() {
+		return (getExecType()==ExecType.MR);
 	}
 	
 	@Override
-	public int[] distributedCacheInputIndex() 
-	{
-		if( getExecType()==ExecType.MR )
-			return new int[]{2,3};
-		else
-			return new int[]{-1};
+	public int[] distributedCacheInputIndex() {
+		return (getExecType()==ExecType.MR) ?
+			new int[]{2,3} : new int[]{-1};
 	}
 	
 	public void setNumThreads(int k) {

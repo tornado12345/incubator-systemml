@@ -20,11 +20,11 @@
 package org.apache.sysml.runtime.io;
 
 import java.io.IOException;
+import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 
 import org.apache.hadoop.fs.FileSystem;
@@ -40,8 +40,10 @@ import org.apache.hadoop.mapred.TextInputFormat;
 import org.apache.sysml.conf.ConfigurationManager;
 import org.apache.sysml.hops.OptimizerUtils;
 import org.apache.sysml.runtime.DMLRuntimeException;
+import org.apache.sysml.runtime.matrix.data.DenseBlock;
 import org.apache.sysml.runtime.matrix.data.InputInfo;
 import org.apache.sysml.runtime.matrix.data.MatrixBlock;
+import org.apache.sysml.runtime.util.CommonThreadPool;
 import org.apache.sysml.runtime.util.FastStringTokenizer;
 import org.apache.sysml.runtime.util.MapReduceTool;
 
@@ -57,7 +59,7 @@ import org.apache.sysml.runtime.util.MapReduceTool;
  *    the parallel reader does not do the validity check for.
  * 2) In extreme scenarios, the last comment might be in one split, and the following meta data
  *    in the subsequent split. This would create incorrect results or errors. However, this
- *    scenario is extremely unlikely (num threads > num lines if 1 comment line) and hence ignored 
+ *    scenario is extremely unlikely (num threads &gt; num lines if 1 comment line) and hence ignored 
  *    similar to our parallel MR setting (but there we have a 128MB guarantee).     
  * 3) However, we use MIN_FILESIZE_MM (8KB) to give guarantees for the common case of small headers
  *    in order the issue described in (2).
@@ -81,14 +83,16 @@ public class ReaderTextCellParallel extends MatrixReader
 		throws IOException, DMLRuntimeException 
 	{
 		//prepare file access
-		JobConf job = new JobConf(ConfigurationManager.getCachedJobConf());	
-		FileSystem fs = FileSystem.get(job);
+		JobConf job = new JobConf(ConfigurationManager.getCachedJobConf());
 		Path path = new Path( fname );
+		FileSystem fs = IOUtilFunctions.getFileSystem(path, job);
 		
 		//check existence and non-empty file
 		checkValidInputFile(fs, path);
 		
 		//allocate output matrix block
+		if( estnnz < 0 )
+			estnnz = MapReduceTool.estimateNnzBasedOnFileSize(path, rlen, clen, brlen, bclen, 3);
 		MatrixBlock ret = createOutputMatrixBlock(rlen, clen, (int)rlen, (int)clen, estnnz, true, false);
 	
 		//core read 
@@ -96,26 +100,21 @@ public class ReaderTextCellParallel extends MatrixReader
 
 		//finally check if change of sparse/dense block representation required
 		if( !AGGREGATE_BLOCK_NNZ )
-			ret.recomputeNonZeros();			
+			ret.recomputeNonZeros();
 		ret.examSparsity();
-		
+
 		return ret;
 	}
 
-
-	/**
-	 * 
-	 * @param path
-	 * @param job
-	 * @param dest
-	 * @param rlen
-	 * @param clen
-	 * @param brlen
-	 * @param bclen
-	 * @throws IOException
-	 * @throws IllegalAccessException
-	 * @throws InstantiationException
-	 */
+	@Override
+	public MatrixBlock readMatrixFromInputStream(InputStream is, long rlen, long clen, int brlen, int bclen, long estnnz) 
+		throws IOException, DMLRuntimeException 
+	{
+		//not implemented yet, fallback to sequential reader
+		return new ReaderTextCell(_isMMFile ? InputInfo.MatrixMarketInputInfo : InputInfo.TextCellInputInfo)
+			.readMatrixFromInputStream(is, rlen, clen, brlen, bclen, estnnz);
+	}
+	
 	private void readTextCellMatrixFromHDFS( Path path, JobConf job, MatrixBlock dest, long rlen, long clen, int brlen, int bclen, boolean matrixMarket )
 		throws IOException
 	{
@@ -134,9 +133,9 @@ public class ReaderTextCellParallel extends MatrixReader
 		try 
 		{
 			//create read tasks for all splits
-			ExecutorService pool = Executors.newFixedThreadPool(par);
+			ExecutorService pool = CommonThreadPool.get(par);
 			InputSplit[] splits = informat.getSplits(job, par);
-			ArrayList<ReadTask> tasks = new ArrayList<ReadTask>();
+			ArrayList<ReadTask> tasks = new ArrayList<>();
 			for( InputSplit split : splits ){
 				ReadTask t = new ReadTask(split, informat, job, dest, rlen, clen, matrixMarket);
 				tasks.add(t);
@@ -161,11 +160,7 @@ public class ReaderTextCellParallel extends MatrixReader
 			throw new IOException("Threadpool issue, while parallel read.", e);
 		}
 	}
-	
-	/**
-	 * 
-	 * 
-	 */
+
 	public static class ReadTask implements Callable<Long> 
 	{
 		private InputSplit _split = null;
@@ -206,10 +201,9 @@ public class ReaderTextCellParallel extends MatrixReader
 			RecordReader<LongWritable,Text> reader = _informat.getRecordReader(_split, _job, Reporter.NULL);
 			
 			try
-			{			
-				
+			{
 				// Read the header lines, if reading from a matrixMarket file
-				if ( _matrixMarket ) {					
+				if ( _matrixMarket ) {
 					// skip until end-of-comments (%% or %)
 					boolean foundComment = false;
 					while( reader.next(key, value) && value.toString().charAt(0) == '%'  ) {
@@ -222,10 +216,12 @@ public class ReaderTextCellParallel extends MatrixReader
 						st.reset( value.toString() ); //reinit tokenizer
 						row = st.nextInt()-1;
 						col = st.nextInt()-1;
-						double lvalue = st.nextDoubleForParallel();
-						synchronized( _dest ){ //sparse requires lock	
-							_dest.appendValue(row, col, lvalue);
-							lnnz++;
+						if(row != -1 || col != -1) {
+							double lvalue = st.nextDoubleForParallel();
+							synchronized( _dest ){ //sparse requires lock
+								_dest.appendValue(row, col, lvalue);
+								lnnz++;
+							}
 						}
 					}
 				}
@@ -238,6 +234,7 @@ public class ReaderTextCellParallel extends MatrixReader
 						st.reset( value.toString() ); //reinit tokenizer
 						row = st.nextInt() - 1;
 						col = st.nextInt() - 1;
+						if(row == -1 || col == -1) continue;
 						double lvalue = st.nextDoubleForParallel();
 						
 						buff.addCell(row, col, lvalue);
@@ -257,21 +254,23 @@ public class ReaderTextCellParallel extends MatrixReader
 				} 
 				else //DENSE<-value
 				{
+					DenseBlock a = _dest.getDenseBlock();
 					while( reader.next(key, value) ) {
 						st.reset( value.toString() ); //reinit tokenizer
 						row = st.nextInt()-1;
 						col = st.nextInt()-1;
+						if(row == -1 || col == -1) continue;
 						double lvalue = st.nextDoubleForParallel();
-						_dest.setValueDenseUnsafe( row, col, lvalue );
+						a.set( row, col, lvalue );
 						lnnz += (lvalue!=0) ? 1 : 0;
 					}
 				}
 			}
-			catch(Exception ex)	{
+			catch(Exception ex) {
 				//post-mortem error handling and bounds checking
 				if( row < 0 || row + 1 > _rlen || col < 0 || col + 1 > _clen )
 					throw new RuntimeException("Matrix cell ["+(row+1)+","+(col+1)+"] " +
-							  "out of overall matrix range [1:"+_rlen+",1:"+_clen+"]. ", ex);
+						"out of overall matrix range [1:"+_rlen+",1:"+_clen+"]. ", ex);
 				else
 					throw new RuntimeException("Unable to read matrix in text cell format. ", ex);
 			}

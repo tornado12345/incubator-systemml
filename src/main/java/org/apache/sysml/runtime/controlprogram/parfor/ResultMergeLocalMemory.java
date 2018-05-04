@@ -21,13 +21,13 @@ package org.apache.sysml.runtime.controlprogram.parfor;
 
 import java.util.ArrayList;
 
-import org.apache.sysml.parser.Expression.DataType;
 import org.apache.sysml.parser.Expression.ValueType;
 import org.apache.sysml.runtime.DMLRuntimeException;
 import org.apache.sysml.runtime.controlprogram.caching.MatrixObject;
 import org.apache.sysml.runtime.controlprogram.parfor.stat.InfrastructureAnalyzer;
 import org.apache.sysml.runtime.matrix.MatrixCharacteristics;
-import org.apache.sysml.runtime.matrix.MatrixFormatMetaData;
+import org.apache.sysml.runtime.matrix.MetaDataFormat;
+import org.apache.sysml.runtime.matrix.data.DenseBlock;
 import org.apache.sysml.runtime.matrix.data.InputInfo;
 import org.apache.sysml.runtime.matrix.data.MatrixBlock;
 import org.apache.sysml.runtime.matrix.data.OutputInfo;
@@ -41,37 +41,39 @@ import org.apache.sysml.runtime.util.DataConverter;
  * 
  */
 public class ResultMergeLocalMemory extends ResultMerge
-{	
+{
+	private static final long serialVersionUID = -3543612508601511701L;
 	
 	//internal comparison matrix
-	private double[][]        _compare     = null;
+	private DenseBlock _compare = null;
 	
-	public ResultMergeLocalMemory( MatrixObject out, MatrixObject[] in, String outputFilename )
-	{
-		super( out, in, outputFilename );
+	public ResultMergeLocalMemory( MatrixObject out, MatrixObject[] in, String outputFilename, boolean accum ) {
+		super( out, in, outputFilename, accum );
 	}
 	
 	@Override
 	public MatrixObject executeSerialMerge() 
-		throws DMLRuntimeException
 	{
 		MatrixObject moNew = null; //always create new matrix object (required for nested parallelism)
-
-		LOG.trace("ResultMerge (local, in-memory): Execute serial merge for output "+_output.getVarName()+" (fname="+_output.getFileName()+")");
-				
+		
+		if( LOG.isTraceEnabled() )
+			LOG.trace("ResultMerge (local, in-memory): Execute serial merge for output "
+				+_output.hashCode()+" (fname="+_output.getFileName()+")");
+		
 		try
 		{
-			//get matrix blocks through caching 
+			//get old output matrix from cache for compare
 			MatrixBlock outMB = _output.acquireRead();
 			
-			//get old output matrix from cache for compare
-			int estnnz = outMB.getNumRows()*outMB.getNumColumns();
-			MatrixBlock outMBNew = new MatrixBlock(outMB.getNumRows(), outMB.getNumColumns(), 
-					                               outMB.isInSparseFormat(), estnnz);
+			//create output matrices in correct format according to 
+			//the estimated number of non-zeros
+			long estnnz = getOutputNnzEstimate();
+			MatrixBlock outMBNew = new MatrixBlock(outMB.getNumRows(), 
+				outMB.getNumColumns(), estnnz).allocateBlock();
 			boolean appendOnly = outMBNew.isInSparseFormat();
 			
 			//create compare matrix if required (existing data in result)
-			_compare = createCompareMatrix(outMB);
+			_compare = getCompareMatrix(outMB);
 			if( _compare != null )
 				outMBNew.copy(outMB);
 			
@@ -80,12 +82,13 @@ public class ResultMergeLocalMemory extends ResultMerge
 			for( MatrixObject in : _inputs )
 			{
 				//check for empty inputs (no iterations executed)
-				if( in !=null && in != _output ) 
+				if( in != null && in != _output ) 
 				{
-					LOG.trace("ResultMerge (local, in-memory): Merge input "+in.getVarName()+" (fname="+in.getFileName()+")");
+					if( LOG.isTraceEnabled() )
+						LOG.trace("ResultMerge (local, in-memory): Merge input "+in.hashCode()+" (fname="+in.getFileName()+")");
 					
 					//read/pin input_i
-					MatrixBlock inMB = in.acquireRead();	
+					MatrixBlock inMB = in.acquireRead();
 					
 					//core merge 
 					merge( outMBNew, inMB, appendOnly );
@@ -97,7 +100,7 @@ public class ResultMergeLocalMemory extends ResultMerge
 					
 					//determine need for sparse2dense change during merge
 					boolean sparseToDense = appendOnly && !MatrixBlock.evalSparseFormatInMemory(
-							                                 outMBNew.getNumRows(), outMBNew.getNumColumns(), outMBNew.getNonZeros()); 
+						outMBNew.getNumRows(), outMBNew.getNumColumns(), outMBNew.getNonZeros()); 
 					if( sparseToDense ) {
 						outMBNew.sortSparseRows(); //sort sparse due to append-only
 						outMBNew.examSparsity(); //sparse-dense representation change
@@ -107,30 +110,27 @@ public class ResultMergeLocalMemory extends ResultMerge
 			}
 		
 			//sort sparse due to append-only
-			if( appendOnly )
+			if( appendOnly && !_isAccum )
 				outMBNew.sortSparseRows();
 			
 			//change sparsity if required after 
 			outMBNew.examSparsity(); 
 			
 			//create output
-			if( flagMerged )
-			{		
+			if( flagMerged ) {
 				//create new output matrix 
 				//(e.g., to prevent potential export<->read file access conflict in specific cases of 
 				// local-remote nested parfor))
-				moNew = createNewMatrixObject( outMBNew );	
+				moNew = createNewMatrixObject( outMBNew );
 			}
-			else
-			{
+			else {
 				moNew = _output; //return old matrix, to prevent copy
 			}
 			
 			//release old output, and all inputs
 			_output.release();
 		}
-		catch(Exception ex)
-		{
+		catch(Exception ex) {
 			throw new DMLRuntimeException(ex);
 		}
 
@@ -141,23 +141,19 @@ public class ResultMergeLocalMemory extends ResultMerge
 	
 	@Override
 	public MatrixObject executeParallelMerge( int par ) 
-		throws DMLRuntimeException
-	{		
+	{
 		MatrixObject moNew = null; //always create new matrix object (required for nested parallelism)
-	
-		//Timing time = null;
-		LOG.trace("ResultMerge (local, in-memory): Execute parallel (par="+par+") merge for output "+_output.getVarName()+" (fname="+_output.getFileName()+")");
-		//	time = new Timing();
-		//	time.start();
 		
-
+		if( LOG.isTraceEnabled() )
+			LOG.trace("ResultMerge (local, in-memory): Execute parallel (par="+par+") "
+				+ "merge for output "+_output.hashCode()+" (fname="+_output.getFileName()+")");
+		
 		try
 		{
 			//get matrix blocks through caching 
 			MatrixBlock outMB = _output.acquireRead();
-			ArrayList<MatrixObject> inMO = new ArrayList<MatrixObject>();
-			for( MatrixObject in : _inputs )
-			{
+			ArrayList<MatrixObject> inMO = new ArrayList<>();
+			for( MatrixObject in : _inputs ) {
 				//check for empty inputs (no iterations executed)
 				if( in !=null && in != _output ) 
 					inMO.add( in );
@@ -173,7 +169,7 @@ public class ResultMergeLocalMemory extends ResultMerge
 				outMBNew.allocateDenseBlockUnsafe((int)rows, (int)cols);
 				
 				//create compare matrix if required (existing data in result)
-				_compare = createCompareMatrix(outMB);
+				_compare = getCompareMatrix(outMB);
 				if( _compare != null )
 					outMBNew.copy(outMB);
 				
@@ -202,64 +198,35 @@ public class ResultMergeLocalMemory extends ResultMerge
 				//create new output matrix 
 				//(e.g., to prevent potential export<->read file access conflict in specific cases of 
 				// local-remote nested parfor))
-				moNew = createNewMatrixObject( outMBNew );	
+				moNew = createNewMatrixObject( outMBNew );
 			}
-			else
-			{
+			else {
 				moNew = _output; //return old matrix, to prevent copy
 			}
 			
 			//release old output, and all inputs
-			_output.release();			
-			//_output.clearData(); //save, since it respects pin/unpin  
+			_output.release();
 		}
-		catch(Exception ex)
-		{
+		catch(Exception ex) {
 			throw new DMLRuntimeException(ex);
 		}
 		
 		//LOG.trace("ResultMerge (local, in-memory): Executed parallel (par="+par+") merge for output "+_output.getVarName()+" (fname="+_output.getFileName()+") in "+time.stop()+"ms");
 
-		return moNew;		
+		return moNew;
 	}
 
-	/**
-	 * 
-	 * @param output
-	 * @return
-	 */
-	private double[][] createCompareMatrix( MatrixBlock output )
-	{
-		double[][] ret = null;
-		
+	private static DenseBlock getCompareMatrix( MatrixBlock output ) {
 		//create compare matrix only if required
-		if( output.getNonZeros() > 0 )
-		{
-			ret = DataConverter.convertToDoubleMatrix( output );
-		}
-		
-		return ret;
+		if( !output.isEmptyBlock(false) )
+			return DataConverter.convertToDenseBlock(output, false);
+		return null;
 	}
-	
-	/**
-	 * 
-	 * @param varName
-	 * @param vt
-	 * @param metadata
-	 * @param data
-	 * @return
-	 * @throws DMLRuntimeException 
-	 */
-	private MatrixObject createNewMatrixObject( MatrixBlock data ) 
-		throws DMLRuntimeException
-	{
-		String varName = _output.getVarName();
+
+	private MatrixObject createNewMatrixObject( MatrixBlock data ) {
 		ValueType vt = _output.getValueType();
-		MatrixFormatMetaData metadata = (MatrixFormatMetaData) _output.getMetaData();
-		
+		MetaDataFormat metadata = (MetaDataFormat) _output.getMetaData();
 		MatrixObject moNew = new MatrixObject( vt, _outputFName );
-		moNew.setVarName( varName.contains(NAME_SUFFIX) ? varName : varName+NAME_SUFFIX );
-		moNew.setDataType( DataType.MATRIX );
 		
 		//create deep copy of metadata obj
 		MatrixCharacteristics mcOld = metadata.getMatrixCharacteristics();
@@ -268,15 +235,15 @@ public class ResultMergeLocalMemory extends ResultMerge
 		MatrixCharacteristics mc = new MatrixCharacteristics(mcOld.getRows(),mcOld.getCols(),
 				                                             mcOld.getRowsPerBlock(),mcOld.getColsPerBlock());
 		mc.setNonZeros(data.getNonZeros());
-		MatrixFormatMetaData meta = new MatrixFormatMetaData(mc,oiOld,iiOld);
+		MetaDataFormat meta = new MetaDataFormat(mc,oiOld,iiOld);
 		moNew.setMetaData( meta );
 		
 		//adjust dense/sparse representation
 		data.examSparsity();
 		
 		//release new output
-		moNew.acquireModify(data);	
-		moNew.release();	
+		moNew.acquireModify(data);
+		moNew.release();
 		
 		return moNew;
 	}
@@ -289,17 +256,33 @@ public class ResultMergeLocalMemory extends ResultMerge
 	 * NOTE: similar to converters, but not directly applicable as we are interested in combining
 	 * two objects with each other; not unary transformation.
 	 * 
-	 * @param out
-	 * @param in
-	 * @throws DMLRuntimeException 
+	 * @param out output matrix block
+	 * @param in input matrix block
+	 * @param appendOnly ?
 	 */
-	private void merge( MatrixBlock out, MatrixBlock in, boolean appendOnly ) 
-		throws DMLRuntimeException
-	{
+	private void merge( MatrixBlock out, MatrixBlock in, boolean appendOnly ) {
 		if( _compare == null )
-			mergeWithoutComp(out, in, appendOnly);
+			mergeWithoutComp(out, in, appendOnly, true);
 		else
 			mergeWithComp(out, in, _compare);
+	}
+	
+	/**
+	 * Estimates the number of non-zeros in the final merged output.
+	 * For scenarios without compare matrix, this is the exact number 
+	 * of non-zeros due to guaranteed disjoint results per worker.
+	 * 
+	 * @return estimated number of non-zeros.
+	 */
+	private long getOutputNnzEstimate() {
+		long nnzInputs = 0;
+		for( MatrixObject input : _inputs )
+			if( input != null )
+				nnzInputs += Math.max(input.getNnz(),1);
+		long rlen = _output.getNumRows();
+		long clen = _output.getNumColumns();
+		return Math.min(rlen * clen,
+			Math.max(nnzInputs, _output.getNnz()));
 	}
 	
 	
@@ -323,7 +306,7 @@ public class ResultMergeLocalMemory extends ResultMerge
 			//read each input if required
 			try
 			{
-				LOG.trace("ResultMerge (local, in-memory): Merge input "+_inMO.getVarName()+" (fname="+_inMO.getFileName()+")");
+				LOG.trace("ResultMerge (local, in-memory): Merge input "+_inMO.hashCode()+" (fname="+_inMO.getFileName()+")");
 				
 				MatrixBlock inMB = _inMO.acquireRead(); //incl. implicit read from HDFS
 				merge( _outMB, inMB, false );

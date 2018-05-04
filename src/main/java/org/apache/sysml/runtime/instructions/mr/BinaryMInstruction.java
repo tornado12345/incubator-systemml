@@ -23,7 +23,6 @@ import java.util.ArrayList;
 
 import org.apache.sysml.lops.AppendM.CacheType;
 import org.apache.sysml.lops.BinaryM.VectorType;
-import org.apache.sysml.runtime.DMLRuntimeException;
 import org.apache.sysml.runtime.instructions.InstructionUtils;
 import org.apache.sysml.runtime.matrix.data.MatrixValue;
 import org.apache.sysml.runtime.matrix.data.OperationsOnMatrixValues;
@@ -34,33 +33,18 @@ import org.apache.sysml.runtime.matrix.mapred.MRBaseForCommonInstructions;
 import org.apache.sysml.runtime.matrix.operators.BinaryOperator;
 import org.apache.sysml.runtime.matrix.operators.Operator;
 
-
-public class BinaryMInstruction extends BinaryMRInstructionBase implements IDistributedCacheConsumer
-{	
+public class BinaryMInstruction extends BinaryMRInstructionBase implements IDistributedCacheConsumer {
 	private VectorType _vectorType = null;
-	
-	public BinaryMInstruction(Operator op, byte in1, byte in2, CacheType ctype, VectorType vtype, byte out, String istr)
-	{
-		super(op, in1, in2, out);
-		mrtype = MRINSTRUCTION_TYPE.ArithmeticBinary;
+
+	private BinaryMInstruction(Operator op, byte in1, byte in2, CacheType ctype, VectorType vtype, byte out, String istr) {
+		super(MRType.Binary, op, in1, in2, out);
 		instString = istr;
-		
 		_vectorType = vtype;
 	}
-	
-	/**
-	 * 
-	 * @param str
-	 * @return
-	 * @throws DMLRuntimeException
-	 */
-	public static BinaryMInstruction parseInstruction ( String str ) 
-		throws DMLRuntimeException 
-	{	
+
+	public static BinaryMInstruction parseInstruction ( String str ) {
 		InstructionUtils.checkNumFields ( str, 5 );
-		
 		String[] parts = InstructionUtils.getInstructionParts ( str );
-		
 		byte in1, in2, out;
 		String opcode = parts[0];
 		in1 = Byte.parseByte(parts[1]);
@@ -68,7 +52,6 @@ public class BinaryMInstruction extends BinaryMRInstructionBase implements IDist
 		out = Byte.parseByte(parts[3]);
 		CacheType ctype = CacheType.valueOf(parts[4]);
 		VectorType vtype = VectorType.valueOf(parts[5]);
-		
 		BinaryOperator bop = InstructionUtils.parseExtendedBinaryOperator(opcode);
 		return new BinaryMInstruction(bop, in1, in2, ctype, vtype, out, str);
 	}
@@ -76,15 +59,11 @@ public class BinaryMInstruction extends BinaryMRInstructionBase implements IDist
 	@Override
 	public void processInstruction(Class<? extends MatrixValue> valueClass,
 			CachedValueMap cachedValues, IndexedMatrixValue tempValue, IndexedMatrixValue zeroInput,
-			int blockRowFactor, int blockColFactor)
-		throws DMLRuntimeException 
-	{	
+			int blockRowFactor, int blockColFactor) {
 		ArrayList<IndexedMatrixValue> blkList = cachedValues.get(input1);
 		if( blkList == null ) 
 			return;
-		
-		for(IndexedMatrixValue in1 : blkList)
-		{
+		for(IndexedMatrixValue in1 : blkList) {
 			//allocate space for the output value
 			//try to avoid coping as much as possible
 			IndexedMatrixValue out;

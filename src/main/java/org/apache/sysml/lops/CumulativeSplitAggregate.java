@@ -26,12 +26,9 @@ import org.apache.sysml.parser.Expression.*;
 
 public class CumulativeSplitAggregate extends Lop 
 {
-
 	private double _initValue = 0;
 	
-	public CumulativeSplitAggregate(Lop input, DataType dt, ValueType vt, double init)
-		throws LopsException 
-	{
+	public CumulativeSplitAggregate(Lop input, DataType dt, ValueType vt, double init) {
 		super(Lop.Type.CumulativeSplitAggregate, dt, vt);
 		_initValue = init;
 		init(input, dt, vt, ExecType.MR);
@@ -50,17 +47,17 @@ public class CumulativeSplitAggregate extends Lop
 		lps.setProperties(inputs, et, ExecLocation.Map, breaksAlignment, aligner, definesMRJob);
 	}
 
+	@Override
 	public String toString() {
 		return "CumulativeSplitAggregate";
 	}
 	
-	private String getOpcode() {
+	private static String getOpcode() {
 		return "ucumsplit";
 	}
 	
 	@Override
 	public String getInstructions(int input_index, int output_index)
-		throws LopsException 
 	{
 		StringBuilder sb = new StringBuilder();
 		sb.append( getExecType() );

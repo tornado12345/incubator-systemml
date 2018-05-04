@@ -22,32 +22,40 @@ package org.apache.sysml.runtime.controlprogram.caching;
 import java.io.File;
 import java.io.IOException;
 import java.lang.ref.SoftReference;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.concurrent.atomic.AtomicLong;
 
 import org.apache.commons.lang.mutable.MutableBoolean;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
+import org.apache.hadoop.fs.Path;
 import org.apache.sysml.api.DMLScript;
 import org.apache.sysml.api.DMLScript.RUNTIME_PLATFORM;
 import org.apache.sysml.conf.ConfigurationManager;
+import org.apache.sysml.hops.OptimizerUtils;
 import org.apache.sysml.parser.Expression.DataType;
 import org.apache.sysml.parser.Expression.ValueType;
 import org.apache.sysml.runtime.DMLRuntimeException;
 import org.apache.sysml.runtime.controlprogram.caching.LazyWriteBuffer.RPolicy;
-import org.apache.sysml.runtime.instructions.gpu.context.GPUObject;
+import org.apache.sysml.runtime.controlprogram.parfor.stat.InfrastructureAnalyzer;
 import org.apache.sysml.runtime.controlprogram.parfor.util.IDSequence;
 import org.apache.sysml.runtime.instructions.cp.Data;
+import org.apache.sysml.runtime.instructions.gpu.context.GPUContext;
+import org.apache.sysml.runtime.instructions.gpu.context.GPUObject;
 import org.apache.sysml.runtime.instructions.spark.data.BroadcastObject;
 import org.apache.sysml.runtime.instructions.spark.data.RDDObject;
+import org.apache.sysml.runtime.io.IOUtilFunctions;
 import org.apache.sysml.runtime.matrix.MatrixCharacteristics;
-import org.apache.sysml.runtime.matrix.MatrixDimensionsMetaData;
-import org.apache.sysml.runtime.matrix.MatrixFormatMetaData;
+import org.apache.sysml.runtime.matrix.MetaDataFormat;
+import org.apache.sysml.runtime.matrix.MetaDataNumItemsByEachReducer;
 import org.apache.sysml.runtime.matrix.MetaData;
 import org.apache.sysml.runtime.matrix.data.FileFormatProperties;
 import org.apache.sysml.runtime.matrix.data.InputInfo;
-import org.apache.sysml.runtime.matrix.data.NumItemsByEachReducerMetaData;
 import org.apache.sysml.runtime.matrix.data.OutputInfo;
 import org.apache.sysml.runtime.util.LocalFileUtils;
 import org.apache.sysml.runtime.util.MapReduceTool;
+
 
 /**
  * Each object of this class is a cache envelope for some large piece of data
@@ -65,21 +73,22 @@ public abstract class CacheableData<T extends CacheBlock> extends Data
 
 	/** Global logging instance for all subclasses of CacheableData */
 	protected static final Log LOG = LogFactory.getLog(CacheableData.class.getName());
-    
+	
 	// global constant configuration parameters
-	public static final long 	CACHING_THRESHOLD = 4*1024; //obj not s.t. caching if below threshold [in bytes]
-	public static final double 	CACHING_BUFFER_SIZE = 0.15; 
+	public static final long    CACHING_THRESHOLD = (long)Math.max(4*1024, //obj not s.t. caching
+		1e-5 * InfrastructureAnalyzer.getLocalMaxMemory());       //if below threshold [in bytes]
+	public static final double  CACHING_BUFFER_SIZE = 0.15; 
 	public static final RPolicy CACHING_BUFFER_POLICY = RPolicy.FIFO; 
 	public static final boolean CACHING_BUFFER_PAGECACHE = false; 
 	public static final boolean CACHING_WRITE_CACHE_ON_READ = false;	
 	public static final String  CACHING_COUNTER_GROUP_NAME    = "SystemML Caching Counters";
 	public static final String  CACHING_EVICTION_FILEEXTENSION = ".dat";
 	public static final boolean CACHING_ASYNC_FILECLEANUP = true;
-    
+	
 	/**
 	 * Defines all possible cache status types for a data blob.
-     * An object of class {@link CacheableData} can be in one of the following
-     * five status types:
+	 * An object of class {@link CacheableData} can be in one of the following
+	 * five status types:
 	 *
 	 * <code>EMPTY</code>: Either there is no data blob at all, or the data blob  
 	 * resides in a specified import file and has never been downloaded yet.
@@ -91,40 +100,46 @@ public abstract class CacheableData<T extends CacheBlock> extends Data
 	 * <code>CACHED</code>:   The data blob is in main memory, and nobody is using nor referencing it. 
 	 * There is always an persistent recovery object for it
 	 **/
-    protected enum CacheStatus {
-    	EMPTY, 
-    	READ, 
-    	MODIFY, 
-    	CACHED,
-    	CACHED_NOWRITE,
-    };
+	public enum CacheStatus {
+		EMPTY, 
+		READ, 
+		MODIFY, 
+		CACHED,
+		CACHED_NOWRITE,
+	}
 	
 	/** Global flag indicating if caching is enabled (controls eviction) */
-	private static boolean _activeFlag = false;
+	private static volatile boolean _activeFlag = false;
 	
 	/** Global sequence for generating unique ids. */
-	private static IDSequence _seq = null;   
+	private static IDSequence _seq = null;
 
 	// Global eviction path and prefix (prefix used for isolation purposes)
-    public static String cacheEvictionLocalFilePath = null; //set during init
-    public static String cacheEvictionLocalFilePrefix = "cache";
+	public static String cacheEvictionLocalFilePath = null; //set during init
+	public static String cacheEvictionLocalFilePrefix = "cache";
 
 	/**
 	 * Current state of pinned variables, required for guarded collect.
 	 */
 	private static ThreadLocal<Long> sizePinned = new ThreadLocal<Long>() {
-        @Override protected Long initialValue() { return 0L; }
-    };
-    
+		@Override protected Long initialValue() { return 0L; }
+	};
+
+	//current size of live broadcast objects (because Spark's ContextCleaner maintains 
+	//a buffer with references to prevent eager cleanup by GC); note that this is an 
+	//overestimate, because we maintain partitioned broadcasts as soft references, which 
+	//might be collected by the GC and subsequently cleaned up by Spark's ContextCleaner.
+	private static final AtomicLong _refBCs = new AtomicLong(0);
+
 	static {
 		_seq = new IDSequence();
 	}
-		
+
 	/**
 	 * The unique (JVM-wide) ID of a cacheable data object; to ensure unique IDs across JVMs, we
 	 * concatenate filenames with a unique prefix (map task ID). 
 	 */
-	private final int _uniqueID;
+	private final long _uniqueID;
 	
 	/** The cache status of the data blob (whether it can be or is evicted, etc. */
 	private CacheStatus _cacheStatus = null;
@@ -170,7 +185,6 @@ public abstract class CacheableData<T extends CacheBlock> extends Data
 	// additional private flags and meta data
 	private int     _numReadThreads = 0;   //number of threads for read from HDFS
 	private boolean _cleanupFlag = true;   //flag if obj unpinned (cleanup enabled)	
-	private String  _varName = "";         //plan variable name
 	private String  _cacheFileName = null; //local eviction file name
 	private boolean _requiresLocalWrite = false; //flag if local write for read obj
 	private boolean _isAcquireFromEmpty = false; //flag if read from status empty 
@@ -180,33 +194,33 @@ public abstract class CacheableData<T extends CacheBlock> extends Data
 	//for lazily evaluated RDDs, and (2) as abstraction for environments that do not necessarily have spark libraries available
 	private RDDObject _rddHandle = null; //RDD handle
 	private BroadcastObject<T> _bcHandle = null; //Broadcast handle
-	protected GPUObject _gpuHandle = null;
+	protected HashMap<GPUContext, GPUObject> _gpuObjects = null; //Per GPUContext object allocated on GPU
 	
 	/**
 	 * Basic constructor for any cacheable data.
 	 * 
-	 * @param dt
-	 * @param vt
+	 * @param dt data type
+	 * @param vt value type
 	 */
 	protected CacheableData(DataType dt, ValueType vt) {
-		super (dt, vt);		
-		_uniqueID = (int)_seq.getNextID();		
+		super (dt, vt);
+		_uniqueID = isCachingActive() ? _seq.getNextID() : -1;
 		_cacheStatus = CacheStatus.EMPTY;
 		_numReadThreads = 0;
+		_gpuObjects = new HashMap<>();
 	}
 	
 	/**
 	 * Copy constructor for cacheable data (of same type).
 	 * 
-	 * @param that
+	 * @param that cacheable data object
 	 */
 	protected CacheableData(CacheableData<T> that) {
 		this( that.getDataType(), that.getValueType() );
 		_cleanupFlag = that._cleanupFlag;
 		_hdfsFileName = that._hdfsFileName;
 		_hdfsFileExists = that._hdfsFileExists; 
-		_varName = that._varName;
-		_gpuHandle = that._gpuHandle;
+		_gpuObjects = that._gpuObjects;
 	}
 
 	
@@ -214,7 +228,7 @@ public abstract class CacheableData<T extends CacheBlock> extends Data
 	 * Enables or disables the cleanup of the associated 
 	 * data object on clearData().
 	 * 
-	 * @param flag
+	 * @param flag true if cleanup
 	 */
 	public void enableCleanup(boolean flag) {
 		_cleanupFlag = flag;
@@ -224,56 +238,28 @@ public abstract class CacheableData<T extends CacheBlock> extends Data
 	 * Indicates if cleanup of the associated data object 
 	 * is enabled on clearData().
 	 * 
-	 * @return
+	 * @return true if cleanup enabled
 	 */
 	public boolean isCleanupEnabled() {
 		return _cleanupFlag;
 	}
 	
-	/**
-	 * 
-	 * @param s
-	 */
-	public void setVarName(String s) {
-		_varName = s;
+	public CacheStatus getStatus() {
+		return _cacheStatus;
 	}
-	
-	/**
-	 * 
-	 * @return
-	 */
-	public String getVarName() {
-		return _varName;
-	}
-	
-	/**
-	 * 
-	 * @return
-	 */
+
 	public boolean isHDFSFileExists() {
 		return _hdfsFileExists;
 	}
-	
-	/**
-	 * 
-	 * @param flag
-	 */
+
 	public void setHDFSFileExists( boolean flag )  {
 		_hdfsFileExists = flag;
 	}
-	
-	/**
-	 * 
-	 * @return
-	 */
+
 	public String getFileName() {
 		return _hdfsFileName;
 	}
 
-	/**
-	 * 
-	 * @param file
-	 */
 	public synchronized void setFileName( String file ) {
 		if( _hdfsFileName!=null && !_hdfsFileName.equals(file) )
 			if( !isEmpty(true) )
@@ -285,31 +271,21 @@ public abstract class CacheableData<T extends CacheBlock> extends Data
 	 * <code>true</code> if the in-memory or evicted matrix may be different from
 	 * the matrix located at {@link #_hdfsFileName}; <code>false</code> if the two
 	 * matrices are supposed to be the same.
+	 * 
+	 * @return true if dirty
 	 */
 	public boolean isDirty() {
 		return _dirtyFlag;
 	}
-	
-	/**
-	 * 
-	 * @param flag
-	 */
+
 	public void setDirty(boolean flag) {
 		_dirtyFlag = flag;
 	}
-	
-	/**
-	 * 
-	 * @return
-	 */
+
 	public FileFormatProperties getFileFormatProperties() {
 		return _formatProps;
 	}
-	
-	/**
-	 * 
-	 * @param props
-	 */
+
 	public void setFileFormatProperties(FileFormatProperties props) {
 		_formatProps = props;
 	}
@@ -330,28 +306,15 @@ public abstract class CacheableData<T extends CacheBlock> extends Data
 	}
 	
 	public MatrixCharacteristics getMatrixCharacteristics() {
-		MatrixDimensionsMetaData meta = (MatrixDimensionsMetaData) _metaData;
-		return meta.getMatrixCharacteristics();
+		return _metaData.getMatrixCharacteristics();
 	}
-	
-	/**
-	 * 
-	 */
-	public abstract void refreshMetaData() 
-		throws CacheException;
-	
-	/**
-	 * 
-	 * @return
-	 */
+
+	public abstract void refreshMetaData();
+
 	public RDDObject getRDDHandle() {
 		return _rddHandle;
 	}
-	
-	/**
-	 * 
-	 * @param rdd
-	 */
+
 	public void setRDDHandle( RDDObject rdd ) {
 		//cleanup potential old back reference
 		if( _rddHandle != null )
@@ -366,11 +329,7 @@ public abstract class CacheableData<T extends CacheBlock> extends Data
 	public BroadcastObject<T> getBroadcastHandle() {
 		return _bcHandle;
 	}
-	
-	/**
-	 * 
-	 * @param bc
-	 */
+
 	@SuppressWarnings({ "rawtypes", "unchecked" })
 	public void setBroadcastHandle( BroadcastObject bc ) {
 		//cleanup potential old back reference
@@ -382,19 +341,16 @@ public abstract class CacheableData<T extends CacheBlock> extends Data
 		if( _bcHandle != null )
 			bc.setBackReference(this);
 	}
-	
-	/**
-	 * 
-	 * @return
-	 */
-	public GPUObject getGPUObject() {
-		return _gpuHandle;
+
+	public synchronized GPUObject getGPUObject(GPUContext gCtx) {
+		return _gpuObjects.get(gCtx);
 	}
-	
-	public void setGPUObject(GPUObject handle) {
-		_gpuHandle = handle;
+
+	public synchronized void setGPUObject(GPUContext gCtx, GPUObject gObj) {
+		GPUObject old = _gpuObjects.put(gCtx, gObj);
+		if (old != null)
+				throw new DMLRuntimeException("GPU : Inconsistent internal state - this CacheableData already has a GPUObject assigned to the current GPUContext (" + gCtx + ")");
 	}
-	
 	
 	// *********************************************
 	// ***                                       ***
@@ -413,43 +369,61 @@ public abstract class CacheableData<T extends CacheBlock> extends Data
 	 * In-Status:  EMPTY, EVICTABLE, EVICTED, READ;
 	 * Out-Status: READ(+1).
 	 * 
-	 * @return 
-	 * @throws CacheException 
+	 * @return cacheable data
 	 */
-	public synchronized T acquireRead()
-		throws CacheException
-	{
-		if( LOG.isTraceEnabled() )
-			LOG.trace("Acquire read "+getVarName());
+	public T acquireRead() {
 		long t0 = DMLScript.STATISTICS ? System.nanoTime() : 0;
 		
+		//core internal acquire (synchronized per object)
+		T ret = acquireReadIntern();
+		
+		//update thread-local status (after pin but outside the
+		//critical section of accessing a shared object)
+		if( !isBelowCachingThreshold() )
+			updateStatusPinned(true);
+		
+		if( DMLScript.STATISTICS ){
+			long t1 = System.nanoTime();
+			CacheStatistics.incrementAcquireRTime(t1-t0);
+		}
+		
+		return ret;
+	}
+	
+	private synchronized T acquireReadIntern() {
 		if ( !isAvailableToRead() )
-			throw new CacheException ("MatrixObject not available to read.");
+			throw new DMLRuntimeException("MatrixObject not available to read.");
 		
 		//get object from cache
 		if( _data == null )
 			getCache();
-			
-		//call acquireHostRead if gpuHandle is set as well as is allocated  
-		if( _gpuHandle != null && _gpuHandle.isAllocated()) {
-			_gpuHandle.acquireHostRead();
-			if( _data == null )
-				getCache();
+		
+		//call acquireHostRead if gpuHandle is set as well as is allocated
+		if( DMLScript.USE_ACCELERATOR ) {
+			boolean copiedFromGPU = false;
+			for (Map.Entry<GPUContext, GPUObject> kv : _gpuObjects.entrySet()) {
+				GPUObject gObj = kv.getValue();
+				if (gObj != null && copiedFromGPU && gObj.isDirty())
+					throw new DMLRuntimeException("Internal Error : Inconsistent internal state, A copy of this CacheableData was dirty on more than 1 GPU");
+				else if (gObj != null) {
+					copiedFromGPU = gObj.acquireHostRead(null);
+					if( _data == null )
+						getCache();
+				}
+			}
 		}
+		
 		//read data from HDFS/RDD if required
-		//(probe data for cache_nowrite / jvm_reuse)  
-		if( isEmpty(true) && _data==null ) 
-		{			
-			try
-			{
+		//(probe data for cache_nowrite / jvm_reuse)
+		if( _data==null && isEmpty(true) ) {
+			try {
 				if( DMLScript.STATISTICS )
 					CacheStatistics.incrementHDFSHits();
 				
-				if( getRDDHandle()==null || getRDDHandle().allowsShortCircuitRead() )
-				{
+				if( getRDDHandle()==null || getRDDHandle().allowsShortCircuitRead() ) {
 					//check filename
 					if( _hdfsFileName == null )
-						throw new CacheException("Cannot read matrix for empty filename.");
+						throw new DMLRuntimeException("Cannot read matrix for empty filename.");
 					
 					//read cacheable data from hdfs
 					_data = readBlobFromHDFS( _hdfsFileName );
@@ -457,99 +431,29 @@ public abstract class CacheableData<T extends CacheBlock> extends Data
 					//mark for initial local write despite read operation
 					_requiresLocalWrite = CACHING_WRITE_CACHE_ON_READ;
 				}
-				else
-				{
+				else {
 					//read matrix from rdd (incl execute pending rdd operations)
 					MutableBoolean writeStatus = new MutableBoolean();
 					_data = readBlobFromRDD( getRDDHandle(), writeStatus );
 					
 					//mark for initial local write (prevent repeated execution of rdd operations)
-					if( writeStatus.booleanValue() )
-						_requiresLocalWrite = CACHING_WRITE_CACHE_ON_READ;
-					else
-						_requiresLocalWrite = true;
+					_requiresLocalWrite = writeStatus.booleanValue() ? 
+						CACHING_WRITE_CACHE_ON_READ : true;
 				}
 				
 				setDirty(false);
 			}
 			catch (IOException e) {
-				throw new CacheException("Reading of " + _hdfsFileName + " ("+getVarName()+") failed.", e);
+				throw new DMLRuntimeException("Reading of " + _hdfsFileName + " ("+hashCode()+") failed.", e);
 			}
-			
 			_isAcquireFromEmpty = true;
 		}
-		else if( DMLScript.STATISTICS )
-		{
-			if( _data!=null )
-				CacheStatistics.incrementMemHits();
+		else if( _data!=null && DMLScript.STATISTICS ) {
+			CacheStatistics.incrementMemHits();
 		}
 		
 		//cache status maintenance
-		acquire( false, _data==null );	
-		updateStatusPinned(true);
-		
-		if( DMLScript.STATISTICS ){
-			long t1 = System.nanoTime();
-			CacheStatistics.incrementAcquireRTime(t1-t0);
-		}
-		
-		return _data;
-	}
-
-	/**
-	 * Acquires the exclusive "write" lock for a thread that wants to change cache block
-	 * cell values.  Produces the reference to the cache block, restores the cache block
-	 * to main memory, reads from HDFS if needed.
-	 * 
-	 * In-Status:  EMPTY, EVICTABLE, EVICTED;
-	 * Out-Status: MODIFY.
-	 * 
-	 * @return 
-	 * @throws CacheException 
-	 */
-	public synchronized T acquireModify() 
-		throws CacheException
-	{
-		if( LOG.isTraceEnabled() )
-			LOG.trace("Acquire modify "+getVarName());
-		long t0 = DMLScript.STATISTICS ? System.nanoTime() : 0;
-		
-		if ( !isAvailableToModify() )
-			throw new CacheException("MatrixObject not available to modify.");
-		
-		//get object from cache
-		if( _data == null )
-			getCache();
-
-		//read data from HDFS if required
-		if( isEmpty(true) && _data == null )
-		{
-			//check filename
-			if( _hdfsFileName == null )
-				throw new CacheException("Cannot read matrix for empty filename.");
-			
-			//load data
-			try
-			{
-				_data = readBlobFromHDFS( _hdfsFileName );
-			}
-			catch (IOException e)
-			{
-				throw new CacheException("Reading of " + _hdfsFileName + " ("+getVarName()+") failed.", e);
-			}
-		}
-
-		//cache status maintenance
-		acquire( true, _data==null );
-		updateStatusPinned(true);
-		setDirty(true);
-		_isAcquireFromEmpty = false;
-		
-		if( DMLScript.STATISTICS ){
-			long t1 = System.nanoTime();
-			CacheStatistics.incrementAcquireMTime(t1-t0);
-		}
-		
+		acquire( false, _data==null );
 		return _data;
 	}
 	
@@ -561,19 +465,31 @@ public abstract class CacheableData<T extends CacheBlock> extends Data
 	 * In-Status:  EMPTY, EVICTABLE, EVICTED;
 	 * Out-Status: MODIFY.
 	 * 
-	 * @param newData 
-	 * @return 
-	 * @throws CacheException 
+	 * @param newData new data
+	 * @return cacheable data
 	 */
-	public synchronized T acquireModify(T newData)
-		throws CacheException
-	{
-		if( LOG.isTraceEnabled() )
-			LOG.trace("Acquire modify newdata "+getVarName());
+	public T acquireModify(T newData) {
 		long t0 = DMLScript.STATISTICS ? System.nanoTime() : 0;
 		
+		//core internal acquire (synchronized per object)
+		T ret = acquireModifyIntern(newData);
+		
+		//update thread-local status (after pin but outside the
+		//critical section of accessing a shared object)
+		if( !isBelowCachingThreshold() )
+			updateStatusPinned(true);
+		
+		if( DMLScript.STATISTICS ){
+			long t1 = System.nanoTime();
+			CacheStatistics.incrementAcquireMTime(t1-t0);
+		}
+		
+		return ret;
+	}
+	
+	private synchronized T acquireModifyIntern(T newData) {
 		if (! isAvailableToModify ())
-			throw new CacheException ("CacheableData not available to modify.");
+			throw new DMLRuntimeException("CacheableData not available to modify.");
 		
 		//clear old data
 		clearData();
@@ -586,16 +502,8 @@ public abstract class CacheableData<T extends CacheBlock> extends Data
 		
 		//set references to new data
 		if (newData == null)
-			throw new CacheException("acquireModify with empty cache block.");
-		_data = newData;
-		updateStatusPinned(true);
-		
-		if( DMLScript.STATISTICS ){
-			long t1 = System.nanoTime();
-			CacheStatistics.incrementAcquireMTime(t1-t0);
-		}
-		
-		return _data;
+			throw new DMLRuntimeException("acquireModify with empty cache block.");
+		return _data = newData;
 	}
 	
 	/**
@@ -608,66 +516,61 @@ public abstract class CacheableData<T extends CacheBlock> extends Data
 	 * In-Status:  READ, MODIFY;
 	 * Out-Status: READ(-1), EVICTABLE, EMPTY.
 	 * 
-	 * @throws CacheException
 	 */
-	public synchronized void release() 
-		throws CacheException
-	{
-		if( LOG.isTraceEnabled() )
-			LOG.trace("Release "+getVarName());
+	public void release() {
 		long t0 = DMLScript.STATISTICS ? System.nanoTime() : 0;
 		
-		boolean write = false;
-		if ( isModify() )
-		{
-			//set flags for write
-			write = true;
-			setDirty(true);
-			
-			//update meta data
-			refreshMetaData();
-		}
-
-		//compact empty in-memory block 
-		_data.compactEmptyBlock();
+		//update thread-local status (before unpin but outside
+		//the critical section of accessing a shared object)
+		if( !isBelowCachingThreshold() )
+			updateStatusPinned(false);
 		
-		//cache status maintenance (pass cacheNoWrite flag)
-		release(_isAcquireFromEmpty && !_requiresLocalWrite);
-		updateStatusPinned(false);
+		//core internal release (synchronized per object)
+		releaseIntern();
 		
-		if(    isCachingActive() //only if caching is enabled (otherwise keep everything in mem)
-			&& isCached(true)    //not empty and not read/modify
-			&& !isBelowCachingThreshold() ) //min size for caching
-		{
-			if( write || _requiresLocalWrite ) 
-			{
-				//evict blob
-				String filePath = getCacheFilePathAndName();
-				try {
-					LazyWriteBuffer.writeBlock(filePath, _data);
-				}
-				catch (Exception e)
-				{
-					throw new CacheException("Eviction to local path " + filePath + " ("+getVarName()+") failed.", e);
-				}
-				_requiresLocalWrite = false;
-			}
-			
-			//create cache
-			createCache();
-			_data = null;			
-		}
-		else if( LOG.isTraceEnabled() ){
-			LOG.trace("Var "+getVarName()+" not subject to caching, state="+getStatusAsString());
-		}
-
 		if( DMLScript.STATISTICS ){
 			long t1 = System.nanoTime();
 			CacheStatistics.incrementReleaseTime(t1-t0);
 		}
 	}
 	
-	protected void clearReusableData() {}
+	private synchronized void releaseIntern() {
+		boolean write = false;
+		if ( isModify() ) {
+			//set flags for write
+			write = true;
+			setDirty(true);
+			
+			//update meta data
+			refreshMetaData();
+			
+			//compact empty in-memory block 
+			_data.compactEmptyBlock();
+		}
+		
+		//cache status maintenance (pass cacheNoWrite flag)
+		release(_isAcquireFromEmpty && !_requiresLocalWrite);
+		
+		if( isCachingActive() //only if caching is enabled (otherwise keep everything in mem)
+			&& isCached(true) //not empty and not read/modify
+			&& !isBelowCachingThreshold() ) //min size for caching
+		{
+			if( write || _requiresLocalWrite ) {
+				String filePath = getCacheFilePathAndName();
+				try {
+					LazyWriteBuffer.writeBlock(filePath, _data);
+				}
+				catch (Exception e) {
+					throw new DMLRuntimeException("Eviction to local path " + filePath + " ("+hashCode()+") failed.", e);
+				}
+				_requiresLocalWrite = false;
+			}
+			
+			//create cache
+			createCache();
+			_data = null;
+		}
+	}
 	
 	/**
 	 * Sets the cache block reference to <code>null</code>, abandons the old block.
@@ -676,20 +579,16 @@ public abstract class CacheableData<T extends CacheBlock> extends Data
 	 * 
 	 * In-Status:  EMPTY, EVICTABLE, EVICTED;
 	 * Out-Status: EMPTY.
-	 * @throws CacheException 
+	 * 
 	 */
 	public synchronized void clearData() 
-		throws CacheException
 	{
-		if( LOG.isTraceEnabled() )
-			LOG.trace("Clear data "+getVarName());
-		
 		// check if cleanup enabled and possible 
 		if( !isCleanupEnabled() ) 
 			return; // do nothing
 		if( !isAvailableToModify() )
-			throw new CacheException ("CacheableData (" + getDebugName() + ") not available to "
-					+ "modify. Status = " + getStatusAsString() + ".");
+			throw new DMLRuntimeException("CacheableData (" + getDebugName() + ") not available to "
+					+ "modify. Status = " + _cacheStatus.name() + ".");
 		
 		// clear existing WB / FS representation (but prevent unnecessary probes)
 		if( !(isEmpty(true)||(_data!=null && isBelowCachingThreshold()) 
@@ -697,8 +596,7 @@ public abstract class CacheableData<T extends CacheBlock> extends Data
 			freeEvictedBlob();	
 		
 		// clear the in-memory data
-		clearReusableData();
-		_data = null;	
+		_data = null;
 		clearCache();
 		
 		// clear rdd/broadcast back refs
@@ -706,19 +604,17 @@ public abstract class CacheableData<T extends CacheBlock> extends Data
 			_rddHandle.setBackReference(null);
 		if( _bcHandle != null )
 			_bcHandle.setBackReference(null);
-		if( _gpuHandle != null )
-			_gpuHandle.clearData();
-		
+		if( _gpuObjects != null )
+			for (GPUObject gObj : _gpuObjects.values())
+				if (gObj != null)
+					gObj.clearData();
+
 		// change object state EMPTY
 		setDirty(false);
 		setEmpty();
 	}
-	
-	/**
-	 * 
-	 * @throws CacheException
-	 */
-	public synchronized void exportData() throws CacheException {
+
+	public synchronized void exportData() {
 		exportData( -1 );
 	}
 	
@@ -728,38 +624,23 @@ public abstract class CacheableData<T extends CacheBlock> extends Data
 	 * In-Status:  EMPTY, EVICTABLE, EVICTED, READ;
 	 * Out-Status: EMPTY, EVICTABLE, EVICTED, READ.
 	 * 
-	 * @throws CacheException 
+	 * @param replication ?
 	 */
-	public synchronized void exportData( int replication ) 
-		throws CacheException 
-	{
+	public synchronized void exportData( int replication ) {
 		exportData(_hdfsFileName, null, replication, null);
 		_hdfsFileExists = true;
 	}
 
-	/**
-	 * 
-	 * @param fName
-	 * @param outputFormat
-	 * @throws CacheException
-	 */
-	public synchronized void exportData(String fName, String outputFormat)
-		throws CacheException
-	{
+	public synchronized void exportData(String fName, String outputFormat) {
 		exportData(fName, outputFormat, -1, null);
 	}
-	
-	/**
-	 * 
-	 * @param fName
-	 * @param outputFormat
-	 * @param formatProperties
-	 * @throws CacheException
-	 */
-	public synchronized void exportData(String fName, String outputFormat, FileFormatProperties formatProperties)
-		throws CacheException
-	{
+
+	public synchronized void exportData(String fName, String outputFormat, FileFormatProperties formatProperties) {
 		exportData(fName, outputFormat, -1, formatProperties);
+	}
+	
+	public synchronized void exportData (String fName, String outputFormat, int replication, FileFormatProperties formatProperties) {
+		exportData(fName, outputFormat, replication, formatProperties, null);
 	}
 	
 	/**
@@ -773,46 +654,54 @@ public abstract class CacheableData<T extends CacheBlock> extends Data
 	 * the output format and most importantly would bypass reblocking during write (which effects the
 	 * potential degree of parallelism). However, we copy files on HDFS if certain criteria are given.  
 	 * 
-	 * @param fName
-	 * @param outputFormat
-	 * @throws CacheException
+	 * @param fName file name
+	 * @param outputFormat format
+	 * @param replication ?
+	 * @param formatProperties file format properties
+	 * @param opcode instruction opcode if available
 	 */
-	public synchronized void exportData (String fName, String outputFormat, int replication, FileFormatProperties formatProperties)
-		throws CacheException
-	{
+	public synchronized void exportData (String fName, String outputFormat, int replication, FileFormatProperties formatProperties, String opcode) {
 		if( LOG.isTraceEnabled() )
-			LOG.trace("Export data "+getVarName()+" "+fName);
+			LOG.trace("Export data "+hashCode()+" "+fName);
 		long t0 = DMLScript.STATISTICS ? System.nanoTime() : 0;
 		
 		//prevent concurrent modifications
 		if ( !isAvailableToRead() )
-			throw new CacheException ("MatrixObject not available to read.");
+			throw new DMLRuntimeException("MatrixObject not available to read.");
 
 		LOG.trace("Exporting " + this.getDebugName() + " to " + fName + " in format " + outputFormat);
 		
-		//TODO remove 
-		if( getGPUObject() != null && getGPUObject().isAllocated() ) {
-			getGPUObject().acquireHostRead();
+		//TODO remove
+		boolean copiedFromGPU = false;
+		for (Map.Entry<GPUContext, GPUObject> kv : _gpuObjects.entrySet()) {
+			GPUObject gObj = kv.getValue();
+			if (gObj != null && copiedFromGPU && gObj.isDirty()) {
+				throw new DMLRuntimeException("Internal Error : Inconsistent internal state, A copy of this CacheableData was dirty on more than 1 GPU");
+			} else if (gObj != null){
+				copiedFromGPU = gObj.acquireHostRead(null);
+				if( _data == null )
+					getCache();
+			}
 		}
-				
-		boolean pWrite = false; // !fName.equals(_hdfsFileName); //persistent write flag
-		if ( fName.equals(_hdfsFileName) ) {
+		
+		//check for persistent or transient writes
+		boolean pWrite = !fName.equals(_hdfsFileName);
+		if( !pWrite )
 			setHDFSFileExists(true);
-			pWrite = false;
-		}
-		else {
-			pWrite = true;  // i.e., export is called from "write" instruction
-		}
-
+		
+		//check for common file scheme (otherwise no copy/rename)
+		boolean eqScheme = IOUtilFunctions.isSameFileScheme(
+			new Path(_hdfsFileName), new Path(fName));
+		
 		//actual export (note: no direct transfer of local copy in order to ensure blocking (and hence, parallelism))
-		if(  isDirty()  ||      //use dirty for skipping parallel exports
-		    (pWrite && !isEqualOutputFormat(outputFormat)) ) 
-		{		  
+		if( isDirty() || !eqScheme ||
+			(pWrite && !isEqualOutputFormat(outputFormat)) ) 
+		{
 			// CASE 1: dirty in-mem matrix or pWrite w/ different format (write matrix to fname; load into memory if evicted)
-			// a) get the matrix		
+			// a) get the matrix
 			if( isEmpty(true) )
 			{
-			    //read data from HDFS if required (never read before), this applies only to pWrite w/ different output formats
+				//read data from HDFS if required (never read before), this applies only to pWrite w/ different output formats
 				//note: for large rdd outputs, we compile dedicated writespinstructions (no need to handle this here) 
 				try
 				{
@@ -824,7 +713,7 @@ public abstract class CacheableData<T extends CacheBlock> extends Data
 				}
 				catch (IOException e)
 				{
-				    throw new CacheException("Reading of " + _hdfsFileName + " ("+getVarName()+") failed.", e);
+				    throw new DMLRuntimeException("Reading of " + _hdfsFileName + " ("+hashCode()+") failed.", e);
 				}
 			}
 			//get object from cache
@@ -833,19 +722,16 @@ public abstract class CacheableData<T extends CacheBlock> extends Data
 			acquire( false, _data==null ); //incl. read matrix if evicted	
 			
 			// b) write the matrix 
-			try
-			{
+			try {
 				writeMetaData( fName, outputFormat, formatProperties );
 				writeBlobToHDFS( fName, outputFormat, replication, formatProperties );
 				if ( !pWrite )
 					setDirty(false);
 			}
-			catch (Exception e)
-			{
-				throw new CacheException ("Export to " + fName + " failed.", e);
+			catch (Exception e) {
+				throw new DMLRuntimeException("Export to " + fName + " failed.", e);
 			}
-			finally
-			{
+			finally {
 				release();
 			}
 		}
@@ -863,20 +749,25 @@ public abstract class CacheableData<T extends CacheBlock> extends Data
 				writeMetaData( fName, outputFormat, formatProperties );
 			}
 			catch (Exception e) {
-				throw new CacheException ("Export to " + fName + " failed.", e);
+				throw new DMLRuntimeException("Export to " + fName + " failed.", e);
 			}
 		}
-		else if( getRDDHandle()!=null && //pending rdd operation
-				!getRDDHandle().allowsShortCircuitRead() )
+		else if( getRDDHandle()!=null && getRDDHandle().isPending()
+			&& !getRDDHandle().isHDFSFile() 
+			&& !getRDDHandle().allowsShortCircuitRead() )
 		{
 			//CASE 3: pending rdd operation (other than checkpoints)
 			try
 			{
+				//write matrix or frame
 				writeBlobFromRDDtoHDFS(getRDDHandle(), fName, outputFormat);
 				writeMetaData( fName, outputFormat, formatProperties );
+
+				//update rdd status
+				getRDDHandle().setPending(false);
 			}
 			catch (Exception e) {
-				throw new CacheException ("Export to " + fName + " failed.", e);
+				throw new DMLRuntimeException("Export to " + fName + " failed.", e);
 			}
 		}
 		else 
@@ -910,40 +801,33 @@ public abstract class CacheableData<T extends CacheBlock> extends Data
 	 * Low-level cache I/O method that physically restores the data blob to
 	 * main memory. Must be defined by a subclass, never called by users.
 	 *
-	 * @throws CacheException 
 	 */
-	protected void restoreBlobIntoMemory() 
-		throws CacheException
-	{
+	protected void restoreBlobIntoMemory() {
 		String cacheFilePathAndName = getCacheFilePathAndName();
 		long begin = LOG.isTraceEnabled() ? System.currentTimeMillis() : 0;
 		
 		if( LOG.isTraceEnabled() )
-			LOG.trace ("CACHE: Restoring matrix...  " + getVarName() + "  HDFS path: " + 
+			LOG.trace ("CACHE: Restoring matrix...  " + hashCode() + "  HDFS path: " + 
 						(_hdfsFileName == null ? "null" : _hdfsFileName) + ", Restore from path: " + cacheFilePathAndName);
 				
 		if (_data != null)
-			throw new CacheException (cacheFilePathAndName + " : Cannot restore on top of existing in-memory data.");
+			throw new DMLRuntimeException(cacheFilePathAndName + " : Cannot restore on top of existing in-memory data.");
 
 		try {
 			_data = readBlobFromCache(cacheFilePathAndName);
 		}
 		catch (IOException e) {
-			throw new CacheException (cacheFilePathAndName + " : Restore failed.", e);	
+			throw new DMLRuntimeException(cacheFilePathAndName + " : Restore failed.", e);	
 		}
 		
 		//check for success
-	    if (_data == null)
-			throw new CacheException (cacheFilePathAndName + " : Restore failed.");
-	    
-	    if( LOG.isTraceEnabled() )
-	    	LOG.trace("Restoring matrix - COMPLETED ... " + (System.currentTimeMillis()-begin) + " msec.");
-	}		
-	/**
-	 * 
-	 * @param fname
-	 * @return
-	 */
+		if (_data == null)
+			throw new DMLRuntimeException (cacheFilePathAndName + " : Restore failed.");
+		
+		if( LOG.isTraceEnabled() )
+			LOG.trace("Restoring matrix - COMPLETED ... " + (System.currentTimeMillis()-begin) + " msec.");
+	}
+
 	protected abstract T readBlobFromCache(String fname)
 		throws IOException;
 	
@@ -956,7 +840,7 @@ public abstract class CacheableData<T extends CacheBlock> extends Data
 		String cacheFilePathAndName = getCacheFilePathAndName();
 		long begin = LOG.isTraceEnabled() ? System.currentTimeMillis() : 0;
 		if( LOG.isTraceEnabled() )
-			LOG.trace("CACHE: Freeing evicted matrix...  " + getVarName() + "  HDFS path: " + 
+			LOG.trace("CACHE: Freeing evicted matrix...  " + hashCode() + "  HDFS path: " + 
 						(_hdfsFileName == null ? "null" : _hdfsFileName) + " Eviction path: " + cacheFilePathAndName);
 		
 		LazyWriteBuffer.deleteBlock(cacheFilePathAndName);
@@ -964,108 +848,59 @@ public abstract class CacheableData<T extends CacheBlock> extends Data
 		if( LOG.isTraceEnabled() )
 			LOG.trace("Freeing evicted matrix - COMPLETED ... " + (System.currentTimeMillis()-begin) + " msec.");		
 	}
-	
-	/**
-	 * 
-	 */
+
 	protected boolean isBelowCachingThreshold() {
 		return (_data.getInMemorySize() <= CACHING_THRESHOLD);
+	}
+	
+	public long getDataSize() {
+		return (_data != null) ?_data.getInMemorySize() : 0;
 	}
 	
 	protected ValueType[] getSchema() {
 		return null;
 	}
-	
-	/**
-	 * 
-	 */
+
 	@Override //Data
 	public synchronized String getDebugName() {
 		int maxLength = 23;
 		String debugNameEnding = (_hdfsFileName == null ? "null" : 
 			(_hdfsFileName.length() < maxLength ? _hdfsFileName : "..." + 
 				_hdfsFileName.substring (_hdfsFileName.length() - maxLength + 3)));
-		return getVarName() + " " + debugNameEnding;
+		return hashCode() + " " + debugNameEnding;
 	}
 
-	/**
-	 * 
-	 * @param fname
-	 * @return
-	 * @throws IOException
-	 */
 	protected T readBlobFromHDFS(String fname) 
 		throws IOException 
 	{
-		MatrixFormatMetaData iimd = (MatrixFormatMetaData) _metaData;
+		MetaDataFormat iimd = (MetaDataFormat) _metaData;
 		MatrixCharacteristics mc = iimd.getMatrixCharacteristics();
 		return readBlobFromHDFS(fname, mc.getRows(), mc.getCols());
 	}
-	
-	/**
-	 * 
-	 * @param fname
-	 * @param rlen
-	 * @param clen
-	 * @return
-	 * @throws IOException
-	 */
+
 	protected abstract T readBlobFromHDFS(String fname, long rlen, long clen) 
 		throws IOException;
-	
-	/**
-	 * 
-	 * @param rdd
-	 * @param status
-	 * @return
-	 * @throws IOException
-	 */
+
 	protected abstract T readBlobFromRDD(RDDObject rdd, MutableBoolean status)
 		throws IOException;
-	
-	/**
-	 * 
-	 * @param fname
-	 * @param ofmt
-	 * @param rep
-	 * @param fprop
-	 * @throws IOException
-	 * @throws DMLRuntimeException
-	 */
+
 	protected abstract void writeBlobToHDFS(String fname, String ofmt, int rep, FileFormatProperties fprop) 
-		throws IOException, DMLRuntimeException;
-	
-	/**
-	 * 
-	 * @param rdd
-	 * @param fname
-	 * @param ofmt
-	 * @throws IOException
-	 * @throws DMLRuntimeException
-	 */
+		throws IOException;
+
 	protected abstract void writeBlobFromRDDtoHDFS(RDDObject rdd, String fname, String ofmt) 
-		throws IOException, DMLRuntimeException;
-		
-	
-	/**
-	 * 
-	 * @param filePathAndName
-	 * @param outputFormat
-	 * @param formatProperties
-	 * @throws DMLRuntimeException
-	 * @throws IOException
-	 */
+		throws IOException;
+
 	protected void writeMetaData (String filePathAndName, String outputFormat, FileFormatProperties formatProperties)
-		throws DMLRuntimeException, IOException
+		throws IOException
 	{		
-		MatrixFormatMetaData iimd = (MatrixFormatMetaData) _metaData;
+		MetaDataFormat iimd = (MetaDataFormat) _metaData;
 	
 		if (iimd == null)
 			throw new DMLRuntimeException("Unexpected error while writing mtd file (" + filePathAndName + ") -- metadata is null.");
 			
-		// Write the matrix to HDFS in requested format			
+		// Write the matrix to HDFS in requested format
 		OutputInfo oinfo = (outputFormat != null ? OutputInfo.stringToOutputInfo (outputFormat) 
-                : InputInfo.getMatchingOutputInfo (iimd.getInputInfo ()));
+			: InputInfo.getMatchingOutputInfo (iimd.getInputInfo ()));
 		
 		if ( oinfo != OutputInfo.MatrixMarketOutputInfo ) {
 			// Get the dimension information from the metadata stored within MatrixObject
@@ -1081,21 +916,16 @@ public abstract class CacheableData<T extends CacheBlock> extends Data
 			
 			//write the actual meta data file
 			MapReduceTool.writeMetaDataFile (filePathAndName + ".mtd", valueType, 
-					getSchema(), dataType, mc, oinfo, formatProperties);
+				getSchema(), dataType, mc, oinfo, formatProperties);
 		}
 	}
-	
-	/**
-	 * 
-	 * @param outputFormat
-	 * @return
-	 */
+
 	protected boolean isEqualOutputFormat( String outputFormat )
 	{
 		boolean ret = true;
 		if( outputFormat != null ) {
 			try {
-				MatrixFormatMetaData iimd = (MatrixFormatMetaData) _metaData;
+				MetaDataFormat iimd = (MetaDataFormat) _metaData;
 				OutputInfo oi1 = InputInfo.getMatchingOutputInfo( iimd.getInputInfo() );
 				OutputInfo oi2 = OutputInfo.stringToOutputInfo( outputFormat );
 				if( oi1 != oi2 )
@@ -1112,20 +942,13 @@ public abstract class CacheableData<T extends CacheBlock> extends Data
 	
 	// ------------- IMPLEMENTED CACHE LOGIC METHODS --------------	
 	
-	protected int getUniqueCacheID() {
-		return _uniqueID;
-	}
-	
-	/**
-	 * 
-	 */
 	protected String getCacheFilePathAndName () {
 		if( _cacheFileName==null ) {
 			StringBuilder sb = new StringBuilder();
 			sb.append(CacheableData.cacheEvictionLocalFilePath); 
 			sb.append(CacheableData.cacheEvictionLocalFilePrefix);
-			sb.append(String.format ("%09d", getUniqueCacheID()));
-			sb.append(CacheableData.CACHING_EVICTION_FILEEXTENSION);			
+			sb.append(String.format ("%09d", _uniqueID));
+			sb.append(CacheableData.CACHING_EVICTION_FILEEXTENSION);
 			_cacheFileName = sb.toString();
 		}
 		
@@ -1151,11 +974,9 @@ public abstract class CacheableData<T extends CacheBlock> extends Data
 	 * 
 	 * @param isModify : <code>true</code> for the exclusive "modify" lock,
 	 *     <code>false</code> for a shared "read" lock.
-	 * @throws CacheException
+	 * @param restore true if restore
 	 */
-	protected void acquire (boolean isModify, boolean restore) 
-		throws CacheException
-	{
+	protected void acquire (boolean isModify, boolean restore) {
 		switch ( _cacheStatus )
 		{
 			case CACHED:
@@ -1170,16 +991,16 @@ public abstract class CacheableData<T extends CacheBlock> extends Data
 				break;
 			case READ:
 				if (isModify)
-					throw new CacheException ("READ-MODIFY not allowed.");
+					throw new DMLRuntimeException("READ-MODIFY not allowed.");
 				else
 					addOneRead();
 				break;
 			case MODIFY:
-				throw new CacheException ("MODIFY-MODIFY not allowed.");
+				throw new DMLRuntimeException("MODIFY-MODIFY not allowed.");
 		}
 
 		if( LOG.isTraceEnabled() )
-			LOG.trace("Acquired lock on " + this.getDebugName() + ", status: " + this.getStatusAsString() );		
+			LOG.trace("Acquired lock on " + getDebugName() + ", status: " + _cacheStatus.name() );
 	}
 
 	
@@ -1189,21 +1010,20 @@ public abstract class CacheableData<T extends CacheBlock> extends Data
 	 * It is expected that you eliminate all external references to the blob
 	 * prior to calling this method, because otherwise eviction will
 	 * duplicate the blob, but not release memory.  This method has to be
-	 * called only once per process and coupled with {@link #acquire(boolean)},
+	 * called only once per process and coupled with {@link #acquire(boolean, boolean)},
 	 * because it decrements the lock count and the other method increments
 	 * the lock count.
 	 * 
-	 * @throws CacheException 
+	 * @param cacheNoWrite ?
 	 */
 	protected void release(boolean cacheNoWrite)
-		throws CacheException
 	{
 		switch ( _cacheStatus )
 		{
 			case EMPTY:
 			case CACHED:
-			case CACHED_NOWRITE:	
-				throw new CacheException("Redundant release.");
+			case CACHED_NOWRITE:
+				throw new DMLRuntimeException("Redundant release.");
 			case READ:
 				removeOneRead( isBlobPresent(), cacheNoWrite );
 				break;
@@ -1212,11 +1032,11 @@ public abstract class CacheableData<T extends CacheBlock> extends Data
 					setCached();
 				else
 					setEmpty();
-			    break;
+				break;
 		}
 		
 		if( LOG.isTraceEnabled() )
-			LOG.trace("Released lock on " + this.getDebugName() + ", status: " + this.getStatusAsString());
+			LOG.trace("Released lock on " + getDebugName() + ", status: " + _cacheStatus.name());
 		
 	}
 
@@ -1227,16 +1047,9 @@ public abstract class CacheableData<T extends CacheBlock> extends Data
 	//  ***                                            ***
 	//  **************************************************
 	
-	
-	public String getStatusAsString() {
-		return _cacheStatus.toString();
-	}
-    
 	public boolean isCached(boolean inclCachedNoWrite) {
-		if( inclCachedNoWrite )
-			return (_cacheStatus == CacheStatus.CACHED || _cacheStatus == CacheStatus.CACHED_NOWRITE);
-		else
-			return (_cacheStatus == CacheStatus.CACHED);
+		return _cacheStatus == CacheStatus.CACHED
+			|| (inclCachedNoWrite && _cacheStatus == CacheStatus.CACHED_NOWRITE);
 	}
 	
 	public void setEmptyStatus() {
@@ -1244,10 +1057,8 @@ public abstract class CacheableData<T extends CacheBlock> extends Data
 	}
 	
 	protected boolean isEmpty(boolean inclCachedNoWrite) {
-		if( inclCachedNoWrite )
-			return (_cacheStatus == CacheStatus.EMPTY || _cacheStatus == CacheStatus.CACHED_NOWRITE);
-		else
-			return (_cacheStatus == CacheStatus.EMPTY);
+		return _cacheStatus == CacheStatus.EMPTY
+			|| (inclCachedNoWrite && _cacheStatus == CacheStatus.CACHED_NOWRITE);
 	}
 	
 	protected boolean isModify() {
@@ -1272,22 +1083,19 @@ public abstract class CacheableData<T extends CacheBlock> extends Data
 	}
 	
 	protected void removeOneRead(boolean doesBlobExist, boolean cacheNoWrite) {
-		_numReadThreads --;					
+		_numReadThreads --;
 		if (_numReadThreads == 0) {
 			if( cacheNoWrite )
 				_cacheStatus = (doesBlobExist ? 
-						CacheStatus.CACHED_NOWRITE : CacheStatus.EMPTY);
+					CacheStatus.CACHED_NOWRITE : CacheStatus.EMPTY);
 			else
 				_cacheStatus = (doesBlobExist ? 
-						CacheStatus.CACHED : CacheStatus.EMPTY);
+					CacheStatus.CACHED : CacheStatus.EMPTY);
 		}
 	}
 	
 	protected boolean isAvailableToRead() {
-		return (   _cacheStatus == CacheStatus.EMPTY 
-				|| _cacheStatus == CacheStatus.CACHED
-				|| _cacheStatus == CacheStatus.CACHED_NOWRITE
-				|| _cacheStatus == CacheStatus.READ);
+		return (_cacheStatus != CacheStatus.MODIFY);
 	}
 	
 	protected boolean isAvailableToModify() {
@@ -1308,7 +1116,8 @@ public abstract class CacheableData<T extends CacheBlock> extends Data
 	 * referenced cache block.  
 	 */
 	protected void createCache( ) {
-		_cache = new SoftReference<T>( _data );	
+		if( _cache == null || _cache.get() == null )
+			_cache = new SoftReference<>( _data );
 	}
 
 	/**
@@ -1316,9 +1125,8 @@ public abstract class CacheableData<T extends CacheBlock> extends Data
 	 * and subsequently clears the cache soft reference if existing.
 	 */
 	protected void getCache() {
-		if( _cache !=null ) {
+		if( _cache != null ) {
 			_data = _cache.get();
-			clearCache();
 		}
 	}
 	
@@ -1329,32 +1137,32 @@ public abstract class CacheableData<T extends CacheBlock> extends Data
 			_cache = null;
 		}
 	}
-	
-	/**
-	 * 
-	 * @param add
-	 */
+
 	protected void updateStatusPinned(boolean add) {
-		if( _data != null ) { //data should never be null
-			long size = sizePinned.get();
-			size += (add ? 1 : -1) * _data.getInMemorySize();
-			sizePinned.set( Math.max(size,0) );
-		}
+		if( _data == null || !OptimizerUtils.isHybridExecutionMode() )
+			return; //avoid size computation for string frames
+		long size = sizePinned.get();
+		size += (add ? 1 : -1) * _data.getInMemorySize();
+		sizePinned.set( Math.max(size,0) );
 	}
-	
-	/**
-	 * 
-	 * @return
-	 */
-	protected long getPinnedSize() {
+
+	protected static long getPinnedSize() {
 		return sizePinned.get();
 	}
 	
-	// --------- STATIC CACHE INIT/CLEANUP OPERATIONS ----------
+	public static void addBroadcastSize(long size) {
+		_refBCs.addAndGet(size);
+	}
 	
-	/**
-	 * 
-	 */
+	public static long getBroadcastSize() {
+		//scale the total sum of all broadcasts by the current fraction
+		//of local memory to equally distribute it across parfor workers
+		return (long) (_refBCs.longValue() *
+			InfrastructureAnalyzer.getLocalMaxMemoryFraction());
+	}
+	
+	// --------- STATIC CACHE INIT/CLEANUP OPERATIONS ----------
+
 	public synchronized static void cleanupCacheDir() {
 		//cleanup remaining cached writes
 		LazyWriteBuffer.cleanup();
@@ -1366,7 +1174,7 @@ public abstract class CacheableData<T extends CacheBlock> extends Data
 	/**
 	 * Deletes the DML-script-specific caching working dir.
 	 * 
-	 * @param withDir
+	 * @param withDir if true, delete directory
 	 */
 	public synchronized static void cleanupCacheDir(boolean withDir)
 	{
@@ -1392,7 +1200,8 @@ public abstract class CacheableData<T extends CacheBlock> extends Data
 	
 	/**
 	 * Inits caching with the default uuid of DMLScript
-	 * @throws IOException 
+	 * 
+	 * @throws IOException if IOException occurs
 	 */
 	public synchronized static void initCaching() 
 		throws IOException
@@ -1405,7 +1214,8 @@ public abstract class CacheableData<T extends CacheBlock> extends Data
 	 * 
 	 * Takes the UUID in order to allow for custom uuid, e.g., for remote parfor caching
 	 * 
-	 * @throws IOException 
+	 * @param uuid ID
+	 * @throws IOException if IOException occurs
 	 */
 	public synchronized static void initCaching( String uuid ) 
 		throws IOException
@@ -1423,39 +1233,35 @@ public abstract class CacheableData<T extends CacheBlock> extends Data
 	
 		//init write-ahead buffer
 		LazyWriteBuffer.init();
+		_refBCs.set(0);
 		
 		_activeFlag = true; //turn on caching
 	}
 	
-	public static synchronized boolean isCachingActive() {
+	public static boolean isCachingActive() {
 		return _activeFlag;
 	}
 	
-	public static synchronized void disableCaching() {
+	public static void disableCaching() {
 		_activeFlag = false;
 	}
 	
-	public static synchronized void enableCaching() {
+	public static void enableCaching() {
 		_activeFlag = true;
 	}
 
-	/**
-	 * 
-	 * @param fName
-	 * @param outputFormat
-	 * @return
-	 * @throws CacheException
-	 */
-	public synchronized boolean moveData(String fName, String outputFormat) 
-		throws CacheException 
-	{	
+	public synchronized boolean moveData(String fName, String outputFormat) {
 		boolean ret = false;
 		
 		try
 		{
+			//check for common file scheme (otherwise no copy/rename)
+			boolean eqScheme = IOUtilFunctions.isSameFileScheme(
+				new Path(_hdfsFileName), new Path(fName));
+			
 			//export or rename to target file on hdfs
-			if( (isDirty() || (!isEqualOutputFormat(outputFormat) && isEmpty(true))) ||
-				(getRDDHandle() != null && !MapReduceTool.existsFileOnHDFS(_hdfsFileName)))
+			if( isDirty() || !eqScheme || (!isEqualOutputFormat(outputFormat) && isEmpty(true)) 
+				|| (getRDDHandle()!=null && !MapReduceTool.existsFileOnHDFS(_hdfsFileName)) )
 			{
 				exportData(fName, outputFormat);
 				ret = true;
@@ -1467,29 +1273,29 @@ public abstract class CacheableData<T extends CacheBlock> extends Data
 				MapReduceTool.renameFileOnHDFS( _hdfsFileName, fName );
 				writeMetaData( fName, outputFormat, null );
 				ret = true;
-			}				
+			}
 		}
-		catch (Exception e)
-		{
-			throw new CacheException ("Move to " + fName + " failed.", e);
+		catch (Exception e) {
+			throw new DMLRuntimeException("Move to " + fName + " failed.", e);
 		}
 		
 		return ret;
 	}
 
+	@Override
 	public String toString() {
 		StringBuilder str = new StringBuilder();
 		str.append(getClass().getSimpleName());
 		str.append(": ");
 		str.append(_hdfsFileName + ", ");
 
-		if (_metaData instanceof NumItemsByEachReducerMetaData) {
+		if (_metaData instanceof MetaDataNumItemsByEachReducer) {
 			str.append("NumItemsByEachReducerMetaData");
 		} else {
 			try {
-				MatrixFormatMetaData md = (MatrixFormatMetaData) _metaData;
+				MetaDataFormat md = (MetaDataFormat) _metaData;
 				if (md != null) {
-					MatrixCharacteristics mc = ((MatrixDimensionsMetaData) _metaData).getMatrixCharacteristics();
+					MatrixCharacteristics mc = _metaData.getMatrixCharacteristics();
 					str.append(mc.toString());
 
 					InputInfo ii = md.getInputInfo();

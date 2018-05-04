@@ -23,7 +23,6 @@ import java.util.ArrayList;
 import java.util.Arrays;
 
 import org.apache.sysml.lops.PartialAggregate.CorrectionLocationType;
-import org.apache.sysml.runtime.DMLRuntimeException;
 import org.apache.sysml.runtime.functionobjects.ReduceAll;
 import org.apache.sysml.runtime.functionobjects.ReduceCol;
 import org.apache.sysml.runtime.functionobjects.ReduceRow;
@@ -42,61 +41,36 @@ import org.apache.sysml.runtime.matrix.operators.AggregateOperator;
 import org.apache.sysml.runtime.matrix.operators.AggregateUnaryOperator;
 import org.apache.sysml.runtime.matrix.operators.BinaryOperator;
 
-
-/**
- * 
- */
-public class UaggOuterChainInstruction extends BinaryInstruction implements IDistributedCacheConsumer
-{	
-	//operators
+public class UaggOuterChainInstruction extends BinaryInstruction implements IDistributedCacheConsumer {
+	// operators
 	private AggregateUnaryOperator _uaggOp = null;
 	private AggregateOperator _aggOp = null;
 	private BinaryOperator _bOp = null;
-	
-	//reused intermediates  
+
+	// reused intermediates
 	private MatrixValue _tmpVal1 = null;
 	private MatrixValue _tmpVal2 = null;
-	
+
 	private double[] _bv = null;
 	private int[] _bvi = null;
-	
-	/**
-	 * 
-	 * @param bop
-	 * @param uaggop
-	 * @param in1
-	 * @param out
-	 * @param istr
-	 */
-	public UaggOuterChainInstruction(BinaryOperator bop, AggregateUnaryOperator uaggop, AggregateOperator aggop, byte in1, byte in2, byte out, String istr)
-	{
-		super(null, in1, in2, out, istr);
-		
+
+	private UaggOuterChainInstruction(BinaryOperator bop, AggregateUnaryOperator uaggop, AggregateOperator aggop,
+			byte in1, byte in2, byte out, String istr) {
+		super(MRType.UaggOuterChain, null, in1, in2, out, istr);
 		_uaggOp = uaggop;
 		_aggOp = aggop;
 		_bOp = bop;
-			
 		_tmpVal1 = new MatrixBlock();
 		_tmpVal2 = new MatrixBlock();
-		
-		mrtype = MRINSTRUCTION_TYPE.UaggOuterChain;
 		instString = istr;
 	}
-	
-	/**
-	 * 
-	 * @param str
-	 * @return
-	 * @throws DMLRuntimeException
-	 */
-	public static UaggOuterChainInstruction parseInstruction( String str ) 
-		throws DMLRuntimeException 
-	{		
+
+	public static UaggOuterChainInstruction parseInstruction( String str ) {
 		//check number of fields (2/3 inputs, output, type)
 		InstructionUtils.checkNumFields ( str, 5 );
 		
 		//parse instruction parts (without exec type)
-		String[] parts = InstructionUtils.getInstructionParts( str );		
+		String[] parts = InstructionUtils.getInstructionParts( str );
 		
 		AggregateUnaryOperator uaggop = InstructionUtils.parseBasicAggregateUnaryOperator(parts[1]);
 		BinaryOperator bop = InstructionUtils.parseBinaryOperator(parts[2]);
@@ -112,12 +86,7 @@ public class UaggOuterChainInstruction extends BinaryInstruction implements IDis
 	
 		return new UaggOuterChainInstruction(bop, uaggop, aop, in1, in2, out, str);
 	}
-	
-	/**
-	 * 
-	 * @param mcIn
-	 * @param mcOut
-	 */
+
 	public void computeOutputCharacteristics(MatrixCharacteristics mcIn1, MatrixCharacteristics mcIn2, MatrixCharacteristics mcOut)
 	{
 		if( _uaggOp.indexFn instanceof ReduceAll )
@@ -130,9 +99,7 @@ public class UaggOuterChainInstruction extends BinaryInstruction implements IDis
 	
 	@Override
 	public void processInstruction(Class<? extends MatrixValue> valueClass, CachedValueMap cachedValues, 
-			           IndexedMatrixValue tempValue, IndexedMatrixValue zeroInput, int blockRowFactor, int blockColFactor)
-		throws DMLRuntimeException 
-	{
+			           IndexedMatrixValue tempValue, IndexedMatrixValue zeroInput, int blockRowFactor, int blockColFactor) {
 		ArrayList<IndexedMatrixValue> blkList = null; 
 		boolean rightCached = (_uaggOp.indexFn instanceof ReduceCol || _uaggOp.indexFn instanceof ReduceAll
 				               || !LibMatrixOuterAgg.isSupportedUaggOp(_uaggOp, _bOp));
@@ -189,8 +156,8 @@ public class UaggOuterChainInstruction extends BinaryInstruction implements IDis
 						Arrays.sort(_bv);
 					}
 				}
-		
-				LibMatrixOuterAgg.resetOutputMatix(in1Ix, (MatrixBlock)in1Val, outIx, (MatrixBlock)outVal, _uaggOp);
+				
+				LibMatrixOuterAgg.resetOutputMatrix(in1Ix, (MatrixBlock)in1Val, outIx, (MatrixBlock)outVal, _uaggOp);
 				LibMatrixOuterAgg.aggregateMatrix((MatrixBlock)in1Val, (MatrixBlock)outVal, _bv, _bvi, _bOp, _uaggOp);
 			}
 			else //default case 

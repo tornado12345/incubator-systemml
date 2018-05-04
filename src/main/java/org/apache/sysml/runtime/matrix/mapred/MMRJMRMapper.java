@@ -45,9 +45,9 @@ implements Mapper<Writable, Writable, Writable, Writable>
 	//the aggregate binary instruction for this mmcj job
 	private TripleIndexes triplebuffer=new TripleIndexes();
 	private TaggedMatrixValue taggedValue=null;
-	private HashMap<Byte, Long> numRepeats=new HashMap<Byte, Long>();
-	private HashSet<Byte> aggBinInput1s=new HashSet<Byte>();
-	private HashSet<Byte> aggBinInput2s=new HashSet<Byte>();
+	private HashMap<Byte, Long> numRepeats=new HashMap<>();
+	private HashSet<Byte> aggBinInput1s=new HashSet<>();
+	private HashSet<Byte> aggBinInput2s=new HashSet<>();
 	
 	@Override
 	protected void specialOperationsForActualMap(int index,
@@ -68,34 +68,29 @@ implements Mapper<Writable, Writable, Writable, Writable>
 					//output the left matrix
 					if(aggBinInput1s.contains(output))
 					{
-						for(long j=0; j<numRepeats.get(output); j++)
-						{
+						for(long j=0; j<numRepeats.get(output); j++) {
 							triplebuffer.setIndexes(result.getIndexes().getRowIndex(), j+1, result.getIndexes().getColumnIndex());
 							taggedValue.setBaseObject(result.getValue());
 							taggedValue.setTag(output);
 							out.collect(triplebuffer, taggedValue);
-							//System.out.println("output to reducer: "+triplebuffer+"\n"+taggedValue);
 						}
-					}else if(aggBinInput2s.contains(output))//output the right matrix
+					}
+					else if(aggBinInput2s.contains(output))//output the right matrix
 					{
-						for(long i=0; i<numRepeats.get(output); i++)
-						{
+						for(long i=0; i<numRepeats.get(output); i++) {
 							triplebuffer.setIndexes(i+1, result.getIndexes().getColumnIndex(), result.getIndexes().getRowIndex());
 							taggedValue.setBaseObject(result.getValue());
 							taggedValue.setTag(output);
 							out.collect(triplebuffer, taggedValue);
-							//System.out.println("output to reducer: "+triplebuffer+"\n"+taggedValue);
 						}
 					}else //output other matrix that are not involved in aggregate binary
 					{
 						triplebuffer.setIndexes(result.getIndexes().getRowIndex(), result.getIndexes().getColumnIndex(), -1);
 						////////////////////////////////////////
-					//	taggedValueBuffer.getBaseObject().copy(result.getValue());
 						taggedValue.setBaseObject(result.getValue());
 						////////////////////////////////////////
 						taggedValue.setTag(output);
 						out.collect(triplebuffer, taggedValue);
-						//System.out.println("output to reducer: "+triplebuffer+"\n"+taggedValue);
 					}
 				}
 		}	
@@ -109,6 +104,7 @@ implements Mapper<Writable, Writable, Writable, Writable>
 		
 	}
 	
+	@Override
 	public void configure(JobConf job)
 	{
 		super.configure(job);

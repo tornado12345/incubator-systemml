@@ -22,7 +22,6 @@ package org.apache.sysml.lops.compile;
 import org.apache.sysml.hops.Hop.FileFormatTypes;
 import org.apache.sysml.lops.Lop;
 import org.apache.sysml.lops.Data;
-import org.apache.sysml.lops.ParameterizedBuiltin;
 import org.apache.sysml.runtime.DMLRuntimeException;
 
 
@@ -70,8 +69,7 @@ public enum JobType
 	DATA_PARTITION	(11, "DATAPARTITION", 	false, 			false, 								true),
 	CSV_REBLOCK		(12, "CSV_REBLOCK", 	false, 			false, 								false),
 	CSV_WRITE		(13, "CSV_WRITE", 		false, 			false, 								true),
-	TRANSFORM		(14, "TRANSFORM", 		false, 			true, 								false),
-	GMRCELL			(15, "GMRCELL", 		false, 			false, 								false);
+	GMRCELL			(14, "GMRCELL", 		false, 			false, 								false);
 
 
 	
@@ -130,7 +128,7 @@ public enum JobType
 		return allowsNoOtherInstructions;
 	}
 
-	public Lop.Type getShuffleLopType() throws DMLRuntimeException {
+	public Lop.Type getShuffleLopType() {
 		if ( !allowsSingleShuffleInstruction )
 			throw new DMLRuntimeException("Shuffle Lop Type is not defined for a job (" + getName() + ") with allowsSingleShuffleInstruction=false.");
 		else {
@@ -140,8 +138,6 @@ public enum JobType
 				return Lop.Type.MMRJ;
 			else if ( getName().equals("SORT") )
 				return Lop.Type.SortKeys;
-			else if ( getName().equals("TRANSFORM"))
-				return Lop.Type.ParameterizedBuiltin;
 			else 
 				throw new DMLRuntimeException("Shuffle Lop Type is not defined for a job (" + getName() + ") that allows a single shuffle instruction.");
 		}
@@ -178,34 +174,27 @@ public enum JobType
 		
 		case CSVReBlock:	return JobType.CSV_REBLOCK;
 		
-		case ParameterizedBuiltin:		
-				if( ((ParameterizedBuiltin)node).getOp() == ParameterizedBuiltin.OperationTypes.TRANSFORM )
-					return JobType.TRANSFORM;
-		
 		case Data:
 			/*
 			 * Only Write LOPs with external data formats (except MatrixMarket) produce MR Jobs
 			 */
 			FileFormatTypes fmt = ((Data) node).getFileFormatType();
-			if ( fmt == FileFormatTypes.CSV )
-				return JobType.CSV_WRITE;
-			else
-				return null;
+			return ( fmt == FileFormatTypes.CSV ) ?
+				JobType.CSV_WRITE : null;
 			
 		default:
 			return null; 
 		}
 	}
 	
-	public boolean isCompatibleWithParentNodes() 
-		throws DMLRuntimeException 
+	public boolean isCompatibleWithParentNodes()
 	{
 		if ( !allowsSingleShuffleInstruction )
 			throw new DMLRuntimeException("isCompatibleWithParentNodes() can not be invoked for a job (" + getName() + ") with allowsSingleShuffleInstruction=false.");
 		else {
 			if ( getName().equals("MMCJ") )
 				return false;
-			else if ( getName().equals("MMRJ") || getName().equals("SORT")  || getName().equals("TRANSFORM"))
+			else if ( getName().equals("MMRJ") || getName().equals("SORT"))
 				return true;
 			else 
 				throw new DMLRuntimeException("Implementation for isCompatibleWithParentNodes() is missing for a job (" + getName() + ") that allows a single shuffle instruction.");
@@ -213,10 +202,7 @@ public enum JobType
 	}
 	
 	public boolean allowsRecordReaderInstructions() {
-		if ( getName().equals("GMR") ) 
-			return true;
-		else
-			return false;
+		return getName().equals("GMR"); 
 	}
 	
 	public int getBase() {
@@ -225,29 +211,12 @@ public enum JobType
 		else if (id == 0) {
 			// for ANY, return the bit vector with x number of 1's, 
 			//   where x = number of actual job types (i.e., excluding INVALID,ANY)
-			//System.out.println("ANY --> " + JobType.values().length + ", " + (Math.pow(2, JobType.values().length-2)-1) + ", " + (Math.pow(2,13-2)-1));
 			return (int) Math.pow(2, maxJobID)-1;
 		}
 		else 
 			return (int) Math.pow(2, id-1);
 	}
 
-	public JobType findJobTypeById(int id) {
-		for (JobType jt : JobType.values()) {
-			if (jt.getId() == id)
-				return jt;
-		}
-		return null;
-	}
-
-	public JobType findJobTypeByName(String name) {
-		for (JobType jt : JobType.values()) {
-			if (jt.getName().equalsIgnoreCase(name))
-				return jt;
-		}
-		return null;
-	}
-	
 	public static int getNumJobTypes() {
 		return values().length;
 	}

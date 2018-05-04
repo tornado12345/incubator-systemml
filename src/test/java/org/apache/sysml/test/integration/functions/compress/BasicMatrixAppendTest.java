@@ -45,9 +45,10 @@ public class BasicMatrixAppendTest extends AutomatedTestBase
 	}
 	
 	public enum ValueType {
-		RAND,
-		RAND_ROUND,
-		CONST,
+		RAND, //UC
+		CONST, //RLE
+		RAND_ROUND_OLE, //OLE
+		RAND_ROUND_DDC, //RLE
 	}
 	
 	@Override
@@ -71,13 +72,23 @@ public class BasicMatrixAppendTest extends AutomatedTestBase
 	}
 	
 	@Test
-	public void testDenseRoundRandDataCompression() {
-		runMatrixAppendTest(SparsityType.DENSE, ValueType.RAND_ROUND, true);
+	public void testDenseRoundRandDataOLECompression() {
+		runMatrixAppendTest(SparsityType.DENSE, ValueType.RAND_ROUND_OLE, true);
 	}
 	
 	@Test
-	public void testSparseRoundRandDataCompression() {
-		runMatrixAppendTest(SparsityType.SPARSE, ValueType.RAND_ROUND, true);
+	public void testSparseRoundRandDataOLECompression() {
+		runMatrixAppendTest(SparsityType.SPARSE, ValueType.RAND_ROUND_OLE, true);
+	}
+	
+	@Test
+	public void testDenseRoundRandDataDDCCompression() {
+		runMatrixAppendTest(SparsityType.DENSE, ValueType.RAND_ROUND_DDC, true);
+	}
+	
+	@Test
+	public void testSparseRoundRandDataDDCCompression() {
+		runMatrixAppendTest(SparsityType.SPARSE, ValueType.RAND_ROUND_DDC, true);
 	}
 	
 	@Test
@@ -106,13 +117,13 @@ public class BasicMatrixAppendTest extends AutomatedTestBase
 	}
 	
 	@Test
-	public void testDenseRoundRandDataNoCompression() {
-		runMatrixAppendTest(SparsityType.DENSE, ValueType.RAND_ROUND, false);
+	public void testDenseRoundRandDataOLENoCompression() {
+		runMatrixAppendTest(SparsityType.DENSE, ValueType.RAND_ROUND_OLE, false);
 	}
 	
 	@Test
-	public void testSparseRoundRandDataNoCompression() {
-		runMatrixAppendTest(SparsityType.SPARSE, ValueType.RAND_ROUND, false);
+	public void testSparseRoundRandDataOLENoCompression() {
+		runMatrixAppendTest(SparsityType.SPARSE, ValueType.RAND_ROUND_OLE, false);
 	}
 	
 	@Test
@@ -125,12 +136,7 @@ public class BasicMatrixAppendTest extends AutomatedTestBase
 		runMatrixAppendTest(SparsityType.SPARSE, ValueType.CONST, false);
 	}
 	
-
-	/**
-	 * 
-	 * @param mb
-	 */
-	private void runMatrixAppendTest(SparsityType sptype, ValueType vtype, boolean compress)
+	private static void runMatrixAppendTest(SparsityType sptype, ValueType vtype, boolean compress)
 	{
 		try
 		{
@@ -145,8 +151,10 @@ public class BasicMatrixAppendTest extends AutomatedTestBase
 			//generate input data
 			double min = (vtype==ValueType.CONST)? 10 : -10;
 			double[][] input = TestUtils.generateTestMatrix(rows, cols1, min, 10, sparsity, 7);
-			if( vtype==ValueType.RAND_ROUND )
+			if( vtype==ValueType.RAND_ROUND_OLE || vtype==ValueType.RAND_ROUND_DDC ) {
+				CompressedMatrixBlock.ALLOW_DDC_ENCODING = (vtype==ValueType.RAND_ROUND_DDC);
 				input = TestUtils.round(input);
+			}
 			MatrixBlock mb = DataConverter.convertToMatrixBlock(input);
 			MatrixBlock vector = DataConverter.convertToMatrixBlock(
 					TestUtils.generateTestMatrix(rows, cols2, 1, 1, 1.0, 3));
@@ -157,10 +165,10 @@ public class BasicMatrixAppendTest extends AutomatedTestBase
 				cmb.compress();
 			
 			//matrix-vector uncompressed
-			MatrixBlock ret1 = (MatrixBlock)mb.appendOperations(vector, new MatrixBlock());
+			MatrixBlock ret1 = (MatrixBlock)mb.append(vector, new MatrixBlock());
 			
 			//matrix-vector compressed
-			MatrixBlock ret2 = cmb.appendOperations(vector, new MatrixBlock());
+			MatrixBlock ret2 = cmb.append(vector, new MatrixBlock());
 			if( compress )
 				ret2 = ((CompressedMatrixBlock)ret2).decompress();
 			
@@ -171,6 +179,9 @@ public class BasicMatrixAppendTest extends AutomatedTestBase
 		}
 		catch(Exception ex) {
 			throw new RuntimeException(ex);
+		}
+		finally {
+			CompressedMatrixBlock.ALLOW_DDC_ENCODING = true;
 		}
 	}
 }

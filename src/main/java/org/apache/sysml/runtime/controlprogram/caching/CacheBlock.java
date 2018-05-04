@@ -20,7 +20,6 @@
 package org.apache.sysml.runtime.controlprogram.caching;
 
 import org.apache.hadoop.io.Writable;
-import org.apache.sysml.runtime.DMLRuntimeException;
 
 
 /**
@@ -30,27 +29,22 @@ import org.apache.sysml.runtime.DMLRuntimeException;
  */
 public interface CacheBlock extends Writable 
 {
-	/**
-	 * 
-	 * @return
-	 */
+
 	public int getNumRows();
-	
-	/**
-	 * 
-	 * @return
-	 */
+
 	public int getNumColumns();
 	
 	/**
 	 * Get the in-memory size in bytes of the cache block.
-	 * @return
+	 * 
+	 * @return in-memory size in bytes of cache block
 	 */
 	public long getInMemorySize();
 	
 	/**
 	 * Get the exact serialized size in bytes of the cache block.
-	 * @return
+	 * 
+	 * @return exact serialized size in bytes of cache block
 	 */
 	public long getExactSerializedSize();
 
@@ -59,9 +53,29 @@ public interface CacheBlock extends Writable
 	 * which is generally true if in-memory size and serialized size
 	 * are almost identical allowing to avoid unnecessary deep serialize. 
 	 * 
-	 * @return
+	 * @return true if shallow serialized
 	 */
 	public boolean isShallowSerialize();
+	
+	/**
+	 * Indicates if the cache block is subject to shallow serialized,
+	 * which is generally true if in-memory size and serialized size
+	 * are almost identical allowing to avoid unnecessary deep serialize.
+	 * 
+	 * @param inclConvert if true report blocks as shallow serialize that are
+	 * currently not amenable but can be brought into an amenable form
+	 * via {@link #toShallowSerializeBlock() toShallowSerializeBlock}.
+	 * 
+	 * @return true if shallow serialized
+	 */
+	public boolean isShallowSerialize(boolean inclConvert);
+	
+	/**
+	 * Converts a cache block that is not shallow serializable into
+	 * a form that is shallow serializable. This methods has no affect
+	 * if the given cache block is not amenable.
+	 */
+	public void toShallowSerializeBlock();
 	
 	/**
 	 * Free unnecessarily allocated empty block.
@@ -72,25 +86,21 @@ public interface CacheBlock extends Writable
 	 * Slice a sub block out of the current block and write into the given output block.
 	 * This method returns the passed instance if not null.
 	 * 
-	 * @param rl
-	 * @param ru
-	 * @param cl
-	 * @param cu
-	 * @param block
-	 * @return
-	 * @throws DMLRuntimeException
+	 * @param rl row lower
+	 * @param ru row upper
+	 * @param cl column lower
+	 * @param cu column upper
+	 * @param block cache block
+	 * @return sub-block of cache block
 	 */
-	public CacheBlock sliceOperations(int rl, int ru, int cl, int cu, CacheBlock block) 
-		throws DMLRuntimeException;
+	public CacheBlock slice(int rl, int ru, int cl, int cu, CacheBlock block);
 	
 	/**
 	 * Merge the given block into the current block. Both blocks needs to be of equal 
 	 * dimensions and contain disjoint non-zero cells.
 	 * 
-	 * @param that
-	 * @param appendOnly
-	 * @throws DMLRuntimeException
+	 * @param that cache block
+	 * @param appendOnly ?
 	 */
-	public void merge(CacheBlock that, boolean appendOnly) 
-		throws DMLRuntimeException;
+	public void merge(CacheBlock that, boolean appendOnly);
 }

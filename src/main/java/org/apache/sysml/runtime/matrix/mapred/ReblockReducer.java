@@ -38,16 +38,11 @@ import org.apache.sysml.runtime.matrix.data.MatrixIndexes;
 import org.apache.sysml.runtime.matrix.data.PartialBlock;
 import org.apache.sysml.runtime.matrix.data.TaggedAdaptivePartialBlock;
 
-
-/**
- * 
- * 
- */
 public class ReblockReducer extends ReduceBase 
 	implements Reducer<MatrixIndexes, TaggedAdaptivePartialBlock, MatrixIndexes, MatrixBlock>
 {
 	
-	private HashMap<Byte, MatrixCharacteristics> dimensions = new HashMap<Byte, MatrixCharacteristics>();
+	private HashMap<Byte, MatrixCharacteristics> dimensions = new HashMap<>();
 	
 	@Override
 	public void reduce(MatrixIndexes indexes, Iterator<TaggedAdaptivePartialBlock> values,
@@ -89,13 +84,7 @@ public class ReblockReducer extends ReduceBase
 			throw new RuntimeException(e);
 		}
 	}
-	
-	/**
-	 * 
-	 * @param indexes
-	 * @param values
-	 * @param dimensions
-	 */
+
 	protected void processReblockInReducer(MatrixIndexes indexes, Iterator<TaggedAdaptivePartialBlock> values, 
 			HashMap<Byte, MatrixCharacteristics> dimensions)
 	{

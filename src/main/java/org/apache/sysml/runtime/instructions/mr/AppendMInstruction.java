@@ -22,7 +22,6 @@ package org.apache.sysml.runtime.instructions.mr;
 import java.util.ArrayList;
 
 import org.apache.sysml.lops.AppendM.CacheType;
-import org.apache.sysml.runtime.DMLRuntimeException;
 import org.apache.sysml.runtime.instructions.InstructionUtils;
 import org.apache.sysml.runtime.matrix.data.MatrixIndexes;
 import org.apache.sysml.runtime.matrix.data.MatrixValue;
@@ -33,42 +32,34 @@ import org.apache.sysml.runtime.matrix.mapred.IndexedMatrixValue;
 import org.apache.sysml.runtime.matrix.mapred.MRBaseForCommonInstructions;
 import org.apache.sysml.runtime.matrix.operators.Operator;
 
+public class AppendMInstruction extends AppendInstruction implements IDistributedCacheConsumer {
+	private long _offset = -1;
 
-public class AppendMInstruction extends AppendInstruction implements IDistributedCacheConsumer
-{	
-	private long _offset = -1; 
-	
-	public AppendMInstruction(Operator op, byte in1, byte in2, long offset, CacheType type, byte out, boolean cbind, String istr)
-	{
+	private AppendMInstruction(Operator op, byte in1, byte in2, long offset, CacheType type, byte out, boolean cbind,
+			String istr) {
 		super(op, in1, in2, out, cbind, istr);
 		_offset = offset;
 	}
-	
-	public static AppendMInstruction parseInstruction ( String str ) 
-		throws DMLRuntimeException 
-	{
+
+	public static AppendMInstruction parseInstruction ( String str ) {
 		String[] parts = InstructionUtils.getInstructionParts ( str );
 		InstructionUtils.checkNumFields(parts, 6);
-		
 		byte in1 = Byte.parseByte(parts[1]);
 		byte in2 = Byte.parseByte(parts[2]);
 		long offset = (long)(Double.parseDouble(parts[3]));
 		byte out = Byte.parseByte(parts[4]);
 		CacheType type = CacheType.valueOf(parts[5]);
 		boolean cbind = Boolean.parseBoolean(parts[6]);
-		
 		return new AppendMInstruction(null, in1, in2, offset, type, out, cbind, str);
 	}
 	
 	@Override //IDistributedCacheConsumer
-	public boolean isDistCacheOnlyIndex( String inst, byte index )
-	{
+	public boolean isDistCacheOnlyIndex( String inst, byte index ) {
 		return (index==input2 && index!=input1);
 	}
 	
 	@Override //IDistributedCacheConsumer
-	public void addDistCacheIndex( String inst, ArrayList<Byte> indexes )
-	{
+	public void addDistCacheIndex( String inst, ArrayList<Byte> indexes ) {
 		indexes.add(input2);
 	}
 	
@@ -76,8 +67,7 @@ public class AppendMInstruction extends AppendInstruction implements IDistribute
 	public void processInstruction(Class<? extends MatrixValue> valueClass,
 			CachedValueMap cachedValues, IndexedMatrixValue tempValue, IndexedMatrixValue zeroInput, 
 			int blockRowFactor, int blockColFactor)
-		throws DMLRuntimeException 
-	{	
+	{
 		ArrayList<IndexedMatrixValue> blkList = cachedValues.get(input1);
 		if( blkList == null ) 
 			return;
@@ -88,9 +78,9 @@ public class AppendMInstruction extends AppendInstruction implements IDistribute
 			if(in1 == null)
 				continue;
 		
-			//check for boundary block
+			//check for boundary block w/ awareness of zero rows or columns
 			int blen = _cbind ? blockColFactor : blockRowFactor;
-			long lastBlockColIndex = (long)Math.ceil((double)_offset/blen);	
+			long lastBlockColIndex = Math.max((long)Math.ceil((double)_offset/blen),1);
 			
 			//case 1: pass through of non-boundary blocks
 			MatrixIndexes ix = in1.getIndexes();
@@ -107,13 +97,13 @@ public class AppendMInstruction extends AppendInstruction implements IDistribute
 				DistributedCacheInput dcInput = MRBaseForCommonInstructions.dcValues.get(input2);
 				if( _cbind ) {
 					cachedValues.add(output, new IndexedMatrixValue(
-							new MatrixIndexes(ix.getRowIndex(), ix.getColumnIndex()+1),
-							dcInput.getDataBlock((int)ix.getRowIndex(), 1).getValue()));
+						new MatrixIndexes(ix.getRowIndex(), ix.getColumnIndex()+1),
+						dcInput.getDataBlock((int)ix.getRowIndex(), 1).getValue()));
 				}
 				else {
 					cachedValues.add(output, new IndexedMatrixValue(
-							new MatrixIndexes(ix.getRowIndex()+1, ix.getColumnIndex()),
-							dcInput.getDataBlock(1, (int)ix.getColumnIndex()).getValue()));	
+						new MatrixIndexes(ix.getRowIndex()+1, ix.getColumnIndex()),
+						dcInput.getDataBlock(1, (int)ix.getColumnIndex()).getValue()));	
 				}
 			}
 			//case 3: append operation on boundary block
@@ -122,7 +112,7 @@ public class AppendMInstruction extends AppendInstruction implements IDistribute
 				DistributedCacheInput dcInput = MRBaseForCommonInstructions.dcValues.get(input2);
 				
 				//allocate space for the output value
-				ArrayList<IndexedMatrixValue> outlist=new ArrayList<IndexedMatrixValue>(2);
+				ArrayList<IndexedMatrixValue> outlist=new ArrayList<>(2);
 				IndexedMatrixValue first=cachedValues.holdPlace(output, valueClass);
 				first.getIndexes().setIndexes(ix);
 				outlist.add(first);
@@ -137,16 +127,16 @@ public class AppendMInstruction extends AppendInstruction implements IDistribute
 					}
 				}
 				else { //rbind
-					value_in2 = dcInput.getDataBlock(1, (int)ix.getRowIndex()).getValue();
+					value_in2 = dcInput.getDataBlock(1, (int)ix.getColumnIndex()).getValue();
 					if(in1.getValue().getNumRows()+value_in2.getNumRows()>blen) {
 						IndexedMatrixValue second=cachedValues.holdPlace(output, valueClass);
 						second.getIndexes().setIndexes(ix.getRowIndex()+1, ix.getColumnIndex());
 						outlist.add(second);
 					}
 				}
-	
+				
 				OperationsOnMatrixValues.performAppend(in1.getValue(), value_in2, outlist, 
-					blockRowFactor, blockColFactor, _cbind, true, 0);			
+					blockRowFactor, blockColFactor, _cbind, true, 0);
 			}
 		}
 	}

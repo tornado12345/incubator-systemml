@@ -21,7 +21,6 @@ package org.apache.sysml.yarn.ropt;
 
 import java.util.ArrayList;
 
-import org.apache.sysml.runtime.DMLRuntimeException;
 import org.apache.sysml.runtime.controlprogram.ProgramBlock;
 
 public class GridEnumerationEqui extends GridEnumeration
@@ -31,27 +30,19 @@ public class GridEnumerationEqui extends GridEnumeration
 
 	private int _nsteps = -1;
 	
-	public GridEnumerationEqui( ArrayList<ProgramBlock> prog, long min, long max ) 
-		throws DMLRuntimeException
-	{
+	public GridEnumerationEqui( ArrayList<ProgramBlock> prog, long min, long max ) {
 		super(prog, min, max);
-		
 		_nsteps = DEFAULT_NSTEPS;
 	}
 	
-	/**
-	 * 
-	 * @param steps
-	 */
-	public void setNumSteps( int steps )
-	{
+	public void setNumSteps( int steps ) {
 		_nsteps = steps;
 	}
 	
 	@Override
 	public ArrayList<Long> enumerateGridPoints() 
 	{
-		ArrayList<Long> ret = new ArrayList<Long>();
+		ArrayList<Long> ret = new ArrayList<>();
 		long gap = (_max - _min) / (_nsteps-1);
 		long v = _min;
 		for (int i = 0; i < _nsteps; i++) {

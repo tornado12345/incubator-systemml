@@ -20,8 +20,8 @@
 package org.apache.sysml.runtime.instructions.spark;
 
 
-import java.util.ArrayList;
 import java.util.Iterator;
+import java.util.stream.IntStream;
 
 import org.apache.spark.api.java.JavaPairRDD;
 import org.apache.spark.api.java.JavaRDD;
@@ -55,73 +55,76 @@ import org.apache.sysml.runtime.matrix.operators.AggregateBinaryOperator;
 import org.apache.sysml.runtime.matrix.operators.AggregateOperator;
 import org.apache.sysml.runtime.matrix.operators.Operator;
 
-/**
- * TODO: we need to reason about multiple broadcast variables for chains of mapmults (sum of operations until cleanup) 
- * 
- */
-public class MapmmSPInstruction extends BinarySPInstruction 
-{
-	
+public class MapmmSPInstruction extends BinarySPInstruction {
 	private CacheType _type = null;
 	private boolean _outputEmpty = true;
 	private SparkAggType _aggtype;
-	
-	public MapmmSPInstruction(Operator op, CPOperand in1, CPOperand in2, CPOperand out, CacheType type, 
-			                    boolean outputEmpty, SparkAggType aggtype, String opcode, String istr )
-	{
-		super(op, in1, in2, out, opcode, istr);
-		_sptype = SPINSTRUCTION_TYPE.MAPMM;
-		
+
+	private MapmmSPInstruction(Operator op, CPOperand in1, CPOperand in2, CPOperand out, CacheType type,
+			boolean outputEmpty, SparkAggType aggtype, String opcode, String istr) {
+		super(SPType.MAPMM, op, in1, in2, out, opcode, istr);
 		_type = type;
 		_outputEmpty = outputEmpty;
 		_aggtype = aggtype;
 	}
 
-	/**
-	 * 
-	 * @param str
-	 * @return
-	 * @throws DMLRuntimeException
-	 */
-	public static MapmmSPInstruction parseInstruction( String str ) 
-		throws DMLRuntimeException 
-	{
+	public static MapmmSPInstruction parseInstruction( String str ) {
 		String parts[] = InstructionUtils.getInstructionPartsWithValueType(str);
 		String opcode = parts[0];
 
-		if ( opcode.equalsIgnoreCase(MapMult.OPCODE)) 
-		{
-			CPOperand in1 = new CPOperand(parts[1]);
-			CPOperand in2 = new CPOperand(parts[2]);
-			CPOperand out = new CPOperand(parts[3]);
-			CacheType type = CacheType.valueOf(parts[4]);
-			boolean outputEmpty = Boolean.parseBoolean(parts[5]);
-			SparkAggType aggtype = SparkAggType.valueOf(parts[6]);
-			
-			AggregateOperator agg = new AggregateOperator(0, Plus.getPlusFnObject());
-			AggregateBinaryOperator aggbin = new AggregateBinaryOperator(Multiply.getMultiplyFnObject(), agg);
-			return new MapmmSPInstruction(aggbin, in1, in2, out, type, outputEmpty, aggtype, opcode, str);
-		} 
-		else {
+		if(!opcode.equalsIgnoreCase(MapMult.OPCODE)) 
 			throw new DMLRuntimeException("MapmmSPInstruction.parseInstruction():: Unknown opcode " + opcode);
-		}
+			
+		CPOperand in1 = new CPOperand(parts[1]);
+		CPOperand in2 = new CPOperand(parts[2]);
+		CPOperand out = new CPOperand(parts[3]);
+		CacheType type = CacheType.valueOf(parts[4]);
+		boolean outputEmpty = Boolean.parseBoolean(parts[5]);
+		SparkAggType aggtype = SparkAggType.valueOf(parts[6]);
 		
+		AggregateOperator agg = new AggregateOperator(0, Plus.getPlusFnObject());
+		AggregateBinaryOperator aggbin = new AggregateBinaryOperator(Multiply.getMultiplyFnObject(), agg);
+		return new MapmmSPInstruction(aggbin, in1, in2, out, type, outputEmpty, aggtype, opcode, str);		
 	}
 	
 	@Override
-	public void processInstruction(ExecutionContext ec) 
-		throws DMLRuntimeException
-	{	
+	public void processInstruction(ExecutionContext ec)  {
 		SparkExecutionContext sec = (SparkExecutionContext)ec;
 		
-		String rddVar = (_type==CacheType.LEFT) ? input2.getName() : input1.getName();
-		String bcastVar = (_type==CacheType.LEFT) ? input1.getName() : input2.getName();
+		CacheType type = _type;
+		String rddVar = type.isRight() ? input1.getName() : input2.getName();
+		String bcastVar = type.isRight() ? input2.getName() : input1.getName();
 		MatrixCharacteristics mcRdd = sec.getMatrixCharacteristics(rddVar);
 		MatrixCharacteristics mcBc = sec.getMatrixCharacteristics(bcastVar);
 		
+		//get input rdd with preferred number of partitions to avoid unnecessary repartition
+		JavaPairRDD<MatrixIndexes,MatrixBlock> in1 = sec.getBinaryBlockRDDHandleForVariable(rddVar,
+			(requiresFlatMapFunction(type, mcBc) && requiresRepartitioning(
+			type, mcRdd, mcBc, sec.getSparkContext().defaultParallelism())) ?
+			getNumRepartitioning(type, mcRdd, mcBc) : -1, _outputEmpty);
+		
+		//investigate if a repartitioning - including a potential flip of broadcast and rdd 
+		//inputs - is required to ensure moderately sized output partitions (2GB limitation)
+		if( requiresFlatMapFunction(type, mcBc) &&
+			requiresRepartitioning(type, mcRdd, mcBc, in1.getNumPartitions()) ) 
+		{
+			int numParts = getNumRepartitioning(type, mcRdd, mcBc);
+			int numParts2 = getNumRepartitioning(type.getFlipped(), mcBc, mcRdd);
+			if( numParts2 > numParts ) { //flip required
+				type = type.getFlipped();
+				rddVar = type.isRight() ? input1.getName() : input2.getName();
+				bcastVar = type.isRight() ? input2.getName() : input1.getName();
+				mcRdd = sec.getMatrixCharacteristics(rddVar);
+				mcBc = sec.getMatrixCharacteristics(bcastVar);
+				in1 = sec.getBinaryBlockRDDHandleForVariable(rddVar);
+				LOG.warn("Mapmm: Switching rdd ('"+bcastVar+"') and broadcast ('"+rddVar+"') inputs "
+						+ "for repartitioning because this allows better control of output partition "
+						+ "sizes ("+numParts+" < "+numParts2+").");	
+			}
+		}
+		
 		//get inputs
-		JavaPairRDD<MatrixIndexes,MatrixBlock> in1 = sec.getBinaryBlockRDDHandleForVariable( rddVar );
-		PartitionedBroadcast<MatrixBlock> in2 = sec.getBroadcastForVariable( bcastVar ); 
+		PartitionedBroadcast<MatrixBlock> in2 = sec.getBroadcastForVariable(bcastVar); 
 		
 		//empty input block filter
 		if( !_outputEmpty )
@@ -130,32 +133,36 @@ public class MapmmSPInstruction extends BinarySPInstruction
 		//execute mapmm and aggregation if necessary and put output into symbol table
 		if( _aggtype == SparkAggType.SINGLE_BLOCK )
 		{
-			JavaRDD<MatrixBlock> out = in1.map(new RDDMapMMFunction2(_type, in2));
+			JavaRDD<MatrixBlock> out = in1.map(new RDDMapMMFunction2(type, in2));
 			MatrixBlock out2 = RDDAggregateUtils.sumStable(out);
 			
 			//put output block into symbol table (no lineage because single block)
 			//this also includes implicit maintenance of matrix characteristics
-			sec.setMatrixOutput(output.getName(), out2);
+			sec.setMatrixOutput(output.getName(), out2, getExtendedOpcode());
 		}
 		else //MULTI_BLOCK or NONE
 		{
 			JavaPairRDD<MatrixIndexes,MatrixBlock> out = null;
-			if( requiresFlatMapFunction(_type, mcBc) ) {
-				if( requiresRepartitioning(_type, mcRdd, mcBc, in1.partitions().size()) )
-					in1 = in1.repartition(getNumRepartitioning(_type, mcRdd, mcBc, in1.partitions().size()));
-				out = in1.flatMapToPair( new RDDFlatMapMMFunction(_type, in2) );
+			if( requiresFlatMapFunction(type, mcBc) ) {
+				if( requiresRepartitioning(type, mcRdd, mcBc, in1.getNumPartitions()) ) {
+					int numParts = getNumRepartitioning(type, mcRdd, mcBc);
+					LOG.warn("Mapmm: Repartition input rdd '"+rddVar+"' from "+in1.getNumPartitions()+" to "
+							+numParts+" partitions to satisfy size restrictions of output partitions.");
+					in1 = in1.repartition(numParts);
+				}
+				out = in1.flatMapToPair( new RDDFlatMapMMFunction(type, in2) );
 			}
-			else if( preservesPartitioning(mcRdd, _type) )
-				out = in1.mapPartitionsToPair(new RDDMapMMPartitionFunction(_type, in2), true);
+			else if( preservesPartitioning(mcRdd, type) )
+				out = in1.mapPartitionsToPair(new RDDMapMMPartitionFunction(type, in2), true);
 			else
-				out = in1.mapToPair( new RDDMapMMFunction(_type, in2) );
+				out = in1.mapToPair( new RDDMapMMFunction(type, in2) );
 			
 			//empty output block filter
 			if( !_outputEmpty )
 				out = out.filter(new FilterNonEmptyBlocksFunction());
 			
 			if( _aggtype == SparkAggType.MULTI_BLOCK )
-				out = RDDAggregateUtils.sumByKeyStable(out);
+				out = RDDAggregateUtils.sumByKeyStable(out, false);
 		
 			//put output RDD handle into symbol table
 			sec.setRDDHandleForVariable(output.getName(), out);
@@ -166,13 +173,7 @@ public class MapmmSPInstruction extends BinarySPInstruction
 			updateBinaryMMOutputMatrixCharacteristics(sec, true);
 		}
 	}
-	
-	/**
-	 * 
-	 * @param mcIn
-	 * @param type
-	 * @return
-	 */
+
 	private static boolean preservesPartitioning( MatrixCharacteristics mcIn, CacheType type )
 	{
 		if( type == CacheType.LEFT )
@@ -185,9 +186,9 @@ public class MapmmSPInstruction extends BinarySPInstruction
 	 * Indicates if there is a need to apply a flatmap rdd operation because a single 
 	 * input block creates multiple output blocks.
 	 * 
-	 * @param type
-	 * @param mcBc
-	 * @return
+	 * @param type cache type
+	 * @param mcBc matrix characteristics
+	 * @return true if single input block creates multiple output blocks
 	 */
 	private static boolean requiresFlatMapFunction( CacheType type, MatrixCharacteristics mcBc)
 	{
@@ -200,11 +201,11 @@ public class MapmmSPInstruction extends BinarySPInstruction
 	 * degree of parallelism or reduce the output partition size (e.g., Spark still has a
 	 * 2GB limitation of partitions)
 	 * 
-	 * @param type
-	 * @param mcRdd
-	 * @param mcBc
-	 * @param numPartitions
-	 * @return
+	 * @param type cache type
+	 * @param mcRdd rdd matrix characteristics
+	 * @param mcBc ?
+	 * @param numPartitions number of partitions
+	 * @return true need to repartition input RDD
 	 */
 	private static boolean requiresRepartitioning( CacheType type, MatrixCharacteristics mcRdd, MatrixCharacteristics mcBc, int numPartitions ) {
 		//note: as repartitioning requires data shuffling, we try to be very conservative here
@@ -218,20 +219,20 @@ public class MapmmSPInstruction extends BinarySPInstruction
 		boolean isLargeOutput = (OptimizerUtils.estimatePartitionedSizeExactSparsity(isLeft?mcBc.getRows():mcRdd.getRows(),
 				isLeft?mcRdd.getCols():mcBc.getCols(), isLeft?mcBc.getRowsPerBlock():mcRdd.getRowsPerBlock(),
 				isLeft?mcRdd.getColsPerBlock():mcBc.getColsPerBlock(), 1.0) / numPartitions) > 1024*1024*1024; 
-		return isOuter && isLargeOutput && mcRdd.dimsKnown() && mcBc.dimsKnown();
+		return isOuter && isLargeOutput && mcRdd.dimsKnown() && mcBc.dimsKnown()
+			&& numPartitions < getNumRepartitioning(type, mcRdd, mcBc);
 	}
 
 	/**
 	 * Computes the number of target partitions for repartitioning input rdds in case of 
-	 * outer-product-like mm. 
+	 * outer-product-like mm.
 	 * 
-	 * @param type
-	 * @param mcRdd
-	 * @param mcBc
-	 * @param numPartitions
-	 * @return
+	 * @param type cache type
+	 * @param mcRdd rdd matrix characteristics
+	 * @param mcBc ?
+	 * @return number of target partitions for repartitioning
 	 */
-	private static int getNumRepartitioning( CacheType type, MatrixCharacteristics mcRdd, MatrixCharacteristics mcBc, int numPartitions ) {
+	private static int getNumRepartitioning( CacheType type, MatrixCharacteristics mcRdd, MatrixCharacteristics mcBc ) {
 		boolean isLeft = (type == CacheType.LEFT);
 		long sizeOutput = (OptimizerUtils.estimatePartitionedSizeExactSparsity(isLeft?mcBc.getRows():mcRdd.getRows(),
 				isLeft?mcRdd.getCols():mcBc.getCols(), isLeft?mcBc.getRowsPerBlock():mcRdd.getRowsPerBlock(),
@@ -239,17 +240,14 @@ public class MapmmSPInstruction extends BinarySPInstruction
 		long numParts = sizeOutput / InfrastructureAnalyzer.getHDFSBlockSize();
 		return (int)Math.min(numParts, (isLeft?mcRdd.getNumColBlocks():mcRdd.getNumRowBlocks()));
 	}
-	
-	/**
-	 * 
-	 */
+
 	private static class RDDMapMMFunction implements PairFunction<Tuple2<MatrixIndexes, MatrixBlock>, MatrixIndexes, MatrixBlock> 
 	{
 		private static final long serialVersionUID = 8197406787010296291L;
 
-		private CacheType _type = null;
-		private AggregateBinaryOperator _op = null;
-		private PartitionedBroadcast<MatrixBlock> _pbc = null;
+		private final CacheType _type;
+		private final AggregateBinaryOperator _op;
+		private final PartitionedBroadcast<MatrixBlock> _pbc;
 		
 		public RDDMapMMFunction( CacheType type, PartitionedBroadcast<MatrixBlock> binput )
 		{
@@ -277,8 +275,8 @@ public class MapmmSPInstruction extends BinarySPInstruction
 				MatrixBlock left = _pbc.getBlock(1, (int)ixIn.getRowIndex());
 				
 				//execute matrix-vector mult
-				OperationsOnMatrixValues.performAggregateBinary( 
-						new MatrixIndexes(1,ixIn.getRowIndex()), left, ixIn, blkIn, ixOut, blkOut, _op);						
+				OperationsOnMatrixValues.matMult(new MatrixIndexes(1,ixIn.getRowIndex()),
+					left, ixIn, blkIn, ixOut, blkOut, _op);
 			}
 			else //if( _type == CacheType.RIGHT )
 			{
@@ -286,12 +284,12 @@ public class MapmmSPInstruction extends BinarySPInstruction
 				MatrixBlock right = _pbc.getBlock((int)ixIn.getColumnIndex(), 1);
 				
 				//execute matrix-vector mult
-				OperationsOnMatrixValues.performAggregateBinary(
-						ixIn, blkIn, new MatrixIndexes(ixIn.getColumnIndex(),1), right, ixOut, blkOut, _op);					
+				OperationsOnMatrixValues.matMult(ixIn, blkIn,
+					new MatrixIndexes(ixIn.getColumnIndex(),1), right, ixOut, blkOut, _op);
 			}
 			
 			//output new tuple
-			return new Tuple2<MatrixIndexes, MatrixBlock>(ixOut, blkOut);
+			return new Tuple2<>(ixOut, blkOut);
 		}
 	}
 
@@ -302,9 +300,9 @@ public class MapmmSPInstruction extends BinarySPInstruction
 	{
 		private static final long serialVersionUID = -2753453898072910182L;
 		
-		private CacheType _type = null;
-		private AggregateBinaryOperator _op = null;
-		private PartitionedBroadcast<MatrixBlock> _pbc = null;
+		private final CacheType _type;
+		private final AggregateBinaryOperator _op;
+		private final PartitionedBroadcast<MatrixBlock> _pbc;
 		
 		public RDDMapMMFunction2( CacheType type, PartitionedBroadcast<MatrixBlock> binput )
 		{
@@ -329,8 +327,8 @@ public class MapmmSPInstruction extends BinarySPInstruction
 				MatrixBlock left = _pbc.getBlock(1, (int)ixIn.getRowIndex());
 				
 				//execute matrix-vector mult
-				return (MatrixBlock) OperationsOnMatrixValues.performAggregateBinaryIgnoreIndexes( 
-						left, blkIn, new MatrixBlock(), _op);						
+				return OperationsOnMatrixValues.matMult( 
+					left, blkIn, new MatrixBlock(), _op);
 			}
 			else //if( _type == CacheType.RIGHT )
 			{
@@ -338,22 +336,19 @@ public class MapmmSPInstruction extends BinarySPInstruction
 				MatrixBlock right = _pbc.getBlock((int)ixIn.getColumnIndex(), 1);
 				
 				//execute matrix-vector mult
-				return (MatrixBlock) OperationsOnMatrixValues.performAggregateBinaryIgnoreIndexes(
-						blkIn, right, new MatrixBlock(), _op);
+				return OperationsOnMatrixValues.matMult(
+					blkIn, right, new MatrixBlock(), _op);
 			}
 		}
 	}
-	
-	/**
-	 * 
-	 */
+
 	private static class RDDMapMMPartitionFunction implements PairFlatMapFunction<Iterator<Tuple2<MatrixIndexes, MatrixBlock>>, MatrixIndexes, MatrixBlock> 
 	{
 		private static final long serialVersionUID = 1886318890063064287L;
 	
-		private CacheType _type = null;
-		private AggregateBinaryOperator _op = null;
-		private PartitionedBroadcast<MatrixBlock> _pbc = null;
+		private final CacheType _type;
+		private final AggregateBinaryOperator _op;
+		private final PartitionedBroadcast<MatrixBlock> _pbc;
 		
 		public RDDMapMMPartitionFunction( CacheType type, PartitionedBroadcast<MatrixBlock> binput )
 		{
@@ -366,7 +361,7 @@ public class MapmmSPInstruction extends BinarySPInstruction
 		}
 		
 		@Override
-		public Iterable<Tuple2<MatrixIndexes, MatrixBlock>> call(Iterator<Tuple2<MatrixIndexes, MatrixBlock>> arg0)
+		public LazyIterableIterator<Tuple2<MatrixIndexes, MatrixBlock>> call(Iterator<Tuple2<MatrixIndexes, MatrixBlock>> arg0)
 			throws Exception 
 		{
 			return new MapMMPartitionIterator(arg0);
@@ -397,7 +392,7 @@ public class MapmmSPInstruction extends BinarySPInstruction
 					MatrixBlock left = _pbc.getBlock(1, (int)ixIn.getRowIndex());
 					
 					//execute index preserving matrix multiplication
-					left.aggregateBinaryOperations(left, blkIn, blkOut, _op);						
+					OperationsOnMatrixValues.matMult(left, blkIn, blkOut, _op);
 				}
 				else //if( _type == CacheType.RIGHT )
 				{
@@ -405,25 +400,21 @@ public class MapmmSPInstruction extends BinarySPInstruction
 					MatrixBlock right = _pbc.getBlock((int)ixIn.getColumnIndex(), 1);
 
 					//execute index preserving matrix multiplication
-					blkIn.aggregateBinaryOperations(blkIn, right, blkOut, _op);	
+					OperationsOnMatrixValues.matMult(blkIn, right, blkOut, _op);
 				}
 			
-				return new Tuple2<MatrixIndexes,MatrixBlock>(ixIn, blkOut);
-			}			
+				return new Tuple2<>(ixIn, blkOut);
+			}
 		}
 	}
-	
-	/**
-	 * 
-	 * 
-	 */
+
 	private static class RDDFlatMapMMFunction implements PairFlatMapFunction<Tuple2<MatrixIndexes, MatrixBlock>, MatrixIndexes, MatrixBlock> 
 	{
 		private static final long serialVersionUID = -6076256569118957281L;
 		
-		private CacheType _type = null;
-		private AggregateBinaryOperator _op = null;
-		private PartitionedBroadcast<MatrixBlock> _pbc = null;
+		private final CacheType _type;
+		private final AggregateBinaryOperator _op;
+		private final PartitionedBroadcast<MatrixBlock> _pbc;
 		
 		public RDDFlatMapMMFunction( CacheType type, PartitionedBroadcast<MatrixBlock> binput )
 		{
@@ -436,51 +427,26 @@ public class MapmmSPInstruction extends BinarySPInstruction
 		}
 		
 		@Override
-		public Iterable<Tuple2<MatrixIndexes, MatrixBlock>> call( Tuple2<MatrixIndexes, MatrixBlock> arg0 ) 
+		public Iterator<Tuple2<MatrixIndexes, MatrixBlock>> call( Tuple2<MatrixIndexes, MatrixBlock> arg0 ) 
 			throws Exception 
 		{
-			ArrayList<Tuple2<MatrixIndexes, MatrixBlock>> ret = new ArrayList<Tuple2<MatrixIndexes, MatrixBlock>>();
-			
 			MatrixIndexes ixIn = arg0._1();
 			MatrixBlock blkIn = arg0._2();
-
-			if( _type == CacheType.LEFT )
-			{
-				//for all matching left-hand-side blocks
-				int len = _pbc.getNumRowBlocks();
-				for( int i=1; i<=len; i++ ) 
-				{
-					MatrixBlock left = _pbc.getBlock(i, (int)ixIn.getRowIndex());
-					MatrixIndexes ixOut = new MatrixIndexes();
-					MatrixBlock blkOut = new MatrixBlock();
-					
-					//execute matrix-vector mult
-					OperationsOnMatrixValues.performAggregateBinary( 
-							new MatrixIndexes(i,ixIn.getRowIndex()), left, ixIn, blkIn, ixOut, blkOut, _op);	
-					
-					ret.add(new Tuple2<MatrixIndexes, MatrixBlock>(ixOut, blkOut));
-				}
-			}
-			else //if( _type == CacheType.RIGHT )
-			{
-				//for all matching right-hand-side blocks
-				int len = _pbc.getNumColumnBlocks();
-				for( int j=1; j<=len; j++ ) 
-				{
-					//get the right hand side matrix
-					MatrixBlock right = _pbc.getBlock((int)ixIn.getColumnIndex(), j);
-					MatrixIndexes ixOut = new MatrixIndexes();
-					MatrixBlock blkOut = new MatrixBlock();
-					
-					//execute matrix-vector mult
-					OperationsOnMatrixValues.performAggregateBinary(
-							ixIn, blkIn, new MatrixIndexes(ixIn.getColumnIndex(),j), right, ixOut, blkOut, _op);					
-				
-					ret.add(new Tuple2<MatrixIndexes, MatrixBlock>(ixOut, blkOut));
-				}
-			}
 			
-			return ret;
+			if( _type == CacheType.LEFT ) {
+				//for all matching left-hand-side blocks, returned as lazy iterator
+				return IntStream.range(1, _pbc.getNumRowBlocks()+1).mapToObj(i ->
+					new Tuple2<>(new MatrixIndexes(i, ixIn.getColumnIndex()),
+					OperationsOnMatrixValues.matMult(_pbc.getBlock(i, (int)ixIn.getRowIndex()), blkIn,
+						new MatrixBlock(), _op))).iterator();
+			}
+			else { //RIGHT
+				//for all matching right-hand-side blocks, returned as lazy iterator
+				return IntStream.range(1, _pbc.getNumColumnBlocks()+1).mapToObj(j ->
+					new Tuple2<>(new MatrixIndexes(ixIn.getRowIndex(), j),
+					OperationsOnMatrixValues.matMult(blkIn, _pbc.getBlock((int)ixIn.getColumnIndex(), j),
+						new MatrixBlock(), _op))).iterator();
+			}
 		}
 	}
 }

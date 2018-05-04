@@ -49,9 +49,10 @@ public class LargeVectorMatrixMultTest extends AutomatedTestBase
 	}
 	
 	public enum ValueType {
-		RAND,
-		RAND_ROUND,
-		CONST,
+		RAND, //UC
+		CONST, //RLE
+		RAND_ROUND_OLE, //OLE
+		RAND_ROUND_DDC, //RLE
 	}
 	
 	@Override
@@ -75,13 +76,23 @@ public class LargeVectorMatrixMultTest extends AutomatedTestBase
 	}
 	
 	@Test
-	public void testDenseRoundRandDataCompression() {
-		runMatrixVectorMultTest(SparsityType.DENSE, ValueType.RAND_ROUND, true);
+	public void testDenseRoundRandDataOLECompression() {
+		runMatrixVectorMultTest(SparsityType.DENSE, ValueType.RAND_ROUND_OLE, true);
 	}
 	
 	@Test
-	public void testSparseRoundRandDataCompression() {
-		runMatrixVectorMultTest(SparsityType.SPARSE, ValueType.RAND_ROUND, true);
+	public void testSparseRoundRandDataOLECompression() {
+		runMatrixVectorMultTest(SparsityType.SPARSE, ValueType.RAND_ROUND_OLE, true);
+	}
+	
+	@Test
+	public void testDenseRoundRandDataDDCCompression() {
+		runMatrixVectorMultTest(SparsityType.DENSE, ValueType.RAND_ROUND_DDC, true);
+	}
+	
+	@Test
+	public void testSparseRoundRandDataDDCCompression() {
+		runMatrixVectorMultTest(SparsityType.SPARSE, ValueType.RAND_ROUND_DDC, true);
 	}
 	
 	@Test
@@ -110,13 +121,13 @@ public class LargeVectorMatrixMultTest extends AutomatedTestBase
 	}
 	
 	@Test
-	public void testDenseRoundRandDataNoCompression() {
-		runMatrixVectorMultTest(SparsityType.DENSE, ValueType.RAND_ROUND, false);
+	public void testDenseRoundRandDataOLENoCompression() {
+		runMatrixVectorMultTest(SparsityType.DENSE, ValueType.RAND_ROUND_OLE, false);
 	}
 	
 	@Test
-	public void testSparseRoundRandDataNoCompression() {
-		runMatrixVectorMultTest(SparsityType.SPARSE, ValueType.RAND_ROUND, false);
+	public void testSparseRoundRandDataOLENoCompression() {
+		runMatrixVectorMultTest(SparsityType.SPARSE, ValueType.RAND_ROUND_OLE, false);
 	}
 	
 	@Test
@@ -129,12 +140,7 @@ public class LargeVectorMatrixMultTest extends AutomatedTestBase
 		runMatrixVectorMultTest(SparsityType.SPARSE, ValueType.CONST, false);
 	}
 	
-
-	/**
-	 * 
-	 * @param mb
-	 */
-	private void runMatrixVectorMultTest(SparsityType sptype, ValueType vtype, boolean compress)
+	private static void runMatrixVectorMultTest(SparsityType sptype, ValueType vtype, boolean compress)
 	{
 		try
 		{
@@ -149,8 +155,10 @@ public class LargeVectorMatrixMultTest extends AutomatedTestBase
 			//generate input data
 			double min = (vtype==ValueType.CONST)? 10 : -10;
 			double[][] input = TestUtils.generateTestMatrix(rows, cols, min, 10, sparsity, 7);
-			if( vtype==ValueType.RAND_ROUND )
+			if( vtype==ValueType.RAND_ROUND_OLE || vtype==ValueType.RAND_ROUND_DDC ) {
+				CompressedMatrixBlock.ALLOW_DDC_ENCODING = (vtype==ValueType.RAND_ROUND_DDC);
 				input = TestUtils.round(input);
+			}
 			MatrixBlock mb = DataConverter.convertToMatrixBlock(input);
 			MatrixBlock vector = DataConverter.convertToMatrixBlock(
 					TestUtils.generateTestMatrix(1, rows, 1, 1, 1.0, 3));
@@ -163,10 +171,10 @@ public class LargeVectorMatrixMultTest extends AutomatedTestBase
 			//matrix-vector uncompressed
 			AggregateOperator aop = new AggregateOperator(0, Plus.getPlusFnObject());
 			AggregateBinaryOperator abop = new AggregateBinaryOperator(Multiply.getMultiplyFnObject(), aop);
-			MatrixBlock ret1 = (MatrixBlock)vector.aggregateBinaryOperations(vector, mb, new MatrixBlock(), abop);
+			MatrixBlock ret1 = vector.aggregateBinaryOperations(vector, mb, new MatrixBlock(), abop);
 			
 			//matrix-vector compressed
-			MatrixBlock ret2 = (MatrixBlock)cmb.aggregateBinaryOperations(vector, cmb, new MatrixBlock(), abop);
+			MatrixBlock ret2 = cmb.aggregateBinaryOperations(vector, cmb, new MatrixBlock(), abop);
 			
 			//compare result with input
 			double[][] d1 = DataConverter.convertToDoubleMatrix(ret1);
@@ -175,6 +183,9 @@ public class LargeVectorMatrixMultTest extends AutomatedTestBase
 		}
 		catch(Exception ex) {
 			throw new RuntimeException(ex);
+		}
+		finally {
+			CompressedMatrixBlock.ALLOW_DDC_ENCODING = true;
 		}
 	}
 }

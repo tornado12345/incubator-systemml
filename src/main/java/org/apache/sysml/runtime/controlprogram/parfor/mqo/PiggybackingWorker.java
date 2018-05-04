@@ -30,10 +30,6 @@ import org.apache.sysml.runtime.instructions.MRJobInstruction;
 import org.apache.sysml.runtime.matrix.JobReturn;
 import org.apache.sysml.runtime.matrix.data.Pair;
 
-/**
- * 
- * 
- */
 public abstract class PiggybackingWorker extends Thread
 {
 	
@@ -45,24 +41,15 @@ public abstract class PiggybackingWorker extends Thread
 	
 	protected PiggybackingWorker()
 	{
-		_results = new HashMap<Long, JobReturn>();
+		_results = new HashMap<>();
 		_stop = false;
 	}
 
-	/**
-	 * 
-	 */
 	public void setStopped()
 	{
 		_stop = true;
 	}
-	
-	/**
-	 * 
-	 * @param instID
-	 * @return
-	 * @throws InterruptedException
-	 */
+
 	public synchronized JobReturn getJobResult( long instID ) 
 		throws InterruptedException
 	{
@@ -79,13 +66,7 @@ public abstract class PiggybackingWorker extends Thread
 		
 		return ret;
 	}
-	
-	
-	/**
-	 * 
-	 * @param ids
-	 * @param results
-	 */
+
 	protected synchronized void putJobResults( LinkedList<Long> ids, LinkedList<JobReturn> results )
 	{
 		//make job returns available
@@ -95,17 +76,11 @@ public abstract class PiggybackingWorker extends Thread
 		//notify all waiting threads
 		notifyAll();
 	}
-	
-	/**
-	 * 
-	 * @param workingSet
-	 * @return
-	 * @throws IllegalAccessException 
-	 */
+
 	protected LinkedList<MergedMRJobInstruction> mergeMRJobInstructions( LinkedList<Pair<Long,MRJobInstruction>> workingSet ) 
 		throws IllegalAccessException
 	{
-		LinkedList<MergedMRJobInstruction> ret = new LinkedList<MergedMRJobInstruction>();
+		LinkedList<MergedMRJobInstruction> ret = new LinkedList<>();
 		Timing time = new Timing(true);
 		
 		//NOTE currently all merged into one (might be invalid due to memory constraints)

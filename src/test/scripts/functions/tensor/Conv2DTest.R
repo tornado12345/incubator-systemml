@@ -32,6 +32,18 @@ pad=as.integer(args[7])
 x=matrix(seq(1, numImg*numChannels*imgSize*imgSize), numImg, numChannels*imgSize*imgSize, byrow=TRUE)
 w=matrix(seq(1, numFilters*numChannels*filterSize*filterSize), numFilters, numChannels*filterSize*filterSize, byrow=TRUE)
 
+if(as.logical(args[9])) {
+	zero_mask = (x - mean(x)*1.5) > 0 
+	x = x * zero_mask
+} else {
+	x = x - mean(x)
+}
+if(as.logical(args[10])) {
+	zero_mask = (w - mean(w)*1.5) > 0 
+	w = w * zero_mask
+} else {
+	w = w - mean(w)
+}
 pad_image <- function(img, Hin, Win, padh, padw){
   C = nrow(img)
   img_padded = matrix(0, C, (Hin+2*padh)*(Win+2*padw), byrow=TRUE)  # zeros
@@ -94,5 +106,18 @@ conv2d <- function(X, W, C, Hin, Win, Hf, Wf, strideh, stridew, padh, padw) {
 }
 
 output = conv2d(x, w, numChannels,  imgSize, imgSize, filterSize, filterSize, stride, stride, pad, pad);
+Hout = as.integer((imgSize + 2 * pad - filterSize) / stride + 1)
+Wout = Hout
+
+b=matrix(seq(1, numFilters), numFilters, 1, byrow=TRUE) 
+for(k in 0:(numFilters-1)) {
+	for(i in 1:nrow(output)) {
+		start = k*Hout*Hout;
+		for(j in 1:(Hout*Hout)) {
+			output[i,start+j] = output[i,start+j] + b[k+1,1]
+		}
+	}
+}
+
 
 writeMM(as(output,"CsparseMatrix"), paste(args[8], "B", sep=""))

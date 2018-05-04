@@ -21,12 +21,15 @@ package org.apache.sysml.test.integration.functions.sparse;
 
 import org.junit.Assert;
 import org.junit.Test;
+
+import java.util.Iterator;
+
 import org.apache.sysml.runtime.matrix.data.SparseBlock;
 import org.apache.sysml.runtime.matrix.data.SparseBlockCOO;
 import org.apache.sysml.runtime.matrix.data.SparseBlockCSR;
 import org.apache.sysml.runtime.matrix.data.SparseBlockMCSR;
 import org.apache.sysml.runtime.util.LongLongDoubleHashMap;
-import org.apache.sysml.runtime.util.LongLongDoubleHashMap.LLDoubleEntry;
+import org.apache.sysml.runtime.util.LongLongDoubleHashMap.ADoubleEntry;
 import org.apache.sysml.test.integration.AutomatedTestBase;
 import org.apache.sysml.test.utils.TestUtils;
 
@@ -175,8 +178,11 @@ public class SparseBlockAppendSort extends AutomatedTestBase
 				for( int i=0; i<rows; i++ )
 					for( int j=0; j<cols; j++ )
 						map.addValue(i, j, A[i][j]);
-				for( LLDoubleEntry e : map.extractValues() ) //random hash order
-					sblock.append((int)e.key1, (int)e.key2, e.value);
+				Iterator<ADoubleEntry> iter = map.getIterator();
+				while( iter.hasNext() ) { //random hash order
+					ADoubleEntry e = iter.next();
+					sblock.append((int)e.getKey1(), (int)e.getKey2(), e.value);
+				}
 			}	
 			
 			//sort appended values

@@ -21,7 +21,6 @@ package org.apache.sysml.parser;
 
 import java.util.ArrayList;
 import java.util.HashMap;
-import java.io.IOException;
 
 
 public class FunctionCallIdentifier extends DataIdentifier 
@@ -32,9 +31,9 @@ public class FunctionCallIdentifier extends DataIdentifier
 	private String _namespace;		// namespace of the function being called (null if current namespace is to be used)
 
 	/**
-	 * setFunctionName: sets the function namespace (if specified) and name
-	 * @param functionName the (optional) namespace information and name of function.  If both namespace and name are specified, they are concatinated with "::"
-	 * @throws ParseException 
+	 * sets the function namespace (if specified) and name
+	 * 
+	 * @param functionName the (optional) namespace information and name of function.  If both namespace and name are specified, they are concatenated with "::"
 	 */
 	public void setFunctionName(String functionName) {
 		_name = functionName;
@@ -52,40 +51,26 @@ public class FunctionCallIdentifier extends DataIdentifier
 		return _paramExprs;
 	}
 	
-	public Expression rewriteExpression(String prefix) throws LanguageException {
-			
-		ArrayList<ParameterExpression> newParameterExpressions = new ArrayList<ParameterExpression>();
+	@Override
+	public Expression rewriteExpression(String prefix) {
+		ArrayList<ParameterExpression> newParameterExpressions = new ArrayList<>();
 		for (ParameterExpression paramExpr : _paramExprs)
 			newParameterExpressions.add(new ParameterExpression(paramExpr.getName(), paramExpr.getExpr().rewriteExpression(prefix)));
-		
 		// rewrite each output expression
 		FunctionCallIdentifier fci = new FunctionCallIdentifier(newParameterExpressions);
-		
-		fci.setBeginLine(this.getBeginLine());
-		fci.setBeginColumn(this.getBeginColumn());
-		fci.setEndLine(this.getEndLine());
-		fci.setEndColumn(this.getEndColumn());
-			
+		fci.setParseInfo(this);
 		fci._name = this._name;
 		fci._namespace = this._namespace;
 		fci._opcode = this._opcode;
-		fci._kind = Kind.FunctionCallOp;	 
-		
 		return fci;
 	}
-	
-	
 	
 	public FunctionCallIdentifier(){}
 	
 	public FunctionCallIdentifier(ArrayList<ParameterExpression> paramExpressions) {
-		
 		_paramExprs = paramExpressions;
 		_opcode = null;
-		_kind = Kind.FunctionCallOp;	 
 	}
-	
-	
 	
 	public FunctCallOp getOpCode() {
 		return _opcode;
@@ -97,10 +82,13 @@ public class FunctionCallIdentifier extends DataIdentifier
 	 * 
 	 * NOTE: this does not override the normal validateExpression because it needs to pass dmlp!
 	 * 
-	 * @throws LanguageException
+	 * @param dmlp dml program
+	 * @param ids map of data identifiers
+	 * @param constVars map of constant identifiers
+	 * @param conditional if true, display warning for 'raiseValidateError'; if false, throw LanguageException
+	 * for 'raiseValidateError'
 	 */
 	public void validateExpression(DMLProgram dmlp, HashMap<String, DataIdentifier> ids, HashMap<String, ConstIdentifier> constVars, boolean conditional) 
-		throws LanguageException, IOException
 	{
 		// Step 1: check the namespace exists, and that function is defined in the namespace
 		if (dmlp.getNamespaces().get(_namespace) == null){
@@ -164,15 +152,13 @@ public class FunctionCallIdentifier extends DataIdentifier
 		for(int i=0; i < fstmt.getOutputParams().size(); i++) {
 			_outputs[i] = new DataIdentifier(fstmt.getOutputParams().get(i));
 		}
-		
-		return;
 	}
 	
 	@Override
 	public String toString() {
 		StringBuilder sb = new StringBuilder();
-		if (_namespace != null && _namespace.length() > 0 && !_namespace.equals(".defaultNS")) 
-			sb.append(_namespace + "::"); 
+		if (_namespace != null && _namespace.length() > 0 && !_namespace.equals(DMLProgram.DEFAULT_NAMESPACE))
+			sb.append(_namespace + "::");
 		sb.append(_name);
 		sb.append(" ( ");		
 				

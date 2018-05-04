@@ -23,57 +23,43 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Map.Entry;
 
+import org.apache.commons.lang.NotImplementedException;
 import org.apache.sysml.parser.DMLProgram;
 import org.apache.sysml.runtime.DMLRuntimeException;
 import org.apache.sysml.runtime.DMLScriptException;
 import org.apache.sysml.runtime.controlprogram.context.ExecutionContext;
 
-
 public class Program 
 {
-	
 	public static final String KEY_DELIM = "::";
 	
 	public ArrayList<ProgramBlock> _programBlocks;
 
 	private HashMap<String, HashMap<String,FunctionProgramBlock>> _namespaceFunctions;
 	
-	public Program() throws DMLRuntimeException {
-		_namespaceFunctions = new HashMap<String, HashMap<String,FunctionProgramBlock>>(); 
-		_programBlocks = new ArrayList<ProgramBlock>();
+	public Program() {
+		_namespaceFunctions = new HashMap<>();
+		_programBlocks = new ArrayList<>();
 	}
 
-	/**
-	 * 
-	 * @param namespace
-	 * @param fname
-	 * @param fpb
-	 */
 	public synchronized void addFunctionProgramBlock(String namespace, String fname, FunctionProgramBlock fpb)
-	{	
+	{
 		if (namespace == null) 
 			namespace = DMLProgram.DEFAULT_NAMESPACE;
 		
 		HashMap<String,FunctionProgramBlock> namespaceBlocks = null;
 		namespaceBlocks = _namespaceFunctions.get(namespace);
 		if (namespaceBlocks == null){
-			namespaceBlocks = new HashMap<String,FunctionProgramBlock>();
+			namespaceBlocks = new HashMap<>();
 			_namespaceFunctions.put(namespace,namespaceBlocks);
 		}
 		
 		namespaceBlocks.put(fname,fpb);
 	}
-	
-	/**
-	 * 
-	 * @param namespace
-	 * @param fname
-	 */
-	public synchronized void removeFunctionProgramBlock(String namespace, String fname) 
-	{	
+
+	public synchronized void removeFunctionProgramBlock(String namespace, String fname) {
 		if (namespace == null) 
 			namespace = DMLProgram.DEFAULT_NAMESPACE;
-		
 		HashMap<String,FunctionProgramBlock> namespaceBlocks = null;
 		if( _namespaceFunctions.containsKey(namespace) ){
 			namespaceBlocks = _namespaceFunctions.get(namespace);
@@ -81,14 +67,9 @@ public class Program
 				namespaceBlocks.remove(fname);
 		}
 	}
-	
-	/**
-	 * 
-	 * @return
-	 */
+
 	public synchronized HashMap<String,FunctionProgramBlock> getFunctionProgramBlocks(){
-		
-		HashMap<String,FunctionProgramBlock> retVal = new HashMap<String,FunctionProgramBlock>();
+		HashMap<String,FunctionProgramBlock> retVal = new HashMap<>();
 		
 		//create copy of function program blocks
 		for (String namespace : _namespaceFunctions.keySet()){
@@ -103,16 +84,8 @@ public class Program
 		
 		return retVal;
 	}
-	
-	/**
-	 * 
-	 * @param namespace
-	 * @param fname
-	 * @return
-	 * @throws DMLRuntimeException
-	 */
-	public synchronized FunctionProgramBlock getFunctionProgramBlock(String namespace, String fname) throws DMLRuntimeException{
-		
+
+	public synchronized FunctionProgramBlock getFunctionProgramBlock(String namespace, String fname){
 		if (namespace == null) namespace = DMLProgram.DEFAULT_NAMESPACE;
 		
 		HashMap<String,FunctionProgramBlock> namespaceFunctBlocks = _namespaceFunctions.get(namespace);
@@ -133,9 +106,7 @@ public class Program
 		return _programBlocks;
 	}
 
-	public void execute(ExecutionContext ec)
-		throws DMLRuntimeException
-	{
+	public void execute(ExecutionContext ec) {
 		ec.initDebugProgramCounters();
 		
 		try
@@ -153,5 +124,41 @@ public class Program
 		}
 		
 		ec.clearDebugProgramCounters();
+	}
+
+	public Program clone(boolean deep) {
+		if( deep )
+			throw new NotImplementedException();
+		Program ret = new Program();
+		//shallow copy of all program blocks
+		ret._programBlocks.addAll(_programBlocks);
+		//shallow copy of all functions, except external 
+		//functions, which require a deep copy
+		for( Entry<String, HashMap<String, FunctionProgramBlock>> e1 : _namespaceFunctions.entrySet() )
+			for( Entry<String, FunctionProgramBlock> e2 : e1.getValue().entrySet() ) {
+				FunctionProgramBlock fpb = e2.getValue();
+				if( fpb instanceof ExternalFunctionProgramBlock )
+					fpb = createPartialDeepCopy(ret, (ExternalFunctionProgramBlock) fpb);
+				ret.addFunctionProgramBlock(e1.getKey(), e2.getKey(), fpb);
+			}
+		return ret;
+	}
+	
+	@Override
+	public Object clone() {
+		return clone(true);
+	}
+	
+	private static ExternalFunctionProgramBlock createPartialDeepCopy(Program prog, ExternalFunctionProgramBlock efpb) {
+		try {
+			return ( efpb instanceof ExternalFunctionProgramBlockCP ) ?
+				new ExternalFunctionProgramBlockCP(prog, efpb._inputParams, 
+					efpb._outputParams, efpb._otherParams, efpb._baseDir) :
+				new ExternalFunctionProgramBlock(prog, efpb._inputParams,
+					efpb._outputParams, efpb._otherParams, efpb._baseDir);
+		}
+		catch(DMLRuntimeException ex) {
+			throw new RuntimeException(ex);
+		}
 	}
 }

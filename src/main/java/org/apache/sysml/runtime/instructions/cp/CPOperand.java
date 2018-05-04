@@ -19,14 +19,15 @@
 
 package org.apache.sysml.runtime.instructions.cp;
 
-import org.apache.sysml.lops.Lop;
-import org.apache.sysml.parser.Expression.*;
+import org.apache.commons.lang.builder.ToStringBuilder;
+import org.apache.commons.lang.builder.ToStringStyle;
+import org.apache.sysml.parser.Expression.DataType;
+import org.apache.sysml.parser.Expression.ValueType;
 import org.apache.sysml.runtime.instructions.Instruction;
 
 
 public class CPOperand 
 {
-	
 	private String _name;
 	private ValueType _valueType;
 	private DataType _dataType;
@@ -44,14 +45,14 @@ public class CPOperand
 	public CPOperand(String name, ValueType vt, DataType dt ) {
 		this(name, vt, dt, false);
 	}
-	
-	public CPOperand(String name, ValueType vt, DataType dt, boolean literal ) {
+
+	private CPOperand(String name, ValueType vt, DataType dt, boolean literal) {
 		_name = name;
 		_valueType = vt;
 		_dataType = dt;
 		_isLiteral = literal;
 	}
-	
+
 	public String getName() {
 		return _name;
 	}
@@ -64,30 +65,20 @@ public class CPOperand
 		return _dataType;
 	}
 	
+	public boolean isMatrix() {
+		return _dataType.isMatrix();
+	}
+	
+	public boolean isScalar() {
+		return _dataType.isScalar();
+	}
+	
 	public boolean isLiteral() {
 		return _isLiteral;
 	}
 	
 	public void setName(String name) {
 		_name = name;
-	}
-	
-	public void setValueType(ValueType vt) {
-		_valueType = vt;
-	}
-	
-	public void setDataType(DataType dt) {
-		_dataType = dt;
-	}
-	
-	public void setLiteral(boolean literal) {
-		_isLiteral = literal;
-	}
-	
-	public void split_by_value_type_prefix ( String str ) {
-		String[] opr = str.split(Lop.VALUETYPE_PREFIX);
-		_name = opr[0];
-		_valueType = ValueType.valueOf(opr[1]);
 	}
 
 	public void split(String str){
@@ -104,15 +95,22 @@ public class CPOperand
 			_valueType = ValueType.valueOf(opr[2]);
 			_isLiteral = false;
 		}
+		else if ( opr.length == 1 ) {
+			//note: for literals in MR instructions
+			_name = opr[0];
+			_dataType = DataType.SCALAR;
+			_valueType = ValueType.DOUBLE;
+			_isLiteral = true;
+		}
 		else {
 			_name = opr[0];
 			_valueType = ValueType.valueOf(opr[1]);
 		}
 	}
-	
-	public void copy(CPOperand o){
-		_name = o.getName();
-		_valueType = o.getValueType();
-		_dataType = o.getDataType();
+
+	@Override
+	public String toString() {
+		return ToStringBuilder.reflectionToString(this, ToStringStyle.SHORT_PREFIX_STYLE);
 	}
+
 }

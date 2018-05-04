@@ -21,7 +21,6 @@ package org.apache.sysml.runtime.instructions.cp;
 
 import org.apache.sysml.api.DMLScript;
 import org.apache.sysml.debug.DebugState;
-import org.apache.sysml.runtime.DMLRuntimeException;
 import org.apache.sysml.runtime.controlprogram.context.ExecutionContext;
 import org.apache.sysml.runtime.instructions.Instruction;
 
@@ -33,7 +32,7 @@ import org.apache.sysml.runtime.instructions.Instruction;
 public class BreakPointInstruction extends Instruction
 {
 
-	public enum BPINSTRUCTION_STATUS { INVISIBLE, ENABLED, DISABLED };
+	public enum BPINSTRUCTION_STATUS { INVISIBLE, ENABLED, DISABLED }
 	
 	private BPINSTRUCTION_STATUS bpStatus; //indicates breakpoint status	
 	private String location=null; //namespace and name of function containing breakpoint
@@ -43,22 +42,26 @@ public class BreakPointInstruction extends Instruction
 	 * Constructor for a breakpoint instruction
 	 */
 	public BreakPointInstruction() {
-		type = INSTRUCTION_TYPE.BREAKPOINT;
-		bpStatus = BPINSTRUCTION_STATUS.ENABLED;
+		this(BPINSTRUCTION_STATUS.ENABLED);
 	}
 
 	/**
 	 * Parameterized constructor for a breakpoint instruction
-	 * @param tp Breakpoint instruction status
+	 * 
+	 * @param status Breakpoint instruction status
 	 */
 	public BreakPointInstruction(BPINSTRUCTION_STATUS status) {
-		type = INSTRUCTION_TYPE.BREAKPOINT;
 		bpStatus = status;
+	}
+	
+	@Override
+	public IType getType() {
+		return IType.BREAKPOINT;
 	}
 
 	/**
 	 * Setter for breakpoint instruction status
-     * @param st Breakpoint current status
+     * @param status Breakpoint current status
 	 */
 	public void setBPInstructionStatus(BPINSTRUCTION_STATUS status) {
 		bpStatus = status;
@@ -97,17 +100,16 @@ public class BreakPointInstruction extends Instruction
 	}
 
 	@Override
-	public void processInstruction(ExecutionContext ec) 
-		throws DMLRuntimeException
-	{
+	public void processInstruction(ExecutionContext ec) {
 		if( DMLScript.ENABLE_DEBUG_MODE && isBPInstructionEnabled()) {
 			DebugState dbState = ec.getDebugState();
 			
-			System.out.format("Breakpoint reached at %s.\n", dbState.getPC().toString());					
+			System.out.format("Breakpoint reached at %s.\n", dbState.getPC().toString());
 			dbState.suspend = true;
 		}
 	}
 	
+	@Override
 	public String toString()
 	{
 		StringBuilder sb = new StringBuilder();

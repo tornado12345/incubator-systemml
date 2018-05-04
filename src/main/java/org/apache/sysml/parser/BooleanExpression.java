@@ -30,7 +30,6 @@ public class BooleanExpression extends Expression
 	private BooleanOp _opcode;
 	
 	public BooleanExpression(BooleanOp bop){
-		_kind = Kind.BooleanOp;
 		_opcode = bop;
 		
 		setFilename("MAIN SCRIPT");
@@ -38,19 +37,14 @@ public class BooleanExpression extends Expression
 		setBeginColumn(0);
 		setEndLine(0);
 		setEndColumn(0);
+		setText(null);
 	}
-	
-	public BooleanExpression(BooleanOp bop, String filename, int beginLine, int beginColumn, int endLine, int endColumn){
-		_kind = Kind.BooleanOp;
+
+	public BooleanExpression(BooleanOp bop, ParseInfo parseInfo) {
 		_opcode = bop;
-		
-		setFilename(filename);
-		setBeginLine(beginLine);
-		setBeginColumn(beginColumn);
-		setEndLine(endLine);
-		setEndColumn(endColumn);
+		setParseInfo(parseInfo);
 	}
-	
+
 	public BooleanOp getOpCode(){
 		return _opcode;
 	}
@@ -60,9 +54,7 @@ public class BooleanExpression extends Expression
 		
 		// update script location information --> left expression is BEFORE in script
 		if (_left != null){
-			this.setFilename(_left.getFilename());
-			this.setBeginLine(_left.getBeginLine());
-			this.setBeginColumn(_left.getBeginColumn());
+			this.setParseInfo(_left);
 		}
 	}
 	
@@ -71,9 +63,7 @@ public class BooleanExpression extends Expression
 		
 		// update script location information --> right expression is AFTER in script
 		if (_right != null){
-			this.setFilename(_right.getFilename());
-			this.setBeginLine(_right.getBeginLine());
-			this.setBeginColumn(_right.getBeginColumn());
+			this.setParseInfo(_right);
 		}
 	}
 	
@@ -85,10 +75,9 @@ public class BooleanExpression extends Expression
 		return _right;
 	}
 
-	public Expression rewriteExpression(String prefix) throws LanguageException{
-		
-		
-		BooleanExpression newExpr = new BooleanExpression(this._opcode, this.getFilename(), this.getBeginLine(), this.getBeginColumn(), this.getEndLine(), this.getEndColumn());
+	@Override
+	public Expression rewriteExpression(String prefix) {
+		BooleanExpression newExpr = new BooleanExpression(this._opcode, this);
 		newExpr.setLeft(_left.rewriteExpression(prefix));
 		if (_right != null)
 			newExpr.setRight(_right.rewriteExpression(prefix));
@@ -99,38 +88,48 @@ public class BooleanExpression extends Expression
 	 * Validate parse tree : Process Boolean Expression  
 	 */
 	@Override
-	public void validateExpression(HashMap<String,DataIdentifier> ids, HashMap<String, ConstIdentifier> constVars, boolean conditional) throws LanguageException{
-		 	 
-		this.getLeft().validateExpression(ids, constVars, conditional);
-		
+	public void validateExpression(HashMap<String,DataIdentifier> ids, HashMap<String, ConstIdentifier> constVars, boolean conditional) {
 		//recursive validate
+		getLeft().validateExpression(ids, constVars, conditional);
 		if (_left instanceof FunctionCallIdentifier){
 			raiseValidateError("user-defined function calls not supported in boolean expressions", 
-		            false, LanguageException.LanguageErrorCodes.UNSUPPORTED_EXPRESSION);
+				false, LanguageException.LanguageErrorCodes.UNSUPPORTED_EXPRESSION);
 		}
-				
 		if (this.getRight() != null) {
-			
 			if (_right instanceof FunctionCallIdentifier){
 				raiseValidateError("user-defined function calls not supported in boolean expressions", 
-			            false, LanguageException.LanguageErrorCodes.UNSUPPORTED_EXPRESSION);
+					false, LanguageException.LanguageErrorCodes.UNSUPPORTED_EXPRESSION);
 			}
-			
 			this.getRight().validateExpression(ids, constVars, conditional);
 		}
+		
 		String outputName = getTempName();
 		DataIdentifier output = new DataIdentifier(outputName);
-		output.setAllPositions(this.getFilename(), this.getBeginLine(), this.getBeginColumn(), this.getEndLine(), this.getEndColumn());
-		
-		output.setBooleanProperties();
-		this.setOutput(output);
-		if ((_opcode == Expression.BooleanOp.CONDITIONALAND) ||
-				(_opcode == Expression.BooleanOp.CONDITIONALOR)) 
-		{   //always unconditional (because unsupported operation)
-			raiseValidateError("Unsupported boolean operation " + _opcode.toString(), false, LanguageException.LanguageErrorCodes.UNSUPPORTED_PARAMETERS);
+		output.setParseInfo(this);
+		if( getLeft().getOutput().getDataType().isMatrix() 
+			|| (getRight()!=null && getRight().getOutput().getDataType().isMatrix()) ) {
+			output.setDataType((getRight()==null) ? DataType.MATRIX :
+				computeDataType(this.getLeft(), this.getRight(), true));
+			//since SystemML only supports double matrices, the value type is forced to
+			//double; once we support boolean matrices this needs to change
+			output.setValueType(ValueType.DOUBLE);
 		}
-	}		
-	
+		else {
+			output.setBooleanProperties();
+		}
+		this.setOutput(output);
+		
+		if ((_opcode == Expression.BooleanOp.CONDITIONALAND) || (_opcode == Expression.BooleanOp.CONDITIONALOR)) {
+			// always unconditional (because unsupported operation)
+			if (_opcode == Expression.BooleanOp.CONDITIONALAND) {
+				raiseValidateError("Conditional AND (&&) not supported.", false);
+			} else if (_opcode == Expression.BooleanOp.CONDITIONALOR) {
+				raiseValidateError("Conditional OR (||) not supported.", false);
+			}
+		}
+	}
+
+	@Override
 	public String toString(){
 		if (_opcode == BooleanOp.NOT) {
 			return "(" + _opcode.toString() + " " + _left.toString() + ")";

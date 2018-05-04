@@ -74,11 +74,6 @@ public class CM extends ValueFunction
 		//execution due to state in cm object (buff2, buff3)	
 		return new CM( type ); 
 	}
-	
-	public Object clone() throws CloneNotSupportedException {
-		// cloning is not supported for singleton classes
-		throw new CloneNotSupportedException();
-	}
 
 	public AggregateOperationTypes getAggOpType() {
 		return _type;
@@ -88,13 +83,10 @@ public class CM extends ValueFunction
 	 * Special case for weights w2==1
 	 */
 	@Override
-	public Data execute(Data in1, double in2) 
-		throws DMLRuntimeException 
-	{
+	public Data execute(Data in1, double in2) {
 		CM_COV_Object cm1=(CM_COV_Object) in1;
 		
-		if(cm1.isCMAllZeros())
-		{
+		if(cm1.isCMAllZeros()) {
 			cm1.w=1;
 			cm1.mean.set(in2, 0);
 			cm1.m2.set(0,0);
@@ -194,9 +186,7 @@ public class CM extends ValueFunction
 	 * General case for arbitrary weights w2
 	 */
 	@Override
-	public Data execute(Data in1, double in2, double w2) 
-		throws DMLRuntimeException 
-	{
+	public Data execute(Data in1, double in2, double w2) {
 		CM_COV_Object cm1=(CM_COV_Object) in1;
 		
 		if(cm1.isCMAllZeros())
@@ -300,7 +290,7 @@ public class CM extends ValueFunction
 	 * Combining stats from two partitions of the data.
 	 */
 	@Override
-	public Data execute(Data in1, Data in2) throws DMLRuntimeException 
+	public Data execute(Data in1, Data in2)
 	{
 		CM_COV_Object cm1=(CM_COV_Object) in1;
 		CM_COV_Object cm2=(CM_COV_Object) in2;

@@ -19,37 +19,37 @@
 
 package org.apache.sysml.runtime.instructions.cp;
 
+import org.apache.sysml.lops.LeftIndex;
+import org.apache.sysml.lops.RightIndex;
 import org.apache.sysml.parser.Expression.DataType;
 import org.apache.sysml.runtime.DMLRuntimeException;
 import org.apache.sysml.runtime.controlprogram.context.ExecutionContext;
 import org.apache.sysml.runtime.matrix.data.FrameBlock;
-import org.apache.sysml.runtime.matrix.operators.Operator;
 import org.apache.sysml.runtime.util.IndexRange;
 
-public final class FrameIndexingCPInstruction extends IndexingCPInstruction
-{	
-	public FrameIndexingCPInstruction(Operator op, CPOperand in, CPOperand rl, CPOperand ru, CPOperand cl, CPOperand cu, CPOperand out, String opcode, String istr){
-		super(op, in, rl, ru, cl, cu, out, opcode, istr);
+public final class FrameIndexingCPInstruction extends IndexingCPInstruction {
+
+	protected FrameIndexingCPInstruction(CPOperand in, CPOperand rl, CPOperand ru, CPOperand cl,
+			CPOperand cu, CPOperand out, String opcode, String istr) {
+		super(in, rl, ru, cl, cu, out, opcode, istr);
 	}
-	
-	public FrameIndexingCPInstruction(Operator op, CPOperand lhsInput, CPOperand rhsInput, CPOperand rl, CPOperand ru, CPOperand cl, CPOperand cu, CPOperand out, String opcode, String istr){
-		super(op, lhsInput, rhsInput, rl, ru, cl, cu, out, opcode, istr);
+
+	protected FrameIndexingCPInstruction(CPOperand lhsInput, CPOperand rhsInput, CPOperand rl,
+			CPOperand ru, CPOperand cl, CPOperand cu, CPOperand out, String opcode, String istr) {
+		super(lhsInput, rhsInput, rl, ru, cl, cu, out, opcode, istr);
 	}
-	
+
 	@Override
-	public void processInstruction(ExecutionContext ec)
-			throws DMLRuntimeException 
-	{	
+	public void processInstruction(ExecutionContext ec) {
 		String opcode = getOpcode();
 		IndexRange ixrange = getIndexRange(ec);
 		
 		//right indexing
-		if( opcode.equalsIgnoreCase("rangeReIndex") )
-		{
+		if( opcode.equalsIgnoreCase(RightIndex.OPCODE) ) {
 			//execute right indexing operation
 			FrameBlock in = ec.getFrameInput(input1.getName());
-			FrameBlock out = in.sliceOperations(ixrange, new FrameBlock());	
-				
+			FrameBlock out = in.slice(ixrange, new FrameBlock());
+			
 			//unpin rhs input
 			ec.releaseFrameInput(input1.getName());
 			
@@ -57,8 +57,7 @@ public final class FrameIndexingCPInstruction extends IndexingCPInstruction
 			ec.setFrameOutput(output.getName(), out);
 		}
 		//left indexing
-		else if ( opcode.equalsIgnoreCase("leftIndex"))
-		{
+		else if ( opcode.equalsIgnoreCase(LeftIndex.OPCODE)) {
 			FrameBlock lin = ec.getFrameInput(input1.getName());
 			FrameBlock out = null;
 			

@@ -26,21 +26,15 @@ import org.apache.sysml.runtime.instructions.cp.CPOperand;
 import org.apache.sysml.runtime.matrix.operators.Operator;
 import org.apache.sysml.runtime.matrix.operators.ReorgOperator;
 
-
-public abstract class AppendRSPInstruction extends BinarySPInstruction
-{
+public abstract class AppendRSPInstruction extends BinarySPInstruction {
 	protected boolean _cbind = true;
-	
-	public AppendRSPInstruction(Operator op, CPOperand in1, CPOperand in2, CPOperand out, boolean cbind, String opcode, String istr)
-	{
-		super(op, in1, in2, out, opcode, istr);
-		_sptype = SPINSTRUCTION_TYPE.RAppend;
+
+	protected AppendRSPInstruction(Operator op, CPOperand in1, CPOperand in2, CPOperand out, boolean cbind, String opcode, String istr) {
+		super(SPType.RAppend, op, in1, in2, out, opcode, istr);
 		_cbind = cbind;
 	}
 
-	public static AppendRSPInstruction parseInstruction ( String str ) 
-		throws DMLRuntimeException 
-	{	
+	public static AppendRSPInstruction parseInstruction ( String str ) {
 		String[] parts = InstructionUtils.getInstructionPartsWithValueType(str);
 		InstructionUtils.checkNumFields (parts, 4);
 		

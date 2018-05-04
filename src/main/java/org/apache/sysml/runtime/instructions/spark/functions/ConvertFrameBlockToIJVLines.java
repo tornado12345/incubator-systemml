@@ -32,13 +32,12 @@ public class ConvertFrameBlockToIJVLines implements FlatMapFunction<Tuple2<Long,
 	private static final long serialVersionUID = 1803516615963340115L;
 
 	@Override
-	public Iterable<String> call(Tuple2<Long, FrameBlock> kv) 
+	public Iterator<String> call(Tuple2<Long, FrameBlock> kv) 
 		throws Exception 
 	{
 		long rowoffset = kv._1;
 		FrameBlock block = kv._2;
-		
-		ArrayList<String> cells = new ArrayList<String>();
+		ArrayList<String> cells = new ArrayList<>();
 		
 		//write frame meta data
 		if( rowoffset == 1 ) {
@@ -68,6 +67,6 @@ public class ConvertFrameBlockToIJVLines implements FlatMapFunction<Tuple2<Long,
 			}
 		}
 		
-		return cells;
+		return cells.iterator();
 	}
 }

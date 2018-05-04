@@ -22,6 +22,7 @@ package org.apache.sysml.runtime.matrix;
 
 import org.apache.sysml.runtime.DMLRuntimeException;
 import org.apache.sysml.runtime.controlprogram.ParForProgramBlock.PDataPartitionFormat;
+import org.apache.sysml.runtime.controlprogram.ParForProgramBlock.PartitionFormat;
 import org.apache.sysml.runtime.controlprogram.caching.MatrixObject;
 import org.apache.sysml.runtime.controlprogram.parfor.DataPartitioner;
 import org.apache.sysml.runtime.controlprogram.parfor.DataPartitionerRemoteMR;
@@ -36,7 +37,7 @@ public class DataPartitionMR
 		//prevent instantiation via private constructor
 	}
 	
-	public static JobReturn runJob(MRJobInstruction jobinst, MatrixObject[] inputMatrices, String shuffleInst, byte[] resultIndices, MatrixObject[] outputMatrices, int numReducers, int replication) throws DMLRuntimeException {
+	public static JobReturn runJob(MRJobInstruction jobinst, MatrixObject[] inputMatrices, String shuffleInst, byte[] resultIndices, MatrixObject[] outputMatrices, int numReducers, int replication) {
 		MatrixCharacteristics[] sts = new MatrixCharacteristics[outputMatrices.length];
 		
 		processPartitionInstructions(shuffleInst, inputMatrices, resultIndices, outputMatrices, numReducers, replication, sts);
@@ -45,7 +46,7 @@ public class DataPartitionMR
 		return ret;
 	}
 	
-	private static void processPartitionInstructions(String shuffleInst, MatrixObject[] inputMatrices, byte[] resultIndices, MatrixObject[] outputMatrices, int numReducers, int replication, MatrixCharacteristics[] sts) throws DMLRuntimeException {
+	private static void processPartitionInstructions(String shuffleInst, MatrixObject[] inputMatrices, byte[] resultIndices, MatrixObject[] outputMatrices, int numReducers, int replication, MatrixCharacteristics[] sts) {
 		int i=0;
 		for(String inst : shuffleInst.split(Instruction.INSTRUCTION_DELIM)) {
 			if( InstructionUtils.getOpCode(inst).equalsIgnoreCase("partition") ) {
@@ -81,8 +82,8 @@ public class DataPartitionMR
 					default: 
 						throw new DMLRuntimeException("Unsupported partition format for distributed cache input: "+pformat);
 				}
-				
-				DataPartitioner dpart = new DataPartitionerRemoteMR(pformat, (int)N, -1, numReducers, replication, 4, false, true);
+				PartitionFormat pf = new PartitionFormat(pformat, (int)N);
+				DataPartitioner dpart = new DataPartitionerRemoteMR(pf, -1, numReducers, replication, false, true);
 				out = dpart.createPartitionedMatrixObject(in, out, true);
 				
 				sts[i] = out.getMatrixCharacteristics();

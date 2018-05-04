@@ -37,13 +37,7 @@ public class MatrixPackedCell extends MatrixCell
 
 	private double[] extras=null;
 	private int extra_size=0;
-	
-	public MatrixPackedCell(double v, int n)
-	{
-		value=v;
-		checkAndAllocateSpace(n);
-	}
-	
+
 	public MatrixPackedCell(MatrixPackedCell that)
 	{
 		this.value=that.value;
@@ -63,15 +57,13 @@ public class MatrixPackedCell extends MatrixCell
 		extra_size=size;
 	}
 	
-	public static MatrixPackedCell checkType(MatrixValue cell) throws DMLRuntimeException
-	{
+	public static MatrixPackedCell checkType(MatrixValue cell) {
 		if( cell!=null && !(cell instanceof MatrixPackedCell))
 			throw new DMLRuntimeException("the Matrix Value is not MatrixPackedCell!");
 		return (MatrixPackedCell) cell;
 	}
 	
-	public double getExtraByPostition(int i)
-	{
+	public double getExtraByPostition(int i) {
 		if(extras==null || i>=extra_size)
 			return 0;
 		else
@@ -81,16 +73,13 @@ public class MatrixPackedCell extends MatrixCell
 	//with corrections
 	@Override
 	public void incrementalAggregate(AggregateOperator aggOp, MatrixValue correction, 
-			MatrixValue newWithCorrection)throws DMLRuntimeException {
+			MatrixValue newWithCorrection, boolean deep) {
 		incrementalAggregate(aggOp, newWithCorrection);
 	}
 	
 	//with corrections
 	@Override
-	public void incrementalAggregate(AggregateOperator aggOp,
-			MatrixValue newWithCorrection)throws DMLRuntimeException {
-
-		
+	public void incrementalAggregate(AggregateOperator aggOp, MatrixValue newWithCorrection) {
 		MatrixPackedCell newWithCor=checkType(newWithCorrection);
 		if(aggOp.correctionLocation==CorrectionLocationType.NONE || aggOp.correctionLocation==CorrectionLocationType.LASTROW || aggOp.correctionLocation==CorrectionLocationType.LASTCOLUMN)
 		{
@@ -99,8 +88,8 @@ public class MatrixPackedCell extends MatrixCell
 			buffer=(KahanObject) aggOp.increOp.fn.execute(buffer, newWithCor.value, newWithCor.getExtraByPostition(0));
 			value=buffer._sum;
 			extras[0]=buffer._correction;
-		//	System.out.println("--- "+buffer);
-		}else if(aggOp.correctionLocation==CorrectionLocationType.LASTROW || aggOp.correctionLocation==CorrectionLocationType.LASTTWOCOLUMNS)
+		}
+		else if(aggOp.correctionLocation==CorrectionLocationType.LASTROW || aggOp.correctionLocation==CorrectionLocationType.LASTTWOCOLUMNS)
 		{
 			checkAndAllocateSpace(2);
 			KahanObject buffer=new KahanObject(value, extras[0]);

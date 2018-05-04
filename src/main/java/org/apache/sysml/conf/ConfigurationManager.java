@@ -20,7 +20,11 @@
 package org.apache.sysml.conf;
 
 import org.apache.hadoop.mapred.JobConf;
+import org.apache.sysml.api.DMLScript;
 import org.apache.sysml.conf.CompilerConfig.ConfigType;
+import org.apache.sysml.runtime.matrix.mapred.MRConfigurationNames;
+import org.apache.sysml.runtime.matrix.mapred.MRJobConfiguration;
+import org.apache.sysml.utils.lite.LiteCheck;
 
 
 
@@ -55,6 +59,14 @@ public class ConfigurationManager
 		//ConfigManager -> OptimizerUtils -> InfrastructureAnalyer -> ConfigManager 
  		_dmlconf = new DMLConfig();
 		_cconf = new CompilerConfig();
+
+		if (LiteCheck.isLite() && MRJobConfiguration.USE_BINARYBLOCK_SERIALIZATION) {
+			// to be able to write using binary format
+			// WritableSerialization -> MatrixIndexes
+			// BinaryBlockSerialization -> MatrixBlock
+			_rJob.set(MRConfigurationNames.IO_SERIALIZATIONS,
+					"org.apache.hadoop.io.serializer.WritableSerialization,org.apache.sysml.runtime.io.BinaryBlockSerialization");
+		}
 	}
 	
 	
@@ -178,19 +190,27 @@ public class ConfigurationManager
 		return getCompilerConfigFlag(ConfigType.PARALLEL_LOCAL_OR_REMOTE_PARFOR);
 	}
 	
+	public static boolean isCodegenEnabled() {
+		return (getDMLConfig().getBooleanValue(DMLConfig.CODEGEN)
+			|| getCompilerConfigFlag(ConfigType.CODEGEN_ENABLED))
+			&& !DMLScript.USE_ACCELERATOR;
+		//note: until codegen is supported for the GPU backend, we globally
+		//disable codegen if operations are forced to the GPU to avoid
+		//a counter-productive impact on performance.
+	}
 	
 	///////////////////////////////////////
 	// Thread-local classes
 	
 	private static class ThreadLocalDMLConfig extends ThreadLocal<DMLConfig> {
 		@Override 
-        protected DMLConfig initialValue() { 
+		protected DMLConfig initialValue() { 
 			//currently initialize by reference to avoid unnecessary deep copy via clone.
-	        if( _dmlconf != null )
-	        	return _dmlconf; 
-	        return null;
-        }
-    }
+			if( _dmlconf != null )
+				return _dmlconf; 
+			return null;
+		}
+	}
 	
 	private static class ThreadLocalCompilerConfig extends ThreadLocal<CompilerConfig> {
 		@Override 
@@ -199,5 +219,5 @@ public class ConfigurationManager
 				return _cconf.clone();
 			return null;
 		}
-    };
+	}
 }

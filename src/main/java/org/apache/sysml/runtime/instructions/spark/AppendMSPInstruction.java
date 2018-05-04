@@ -27,22 +27,18 @@ import org.apache.sysml.runtime.instructions.cp.CPOperand;
 import org.apache.sysml.runtime.matrix.operators.Operator;
 import org.apache.sysml.runtime.matrix.operators.ReorgOperator;
 
-public abstract class AppendMSPInstruction extends BinarySPInstruction
-{
+public abstract class AppendMSPInstruction extends BinarySPInstruction {
 	protected CPOperand _offset = null;
 	protected boolean _cbind = true;
-	
-	public AppendMSPInstruction(Operator op, CPOperand in1, CPOperand in2, CPOperand offset, CPOperand out, boolean cbind, String opcode, String istr)
-	{
-		super(op, in1, in2, out, opcode, istr);
-		_sptype = SPINSTRUCTION_TYPE.MAppend;			
+
+	protected AppendMSPInstruction(Operator op, CPOperand in1, CPOperand in2, CPOperand offset, CPOperand out,
+			boolean cbind, String opcode, String istr) {
+		super(SPType.MAppend, op, in1, in2, out, opcode, istr);
 		_offset = offset;
 		_cbind = cbind;
 	}
 
-	public static AppendMSPInstruction parseInstruction( String str ) 
-		throws DMLRuntimeException 
-	{
+	public static AppendMSPInstruction parseInstruction( String str ) {
 		String[] parts = InstructionUtils.getInstructionPartsWithValueType(str);
 		InstructionUtils.checkNumFields (parts, 5);
 		
@@ -61,7 +57,7 @@ public abstract class AppendMSPInstruction extends BinarySPInstruction
 			return new MatrixAppendMSPInstruction(new ReorgOperator(OffsetColumnIndex
 					.getOffsetColumnIndexFnObject(-1)), in1, in2, offset, out, cbind, opcode, str);
 		}
-		else { //frame			
+		else { //frame
 			return new FrameAppendMSPInstruction(new ReorgOperator(OffsetColumnIndex
 					.getOffsetColumnIndexFnObject(-1)), in1, in2, offset, out, cbind, opcode, str);
 		}

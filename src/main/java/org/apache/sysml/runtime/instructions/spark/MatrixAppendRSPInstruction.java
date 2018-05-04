@@ -24,7 +24,6 @@ import org.apache.spark.api.java.function.Function;
 
 import scala.Tuple2;
 
-import org.apache.sysml.runtime.DMLRuntimeException;
 import org.apache.sysml.runtime.controlprogram.context.ExecutionContext;
 import org.apache.sysml.runtime.controlprogram.context.SparkExecutionContext;
 import org.apache.sysml.runtime.instructions.cp.CPOperand;
@@ -32,17 +31,15 @@ import org.apache.sysml.runtime.matrix.data.MatrixBlock;
 import org.apache.sysml.runtime.matrix.data.MatrixIndexes;
 import org.apache.sysml.runtime.matrix.operators.Operator;
 
-public class MatrixAppendRSPInstruction extends AppendRSPInstruction
-{
-	public MatrixAppendRSPInstruction(Operator op, CPOperand in1, CPOperand in2, CPOperand out, boolean cbind, String opcode, String istr)
-	{
+public class MatrixAppendRSPInstruction extends AppendRSPInstruction {
+
+	protected MatrixAppendRSPInstruction(Operator op, CPOperand in1, CPOperand in2, CPOperand out, boolean cbind,
+			String opcode, String istr) {
 		super(op, in1, in2, out, cbind, opcode, istr);
 	}
-	
+
 	@Override
-	public void processInstruction(ExecutionContext ec)
-		throws DMLRuntimeException 
-	{
+	public void processInstruction(ExecutionContext ec) {
 		// reduce-only append (output must have at most one column block)
 		SparkExecutionContext sec = (SparkExecutionContext)ec;
 		checkBinaryAppendInputCharacteristics(sec, _cbind, true, false);
@@ -52,25 +49,22 @@ public class MatrixAppendRSPInstruction extends AppendRSPInstruction
 		
 		//execute reduce-append operations (partitioning preserving)
 		JavaPairRDD<MatrixIndexes,MatrixBlock> out = in1
-				.join(in2)
-				.mapValues(new ReduceSideAppendFunction(_cbind));
+			.join(in2)
+			.mapValues(new ReduceSideAppendFunction(_cbind));
 
 		//put output RDD handle into symbol table
 		updateBinaryAppendOutputMatrixCharacteristics(sec, _cbind);
 		sec.setRDDHandleForVariable(output.getName(), out);
 		sec.addLineageRDD(output.getName(), input1.getName());
-		sec.addLineageRDD(output.getName(), input2.getName());		
+		sec.addLineageRDD(output.getName(), input2.getName());
 	}
-	
-	/**
-	 * 
-	 */
+
 	private static class ReduceSideAppendFunction implements Function<Tuple2<MatrixBlock, MatrixBlock>, MatrixBlock> 
 	{
 		private static final long serialVersionUID = -6763904972560309095L;
 
 		private boolean _cbind = true;
-				
+		
 		public ReduceSideAppendFunction(boolean cbind) {
 			_cbind = cbind;
 		}
@@ -79,11 +73,7 @@ public class MatrixAppendRSPInstruction extends AppendRSPInstruction
 		public MatrixBlock call(Tuple2<MatrixBlock, MatrixBlock> arg0)
 			throws Exception 
 		{
-			MatrixBlock left = arg0._1();
-			MatrixBlock right = arg0._2();
-			
-			return left.appendOperations(right, new MatrixBlock(), _cbind);
+			return arg0._1().append(arg0._2(), new MatrixBlock(), _cbind);
 		}
 	}
 }
-

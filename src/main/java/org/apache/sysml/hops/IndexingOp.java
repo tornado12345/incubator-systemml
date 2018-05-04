@@ -19,15 +19,14 @@
 
 package org.apache.sysml.hops;
 
-import org.apache.sysml.conf.ConfigurationManager;
+import org.apache.sysml.api.DMLScript;
 import org.apache.sysml.hops.AggBinaryOp.SparkAggType;
 import org.apache.sysml.hops.rewrite.HopRewriteUtils;
 import org.apache.sysml.lops.Aggregate;
 import org.apache.sysml.lops.Data;
 import org.apache.sysml.lops.Group;
 import org.apache.sysml.lops.Lop;
-import org.apache.sysml.lops.LopsException;
-import org.apache.sysml.lops.RangeBasedReIndex;
+import org.apache.sysml.lops.RightIndex;
 import org.apache.sysml.lops.LopProperties.ExecType;
 import org.apache.sysml.parser.Expression.DataType;
 import org.apache.sysml.parser.Expression.ValueType;
@@ -45,7 +44,7 @@ public class IndexingOp extends Hop
 		CP_RIX, //in-memory range index
 		MR_RIX, //general case range reindex
 		MR_VRIX, //vector (row/col) range index
-	};
+	}
 	
 	
 	private IndexingOp() {
@@ -74,13 +73,17 @@ public class IndexingOp extends Hop
 		setRowLowerEqualsUpper(passedRowsLEU);
 		setColLowerEqualsUpper(passedColsLEU);
 	}
-	
-	
-	public boolean getRowLowerEqualsUpper(){
+
+	@Override
+	public void checkArity() {
+		HopsException.check(_input.size() == 5, this, "should have 5 inputs but has %d inputs", _input.size());
+	}
+
+	public boolean isRowLowerEqualsUpper(){
 		return _rowLowerEqualsUpper;
 	}
 	
-	public boolean getColLowerEqualsUpper() {
+	public boolean isColLowerEqualsUpper() {
 		return _colLowerEqualsUpper;
 	}
 	
@@ -91,11 +94,28 @@ public class IndexingOp extends Hop
 	public void setColLowerEqualsUpper(boolean passed) {
 		_colLowerEqualsUpper = passed;
 	}
+	
+	@Override
+	public boolean isGPUEnabled() {
+		if(!DMLScript.USE_ACCELERATOR) {
+			return false;
+		}
+		else {
+			// Indexing is only supported on GPU if:
+			// 1. the input is of type matrix AND
+			// 2. the input is less than 2GB. 
+			// The second condition is added for following reason:
+			// 1. Indexing is a purely memory-bound operation and doesnot benefit drastically from pushing down to GPU.
+			// 2. By forcing larger matrices to GPU (for example: training dataset), we run into risk of unnecessary evictions of 
+			// parameters and the gradients. For single precision, there is additional overhead of converting training dataset 
+			// to single precision every single time it is evicted.
+			return (getDataType() == DataType.MATRIX) && getInputMemEstimate() < 2e+9;
+		}
+	}
 
 	@Override
 	public Lop constructLops()
-		throws HopsException, LopsException 
-	{	
+	{
 		//return already created lops
 		if( getLops() != null )
 			return getLops();
@@ -103,10 +123,7 @@ public class IndexingOp extends Hop
 		Hop input = getInput().get(0);
 		
 		//rewrite remove unnecessary right indexing
-		if( dimsKnown() && input.dimsKnown() 
-			&& getDim1() == input.getDim1() && getDim2() == input.getDim2()
-			&& !(getDim1()==1 && getDim2()==1))
-		{
+		if( HopRewriteUtils.isUnnecessaryRightIndexing(this) ) {
 			setLops( input.constructLops() );
 		}
 		//actual lop construction, incl operator selection 
@@ -119,7 +136,7 @@ public class IndexingOp extends Hop
 							                                       input._dim1, input._dim2, _dim1, _dim2);
 					
 					Lop dummy = Data.createLiteralLop(ValueType.INT, Integer.toString(-1));
-					RangeBasedReIndex reindex = new RangeBasedReIndex(
+					RightIndex reindex = new RightIndex(
 							input.constructLops(), getInput().get(1).constructLops(), getInput().get(2).constructLops(),
 							getInput().get(3).constructLops(), getInput().get(4).constructLops(), dummy, dummy,
 							getDataType(), getValueType(), et);
@@ -155,7 +172,7 @@ public class IndexingOp extends Hop
 							SparkAggType.NONE : SparkAggType.MULTI_BLOCK;
 					
 					Lop dummy = Data.createLiteralLop(ValueType.INT, Integer.toString(-1));
-					RangeBasedReIndex reindex = new RangeBasedReIndex(
+					RightIndex reindex = new RightIndex(
 							input.constructLops(), getInput().get(1).constructLops(), getInput().get(2).constructLops(),
 							getInput().get(3).constructLops(), getInput().get(4).constructLops(), dummy, dummy,
 							getDataType(), getValueType(), aggtype, et);
@@ -164,10 +181,10 @@ public class IndexingOp extends Hop
 					setLineNumbers(reindex);
 					setLops(reindex);
 				}
-				else //CP
+				else //CP or GPU
 				{
 					Lop dummy = Data.createLiteralLop(ValueType.INT, Integer.toString(-1));
-					RangeBasedReIndex reindex = new RangeBasedReIndex(
+					RightIndex reindex = new RightIndex(
 							input.constructLops(), getInput().get(1).constructLops(), getInput().get(2).constructLops(),
 							getInput().get(3).constructLops(), getInput().get(4).constructLops(), dummy, dummy,
 							getDataType(), getValueType(), et);
@@ -192,16 +209,6 @@ public class IndexingOp extends Hop
 		String s = new String("");
 		s += OPSTRING;
 		return s;
-	}
-
-	public void printMe() throws HopsException {
-		if (getVisited() != VisitStatus.DONE) {
-			super.printMe();
-			for (Hop h : getInput()) {
-				h.printMe();
-			}
-		}
-		setVisited(VisitStatus.DONE);
 	}
 	
 	@Override
@@ -232,7 +239,8 @@ public class IndexingOp extends Hop
 	@Override
 	protected double computeOutputMemEstimate( long dim1, long dim2, long nnz )
 	{		
-		double sparsity = OptimizerUtils.getSparsity(dim1, dim2, nnz);
+		// only dense right indexing supported on GPU
+		double sparsity =  isGPUEnabled() ? 1.0 : OptimizerUtils.getSparsity(dim1, dim2, nnz);
 		return OptimizerUtils.estimateSizeExactSparsity(dim1, dim2, sparsity);
 	}
 	
@@ -281,7 +289,7 @@ public class IndexingOp extends Hop
 	 * @param ubound uppser bound high-level operator
 	 * @return true if block indexing expression
 	 */
-	private boolean isBlockIndexingExpression(Hop lbound, Hop ubound) 
+	private static boolean isBlockIndexingExpression(Hop lbound, Hop ubound) 
 	{
 		boolean ret = false;
 		LiteralOp constant = null;
@@ -345,21 +353,20 @@ public class IndexingOp extends Hop
 		return OptimizerUtils.isIndexingRangeBlockAligned(rl, ru, cl, cu, brlen, bclen);
 	}
 
-	private long getBlockIndexingExpressionSize(Hop lbound, Hop ubound) 
-	{
+	private static long getBlockIndexingExpressionSize(Hop lbound, Hop ubound) {
 		//NOTE: ensure consistency with isBlockIndexingExpression
 		LiteralOp c = (LiteralOp) ubound.getInput().get(0); //(c*i)
 		return HopRewriteUtils.getIntValueSafe(c);
 	}
 
 	@Override
-	protected ExecType optFindExecType() throws HopsException {
+	protected ExecType optFindExecType() {
 		
 		checkAndSetForcedPlatform();
 
 		ExecType REMOTE = OptimizerUtils.isSparkExecutionMode() ? ExecType.SPARK : ExecType.MR;
 		
-		if( _etypeForced != null ) 			
+		if( _etypeForced != null )
 		{
 			_etype = _etypeForced;
 		}
@@ -382,8 +389,7 @@ public class IndexingOp extends Hop
 		}
 
 		//mark for recompile (forever)
-		if( ConfigurationManager.isDynamicRecompilation() && !dimsKnown(true) && _etype==REMOTE )
-			setRequiresRecompile();
+		setRequiresRecompileIfNecessary();
 		
 		return _etype;
 	}
@@ -402,11 +408,14 @@ public class IndexingOp extends Hop
 	@Override
 	public void refreshSizeInformation()
 	{
-		Hop input1 = getInput().get(0); //original matrix
 		Hop input2 = getInput().get(1); //inpRowL
 		Hop input3 = getInput().get(2); //inpRowU
 		Hop input4 = getInput().get(3); //inpColL
 		Hop input5 = getInput().get(4); //inpColU
+		
+		//update single row/column flags (depends on CSE)
+		_rowLowerEqualsUpper = (input2 == input3);
+		_colLowerEqualsUpper = (input4 == input5);
 		
 		//parse input information
 		boolean allRows = 
@@ -421,9 +430,11 @@ public class IndexingOp extends Hop
 		//set dimension information
 		if( _rowLowerEqualsUpper ) //ROWS
 			setDim1(1);
-		else if( allRows ) 
-			setDim1(input1.getDim1());
-		else if( constRowRange ){
+		else if( allRows ) {
+			//input3 guaranteed to be a unaryop-nrow
+			setDim1(input3.getInput().get(0).getDim1());
+		}
+		else if( constRowRange ) {
 			setDim1( HopRewriteUtils.getIntValueSafe((LiteralOp)input3)
 					-HopRewriteUtils.getIntValueSafe((LiteralOp)input2)+1 );
 		}
@@ -433,9 +444,11 @@ public class IndexingOp extends Hop
 		
 		if( _colLowerEqualsUpper ) //COLS
 			setDim2(1);
-		else if( allCols ) 
-			setDim2(input1.getDim2());
-		else if( constColRange ){
+		else if( allCols ) {
+			//input5 guaranteed to be a unaryop-ncol
+			setDim2(input5.getInput().get(0).getDim2());
+		}
+		else if( constColRange ) {
 			setDim2( HopRewriteUtils.getIntValueSafe((LiteralOp)input5)
 					-HopRewriteUtils.getIntValueSafe((LiteralOp)input4)+1 );
 		}

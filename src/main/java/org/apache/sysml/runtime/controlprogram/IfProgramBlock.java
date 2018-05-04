@@ -22,43 +22,29 @@ package org.apache.sysml.runtime.controlprogram;
 import java.util.ArrayList;
 
 import org.apache.sysml.api.DMLScript;
-import org.apache.sysml.hops.Hop;
 import org.apache.sysml.parser.IfStatementBlock;
 import org.apache.sysml.parser.Expression.ValueType;
 import org.apache.sysml.runtime.DMLRuntimeException;
 import org.apache.sysml.runtime.DMLScriptException;
 import org.apache.sysml.runtime.controlprogram.context.ExecutionContext;
 import org.apache.sysml.runtime.instructions.Instruction;
-import org.apache.sysml.runtime.instructions.Instruction.INSTRUCTION_TYPE;
 import org.apache.sysml.runtime.instructions.cp.BooleanObject;
-import org.apache.sysml.runtime.instructions.cp.CPInstruction;
-import org.apache.sysml.runtime.instructions.cp.ComputationCPInstruction;
-import org.apache.sysml.runtime.instructions.cp.Data;
-import org.apache.sysml.runtime.instructions.cp.ScalarObject;
-import org.apache.sysml.runtime.instructions.cp.StringObject;
-import org.apache.sysml.runtime.instructions.cp.VariableCPInstruction;
-import org.apache.sysml.runtime.instructions.cp.CPInstruction.CPINSTRUCTION_TYPE;
 import org.apache.sysml.yarn.DMLAppMasterUtils;
 
 
 public class IfProgramBlock extends ProgramBlock 
 {
-	
 	private ArrayList<Instruction> _predicate;
-	private String _predicateResultVar;
 	private ArrayList <Instruction> _exitInstructions ;
 	private ArrayList<ProgramBlock> _childBlocksIfBody;
 	private ArrayList<ProgramBlock> _childBlocksElseBody;
 	
-	public IfProgramBlock(Program prog, ArrayList<Instruction> predicate) throws DMLRuntimeException{
+	public IfProgramBlock(Program prog, ArrayList<Instruction> predicate) {
 		super(prog);
-		
-		_childBlocksIfBody = new ArrayList<ProgramBlock>();
-		_childBlocksElseBody = new ArrayList<ProgramBlock>();
-		
+		_childBlocksIfBody = new ArrayList<>();
+		_childBlocksElseBody = new ArrayList<>();
 		_predicate = predicate;
-		_predicateResultVar = findPredicateResultVar ();
-		_exitInstructions = new ArrayList<Instruction>();
+		_exitInstructions = new ArrayList<>();
 	}
 	
 	public ArrayList<ProgramBlock> getChildBlocksIfBody() { 
@@ -101,22 +87,8 @@ public class IfProgramBlock extends ProgramBlock
 		return _predicate;
 	}
 
-	public void setPredicate(ArrayList<Instruction> predicate) 
-	{
+	public void setPredicate(ArrayList<Instruction> predicate) {
 		_predicate = predicate;
-		
-		//update result var if non-empty predicate (otherwise,
-		//do not overwrite varname predicate in predicateResultVar)
-		if( _predicate != null && !_predicate.isEmpty()  )
-			_predicateResultVar = findPredicateResultVar();
-	}
-	
-	public String getPredicateResultVar(){
-		return _predicateResultVar;
-	}
-	
-	public void setPredicateResultVar(String resultVar) {
-		_predicateResultVar = resultVar;
 	}
 	
 	public ArrayList<Instruction> getExitInstructions(){
@@ -125,8 +97,7 @@ public class IfProgramBlock extends ProgramBlock
 	
 	@Override
 	public void execute(ExecutionContext ec) 
-		throws DMLRuntimeException
-	{	
+	{
 		BooleanObject predResult = executePredicate(ec); 
 	
 		//execute if statement
@@ -177,60 +148,25 @@ public class IfProgramBlock extends ProgramBlock
 			throw new DMLRuntimeException(this.printBlockErrorLocation() + "Error evaluating if exit instructions ", e);
 		}
 	}
-	
-	/**
-	 * 
-	 * @param ec
-	 * @return
-	 * @throws DMLRuntimeException
-	 */
+
 	private BooleanObject executePredicate(ExecutionContext ec) 
-		throws DMLRuntimeException 
 	{
 		BooleanObject result = null;
 		try
 		{
-			if( _predicate!=null && !_predicate.isEmpty() )
+			if( _sb != null )
 			{
-				if( _sb != null )
-				{
-					if( DMLScript.isActiveAM() ) //set program block specific remote memory
-						DMLAppMasterUtils.setupProgramBlockRemoteMaxMemory(this);
-					
-					IfStatementBlock isb = (IfStatementBlock)_sb;
-					Hop predicateOp = isb.getPredicateHops();
-					boolean recompile = isb.requiresPredicateRecompilation();
-					result = (BooleanObject) executePredicate(_predicate, predicateOp, recompile, ValueType.BOOLEAN, ec);
-				}
-				else
-					result = (BooleanObject) executePredicate(_predicate, null, false, ValueType.BOOLEAN, ec);
-			}
-			else 
-			{
-				//get result var
-				ScalarObject scalarResult = null;
-				Data resultData = ec.getVariable(_predicateResultVar);
-				if ( resultData == null ) {
-					//note: resultvar is a literal (can it be of any value type other than String, hence no literal/varname conflict) 
-					scalarResult = ec.getScalarInput(_predicateResultVar, ValueType.BOOLEAN, true);
-				}
-				else {
-					scalarResult = ec.getScalarInput(_predicateResultVar, ValueType.BOOLEAN, false);
-				}
+				if( DMLScript.isActiveAM() ) //set program block specific remote memory
+					DMLAppMasterUtils.setupProgramBlockRemoteMaxMemory(this);
 				
-				//check for invalid type String 
-				if (scalarResult instanceof StringObject)
-					throw new DMLRuntimeException(this.printBlockErrorLocation() + "\nIf predicate variable "+ _predicateResultVar + " evaluated to string " + scalarResult + " which is not allowed for predicates in DML");
-				
-				//process result
-				if( scalarResult instanceof BooleanObject )
-					result = (BooleanObject)scalarResult;
-				else
-					result = new BooleanObject( scalarResult.getBooleanValue() ); //auto casting
+				IfStatementBlock isb = (IfStatementBlock)_sb;
+				result = (BooleanObject) executePredicate(_predicate, isb.getPredicateHops(), 
+					isb.requiresPredicateRecompilation(), ValueType.BOOLEAN, ec);
 			}
+			else
+				result = (BooleanObject) executePredicate(_predicate, null, false, ValueType.BOOLEAN, ec);
 		}
-		catch(Exception ex)
-		{
+		catch(Exception ex) {
 			throw new DMLRuntimeException(this.printBlockErrorLocation() + "Failed to evaluate the IF predicate.", ex);
 		}
 		
@@ -238,21 +174,8 @@ public class IfProgramBlock extends ProgramBlock
 		return result;
 	}
 	
-	private String findPredicateResultVar ( ) {
-		String result = null;
-		for ( Instruction si : _predicate ) {
-			if ( si.getType() == INSTRUCTION_TYPE.CONTROL_PROGRAM && ((CPInstruction)si).getCPInstructionType() != CPINSTRUCTION_TYPE.Variable ) {
-				result = ((ComputationCPInstruction) si).getOutputVariableName();  
-			}
-			else if(si instanceof VariableCPInstruction && ((VariableCPInstruction)si).isVariableCastInstruction()){
-				result = ((VariableCPInstruction)si).getOutputVariableName();
-			}
-		}
-		return result;
-	}
-	
+	@Override
 	public String printBlockErrorLocation(){
 		return "ERROR: Runtime error in if program block generated from if statement block between lines " + _beginLine + " and " + _endLine + " -- ";
 	}
-	
 }

@@ -24,8 +24,7 @@ import java.util.List;
 
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
-
-import org.apache.sysml.runtime.DMLRuntimeException;
+import org.apache.sysml.parser.ParForStatementBlock.ResultVar;
 import org.apache.sysml.runtime.controlprogram.LocalVariableMap;
 import org.apache.sysml.runtime.controlprogram.ProgramBlock;
 import org.apache.sysml.runtime.controlprogram.caching.MatrixObject;
@@ -43,47 +42,40 @@ import org.apache.sysml.runtime.instructions.cp.IntObject;
  */
 public abstract class ParWorker
 {
-	
 	protected static final Log LOG = LogFactory.getLog(ParWorker.class.getName());
 	
 	protected long                      _workerID    = -1;
-	
 	protected ArrayList<ProgramBlock>   _childBlocks = null;
+
+	public ExecutionContext getExecutionContext() {
+		return _ec;
+	}
+
 	protected ExecutionContext          _ec          = null;
-	protected ArrayList<String>         _resultVars  = null;
+	protected ArrayList<ResultVar>      _resultVars  = null;
 
 	protected boolean                   _monitor     = false;
 	
 	protected long                      _numTasks    = -1;
 	protected long                      _numIters    = -1;
 	
-	public ParWorker()
-	{
+	public ParWorker() {
 		//implicit constructor (required if parameters not known on object creation, 
 		//e.g., RemoteParWorkerMapper)
 	}
 	
-	public ParWorker( long ID, ParForBody body, boolean monitor )
-	{
+	public ParWorker( long ID, ParForBody body, boolean monitor ) {
 		_workerID    = ID;
-		
-		if( body != null )
-		{
+		if( body != null ) {
 			_childBlocks = body.getChildBlocks();
-			_ec          = body.getEc();
-			_resultVars  = body.getResultVarNames();
+			_ec = body.getEc();
+			_resultVars = body.getResultVariables();
 		}
-		
 		_monitor = monitor;
-		
-		_numTasks    = 0;
-		_numIters    = 0;
+		_numTasks = 0;
+		_numIters = 0;
 	}
-	
-	/**
-	 * 
-	 * @return
-	 */
+
 	public LocalVariableMap getVariables()
 	{
 		return _ec.getVariables();
@@ -93,7 +85,7 @@ public abstract class ParWorker
 	 * Returns a summary statistic of executed tasks and hence should only be called 
 	 * after execution.
 	 * 
-	 * @return
+	 * @return number of executed tasks
 	 */
 	public long getExecutedTasks()
 	{
@@ -104,46 +96,21 @@ public abstract class ParWorker
 	 * Returns a summary statistic of executed iterations and hence should only be called 
 	 * after execution.
 	 * 
-	 * @return
+	 * @return number of executed iterations
 	 */
-	public long getExecutedIterations()
-	{
+	public long getExecutedIterations() {
 		return _numIters;
 	}
-	
-	/**
-	 * 
-	 */
-	public void resetExecutedTasks()
-	{
-		_numTasks = 0;
-		_numIters = 0;
-	}
-	
-	/**
-	 * 
-	 */
-	protected void pinResultVariables()
-	{
-		for( String var : _resultVars )
-		{
-			Data dat = _ec.getVariable(var);
+
+	protected void pinResultVariables() {
+		for( ResultVar var : _resultVars ) {
+			Data dat = _ec.getVariable(var._name);
 			if( dat instanceof MatrixObject )
-			{
-				MatrixObject mo = (MatrixObject)dat;
-				mo.enableCleanup(false); 
-			}
+				((MatrixObject)dat).enableCleanup(false);
 		}
 	}
 
-	/**
-	 * 
-	 * @param task
-	 * @throws DMLRuntimeException
-	 */
-	protected void executeTask( Task task ) 
-		throws DMLRuntimeException 
-	{
+	protected void executeTask( Task task ) {
 		LOG.trace("EXECUTE PARFOR_WORKER ID="+_workerID+" for task "+task.toCompactString());
 		
 		switch( task.getType() )
@@ -156,17 +123,10 @@ public abstract class ParWorker
 				break;		
 		}
 	}	
-		
-	/**
-	 * 
-	 * @param task
-	 * @throws DMLRuntimeException
-	 */
-	private void executeSetTask( Task task ) 
-		throws DMLRuntimeException 
-	{
+
+	private void executeSetTask( Task task ) {
 		//monitoring start
-		Timing time1 = null, time2 = null;		
+		Timing time1 = null, time2 = null;
 		if( _monitor )
 		{
 			time1 = new Timing(true); 
@@ -176,12 +136,13 @@ public abstract class ParWorker
 		//core execution
 
 		//foreach iteration in task, execute iteration body
+		String lVarName = task.getVarName();
 		for( IntObject indexVal : task.getIterations() )
 		{
 			//System.out.println(" EXECUTE ITERATION: "+indexVal.getName()+"="+indexVal.getIntValue());
 			
 			//set index values
-			_ec.setVariable(indexVal.getName(), indexVal);
+			_ec.setVariable(lVarName, indexVal);
 			
 			// for each program block
 			for (ProgramBlock pb : _childBlocks)
@@ -202,17 +163,10 @@ public abstract class ParWorker
 			StatisticMonitor.putPWStat(_workerID, Stat.PARWRK_TASK_T, time2.stop());
 		}
 	}
-	
-	/**
-	 * 
-	 * @param task
-	 * @throws DMLRuntimeException
-	 */
-	private void executeRangeTask( Task task ) 
-		throws DMLRuntimeException 
-	{
+
+	private void executeRangeTask( Task task ) {
 		//monitoring start
-		Timing time1 = null, time2 = null;		
+		Timing time1 = null, time2 = null;
 		if( _monitor )
 		{
 			time1 = new Timing(true); 
@@ -221,7 +175,7 @@ public abstract class ParWorker
 		
 		//core execution
 		List<IntObject> tmp = task.getIterations();
-		String lVarName = tmp.get(0).getName();
+		String lVarName = task.getVarName();
 		long lFrom      = tmp.get(0).getLongValue();
 		long lTo        = tmp.get(1).getLongValue();
 		long lIncr      = tmp.get(2).getLongValue();
@@ -229,7 +183,7 @@ public abstract class ParWorker
 		for( long i=lFrom; i<=lTo; i+=lIncr )
 		{
 			//set index values
-			_ec.setVariable(lVarName, new IntObject(lVarName,i));
+			_ec.setVariable(lVarName, new IntObject(i));
 			
 			// for each program block
 			for (ProgramBlock pb : _childBlocks)

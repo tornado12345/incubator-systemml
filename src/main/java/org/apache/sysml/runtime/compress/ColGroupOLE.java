@@ -22,20 +22,16 @@ package org.apache.sysml.runtime.compress;
 import java.util.Arrays;
 import java.util.Iterator;
 
-import org.apache.sysml.runtime.DMLRuntimeException;
+import org.apache.commons.logging.Log;
+import org.apache.commons.logging.LogFactory;
 import org.apache.sysml.runtime.compress.utils.ConverterUtils;
 import org.apache.sysml.runtime.compress.utils.LinearAlgebraUtils;
 import org.apache.sysml.runtime.functionobjects.Builtin;
-import org.apache.sysml.runtime.functionobjects.Builtin.BuiltinCode;
 import org.apache.sysml.runtime.functionobjects.KahanFunction;
 import org.apache.sysml.runtime.functionobjects.KahanPlus;
-import org.apache.sysml.runtime.functionobjects.KahanPlusSq;
-import org.apache.sysml.runtime.functionobjects.ReduceAll;
-import org.apache.sysml.runtime.functionobjects.ReduceCol;
-import org.apache.sysml.runtime.functionobjects.ReduceRow;
 import org.apache.sysml.runtime.instructions.cp.KahanObject;
+import org.apache.sysml.runtime.matrix.data.DenseBlock;
 import org.apache.sysml.runtime.matrix.data.MatrixBlock;
-import org.apache.sysml.runtime.matrix.operators.AggregateUnaryOperator;
 import org.apache.sysml.runtime.matrix.operators.ScalarOperator;
 
 /**
@@ -43,12 +39,14 @@ import org.apache.sysml.runtime.matrix.operators.ScalarOperator;
  * simple lists of offsets for each set of distinct values.
  * 
  */
-public class ColGroupOLE extends ColGroupBitmap 
+public class ColGroupOLE extends ColGroupOffset 
 {
 	private static final long serialVersionUID = -9157676271360528008L;
 
+	private static final Log LOG = LogFactory.getLog(ColGroupOLE.class.getName());
+	
 	public ColGroupOLE() {
-		super(CompressionType.OLE_BITMAP);
+		super();
 	}
 	
 	/**
@@ -64,14 +62,15 @@ public class ColGroupOLE extends ColGroupBitmap
 	 */
 	public ColGroupOLE(int[] colIndices, int numRows, UncompressedBitmap ubm) 
 	{
-		super(CompressionType.OLE_BITMAP, colIndices, numRows, ubm);
+		super(colIndices, numRows, ubm);
 
 		// compress the bitmaps
 		final int numVals = ubm.getNumValues();
 		char[][] lbitmaps = new char[numVals][];
 		int totalLen = 0;
 		for( int i=0; i<numVals; i++ ) {
-			lbitmaps[i] = BitmapEncoder.genOffsetBitmap(ubm.getOffsetsList(i));
+			lbitmaps[i] = BitmapEncoder.genOffsetBitmap(
+				ubm.getOffsetsList(i).extractValues(), ubm.getNumOffsets(i));
 			totalLen += lbitmaps[i].length;
 		}
 		
@@ -93,22 +92,25 @@ public class ColGroupOLE extends ColGroupBitmap
 					bix += _data[boff+bix] + 1;
 				}
 				_skiplist[k] = bix;
-			}		
+			}
 		}
+		
+		//debug output
+		double ucSize = MatrixBlock.estimateSizeDenseInMemory(numRows, colIndices.length);
+		if( estimateInMemorySize() > ucSize )
+			LOG.warn("OLE group larger than UC dense: "+estimateInMemorySize()+" "+ucSize);
 	}
 
-	/**
-	 * Constructor for internal use.
-	 */
 	public ColGroupOLE(int[] colIndices, int numRows, boolean zeros, double[] values, char[] bitmaps, int[] bitmapOffs) {
-		super(CompressionType.OLE_BITMAP, colIndices, numRows, zeros, values);
+		super(colIndices, numRows, zeros, values);
 		_data = bitmaps;
 		_ptr = bitmapOffs;
 	}
+	
 
 	@Override
-	public Iterator<Integer> getDecodeIterator(int k) {
-		return new BitmapDecoderOLE(_data, _ptr[k], len(k));
+	public CompressionType getCompType() {
+		return CompressionType.OLE_BITMAP;
 	}
 	
 	@Override
@@ -122,12 +124,12 @@ public class ColGroupOLE extends ColGroupBitmap
 			
 			//cache blocking config and position array
 			int[] apos = skipScan(numVals, rl);
-					
+			
 			//cache conscious append via horizontal scans 
 			for( int bi=rl; bi<ru; bi+=blksz ) {
 				for (int k = 0, off=0; k < numVals; k++, off+=numCols) {
 					int boff = _ptr[k];
-					int blen = len(k);					
+					int blen = len(k);
 					int bix = apos[k];
 					if( bix >= blen ) 
 						continue;
@@ -159,18 +161,18 @@ public class ColGroupOLE extends ColGroupBitmap
 			final int n = getNumRows();
 			
 			//cache blocking config and position array
-			int[] apos = new int[numVals];					
+			int[] apos = new int[numVals];
 			int[] cix = new int[numCols];
 			
 			//prepare target col indexes
 			for( int j=0; j<numCols; j++ )
 				cix[j] = colixTargets[_colIndexes[j]];
 			
-			//cache conscious append via horizontal scans 
+			//cache conscious append via horizontal scans
 			for( int bi=0; bi<n; bi+=blksz ) {
 				for (int k = 0, off=0; k < numVals; k++, off+=numCols) {
 					int boff = _ptr[k];
-					int blen = len(k);					
+					int blen = len(k);
 					int bix = apos[k];
 					if( bix >= blen ) 
 						continue;
@@ -194,46 +196,72 @@ public class ColGroupOLE extends ColGroupBitmap
 	@Override
 	public void decompressToBlock(MatrixBlock target, int colpos) 
 	{
-		if( LOW_LEVEL_OPT && getNumValues() > 1 )
-		{
-			final int blksz = BitmapEncoder.BITMAP_BLOCK_SZ;
-			final int numCols = getNumCols();
-			final int numVals = getNumValues();
-			final int n = getNumRows();
-			double[] c = target.getDenseBlock();
-			
-			//cache blocking config and position array
-			int[] apos = new int[numVals];					
-			
-			//cache conscious append via horizontal scans 
-			for( int bi=0; bi<n; bi+=blksz ) {
-				for (int k = 0, off=0; k < numVals; k++, off+=numCols) {
-					int boff = _ptr[k];
-					int blen = len(k);					
-					int bix = apos[k];
-					if( bix >= blen ) 
-						continue;
-					int len = _data[boff+bix];
-					int pos = boff+bix+1;
-					for( int i=pos; i<pos+len; i++ ) {
-						c[bi+_data[i]] = _values[off+colpos];
-					}
-					apos[k] += len + 1;
+		final int blksz = BitmapEncoder.BITMAP_BLOCK_SZ;
+		final int numCols = getNumCols();
+		final int numVals = getNumValues();
+		final int n = getNumRows();
+		double[] c = target.getDenseBlockValues();
+		
+		//cache blocking config and position array
+		int[] apos = allocIVector(numVals, true);
+		
+		//cache conscious append via horizontal scans 
+		int nnz = 0;
+		for( int bi=0; bi<n; bi+=blksz ) {
+			Arrays.fill(c, bi, Math.min(bi+blksz, n), 0);
+			for (int k = 0, off=0; k < numVals; k++, off+=numCols) {
+				int boff = _ptr[k];
+				int blen = len(k);
+				int bix = apos[k];
+				if( bix >= blen )
+					continue;
+				int len = _data[boff+bix];
+				int pos = boff+bix+1;
+				for( int i=pos; i<pos+len; i++ ) {
+					c[bi+_data[i]] = _values[off+colpos];
+					nnz++;
 				}
-			}	
-			
-			target.recomputeNonZeros();
+				apos[k] += len + 1;
+			}
 		}
-		else
-		{
-			//call generic decompression with decoder
-			super.decompressToBlock(target, colpos);
+		target.setNonZeros(nnz);
+	}
+	
+	@Override 
+	public int[] getCounts(int[] counts) {
+		final int numVals = getNumValues();
+		Arrays.fill(counts, 0, numVals, 0);
+		for (int k = 0; k < numVals; k++) {
+			int boff = _ptr[k];
+			int blen = len(k);
+			//iterate over bitmap blocks and count partial lengths
+			int count = 0;
+			for (int bix=0; bix < blen; bix+=_data[boff+bix]+1)
+				count += _data[boff+bix];
+			counts[k] = count;
 		}
+		return counts;
+	}
+	
+	@Override 
+	public int[] getCounts(int rl, int ru, int[] counts) {
+		final int blksz = BitmapEncoder.BITMAP_BLOCK_SZ;
+		final int numVals = getNumValues();
+		Arrays.fill(counts, 0, numVals, 0);
+		for (int k = 0; k < numVals; k++) {
+			int boff = _ptr[k];
+			int blen = len(k);
+			int bix = skipScanVal(k, rl);
+			int count = 0;
+			for( int off=rl; bix < blen && off<ru; bix+=_data[boff+bix]+1, off+=blksz )
+				count += _data[boff+bix];
+			counts[k] = count;
+		}
+		return counts;
 	}
 	
 	@Override
 	public ColGroup scalarOperation(ScalarOperator op)
-		throws DMLRuntimeException 
 	{
 		double val0 = op.executeScalar(0);
 		
@@ -253,12 +281,12 @@ public class ColGroupOLE extends ColGroupBitmap
 					applyScalarOp(op), _data, _ptr);
 		}
 		
-		double[] rvalues = applyScalarOp(op, val0, getNumCols());		
-		char[] lbitmap = BitmapEncoder.genOffsetBitmap(loff);
+		double[] rvalues = applyScalarOp(op, val0, getNumCols());
+		char[] lbitmap = BitmapEncoder.genOffsetBitmap(loff, loff.length);
 		char[] rbitmaps = Arrays.copyOf(_data, _data.length+lbitmap.length);
 		System.arraycopy(lbitmap, 0, rbitmaps, _data.length, lbitmap.length);
 		int[] rbitmapOffs = Arrays.copyOf(_ptr, _ptr.length+1);
-		rbitmapOffs[rbitmapOffs.length-1] = rbitmaps.length; 
+		rbitmapOffs[rbitmapOffs.length-1] = rbitmaps.length;
 		
 		return new ColGroupOLE(_colIndexes, _numRows, loff.length<_numRows,
 				rvalues, rbitmaps, rbitmapOffs);
@@ -266,10 +294,9 @@ public class ColGroupOLE extends ColGroupBitmap
 
 	@Override
 	public void rightMultByVector(MatrixBlock vector, MatrixBlock result, int rl, int ru)
-			throws DMLRuntimeException 
 	{
 		double[] b = ConverterUtils.getDenseVector(vector);
-		double[] c = result.getDenseBlock();
+		double[] c = result.getDenseBlockValues();
 		final int blksz = BitmapEncoder.BITMAP_BLOCK_SZ;
 		final int numCols = getNumCols();
 		final int numVals = getNumValues();
@@ -287,7 +314,7 @@ public class ColGroupOLE extends ColGroupBitmap
 			//best configuration aligns with L3 cache size (x*vcores*64K*8B < L3)
 			//x=4 leads to a good yet slightly conservative compromise for single-/
 			//multi-threaded and typical number of cores and L3 cache sizes
-			final int blksz2 = ColGroupBitmap.WRITE_CACHE_BLKSZ;
+			final int blksz2 = ColGroupOffset.WRITE_CACHE_BLKSZ;
 			
 			//step 1: prepare position and value arrays
 			int[] apos = skipScan(numVals, rl);
@@ -339,7 +366,7 @@ public class ColGroupOLE extends ColGroupBitmap
 					if( rl > 0 ){
 						for (; bix<blen & off<rl; bix += slen+1, off += blksz) {
 							slen = _data[boff+bix];
-						}	
+						}
 					}
 					
 					//compute partial results
@@ -356,10 +383,9 @@ public class ColGroupOLE extends ColGroupBitmap
 
 	@Override
 	public void leftMultByRowVector(MatrixBlock vector, MatrixBlock result)
-		throws DMLRuntimeException 
 	{
 		double[] a = ConverterUtils.getDenseVector(vector);
-		double[] c = result.getDenseBlock();
+		double[] c = result.getDenseBlockValues();
 		final int blksz = BitmapEncoder.BITMAP_BLOCK_SZ;
 		final int numCols = getNumCols();
 		final int numVals = getNumValues();
@@ -368,13 +394,13 @@ public class ColGroupOLE extends ColGroupBitmap
 		if( LOW_LEVEL_OPT && numVals > 1 && _numRows > blksz )
 		{
 			//cache blocking config (see matrix-vector mult for explanation)
-			final int blksz2 = ColGroupBitmap.READ_CACHE_BLKSZ;
+			final int blksz2 = ColGroupOffset.READ_CACHE_BLKSZ;
 			
 			//step 1: prepare position and value arrays
 			
 			//current pos per OLs / output values
-			int[] apos = new int[numVals];
-			double[] cvals = new double[numVals];
+			int[] apos = allocIVector(numVals, true);
+			double[] cvals = allocDVector(numVals, true);
 			
 			//step 2: cache conscious matrix-vector via horizontal scans 
 			for( int ai=0; ai<n; ai+=blksz2 ) 
@@ -406,7 +432,7 @@ public class ColGroupOLE extends ColGroupBitmap
 			//step 3: scale partial results by values and write to global output
 			for (int k = 0, valOff=0; k < numVals; k++, valOff+=numCols)
 				for( int j = 0; j < numCols; j++ )
-					c[ _colIndexes[j] ] += cvals[k] * _values[valOff+j];		
+					c[ _colIndexes[j] ] += cvals[k] * _values[valOff+j];
 		}
 		else
 		{
@@ -429,50 +455,30 @@ public class ColGroupOLE extends ColGroupBitmap
 	}
 
 	@Override
-	public void unaryAggregateOperations(AggregateUnaryOperator op, MatrixBlock result) 
-		throws DMLRuntimeException 
+	public void leftMultByRowVector(ColGroupDDC a, MatrixBlock result)
 	{
-		unaryAggregateOperations(op, result, 0, getNumRows());
+		//note: this method is only applicable for numrows < blocksize
+		double[] c = result.getDenseBlockValues();
+		final int numCols = getNumCols();
+		final int numVals = getNumValues();
+		
+		//iterate over all values and their bitmaps
+		for (int k=0, valOff=0; k<numVals; k++, valOff+=numCols) {
+			int boff = _ptr[k];
+			
+			//iterate over bitmap blocks and add partial results
+			double vsum = 0;
+			for( int j = boff+1; j < boff+1+_data[boff]; j++ )
+				vsum += a.getData(_data[j]);
+			
+			//scale partial results by values and write results
+			for( int j = 0; j < numCols; j++ )
+				c[ _colIndexes[j] ] += vsum * _values[ valOff+j ];
+		}
 	}
 	
 	@Override
-	public void unaryAggregateOperations(AggregateUnaryOperator op, MatrixBlock result, int rl, int ru) 
-		throws DMLRuntimeException 
-	{
-		//sum and sumsq (reduceall/reducerow over tuples and counts)
-		if( op.aggOp.increOp.fn instanceof KahanPlus || op.aggOp.increOp.fn instanceof KahanPlusSq ) 
-		{
-			KahanFunction kplus = (op.aggOp.increOp.fn instanceof KahanPlus) ?
-					KahanPlus.getKahanPlusFnObject() : KahanPlusSq.getKahanPlusSqFnObject();
-			
-			if( op.indexFn instanceof ReduceAll )
-				computeSum(result, kplus);
-			else if( op.indexFn instanceof ReduceCol )
-				computeRowSums(result, kplus, rl, ru);
-			else if( op.indexFn instanceof ReduceRow )
-				computeColSums(result, kplus);
-		}
-		//min and max (reduceall/reducerow over tuples only)
-		else if(op.aggOp.increOp.fn instanceof Builtin 
-				&& (((Builtin)op.aggOp.increOp.fn).getBuiltinCode()==BuiltinCode.MAX 
-				|| ((Builtin)op.aggOp.increOp.fn).getBuiltinCode()==BuiltinCode.MIN)) 
-		{		
-			Builtin builtin = (Builtin) op.aggOp.increOp.fn;
-
-			if( op.indexFn instanceof ReduceAll )
-				computeMxx(result, builtin);
-			else if( op.indexFn instanceof ReduceCol )
-				computeRowMxx(result, builtin, rl, ru);
-			else if( op.indexFn instanceof ReduceRow )
-				computeColMxx(result, builtin);
-		}
-	}
-	
-	/**
-	 * 
-	 * @param result
-	 */
-	private void computeSum(MatrixBlock result, KahanFunction kplus)
+	protected final void computeSum(MatrixBlock result, KahanFunction kplus)
 	{
 		KahanObject kbuff = new KahanObject(result.quickGetValue(0, 0), result.quickGetValue(0, 1));
 		
@@ -499,50 +505,93 @@ public class ColGroupOLE extends ColGroupBitmap
 		result.quickSetValue(0, 0, kbuff._sum);
 		result.quickSetValue(0, 1, kbuff._correction);
 	}
-	
-	/**
-	 * 
-	 * @param result
-	 */
-	private void computeRowSums(MatrixBlock result, KahanFunction kplus, int rl, int ru)
+
+	@Override
+	protected final void computeRowSums(MatrixBlock result, KahanFunction kplus, int rl, int ru)
 	{
+		//note: due to corrections the output might be a large dense block
+		DenseBlock c = result.getDenseBlock();
 		KahanObject kbuff = new KahanObject(0, 0);
-	
+		KahanPlus kplus2 = KahanPlus.getKahanPlusFnObject();
 		final int blksz = BitmapEncoder.BITMAP_BLOCK_SZ;
 		final int numVals = getNumValues();
-		double[] c = result.getDenseBlock();
 		
-		//iterate over all values and their bitmaps
-		for (int k = 0; k < numVals; k++) 
+		if( ALLOW_CACHE_CONSCIOUS_ROWSUMS &&
+			LOW_LEVEL_OPT && numVals > 1 && _numRows > blksz )
 		{
-			//prepare value-to-add for entire value bitmap
-			int boff = _ptr[k];
-			int blen = len(k);
-			double val = sumValues(k);
+			final int blksz2 = ColGroupOffset.WRITE_CACHE_BLKSZ/2;
 			
-			//iterate over bitmap blocks and add values
-			if (val != 0) {
-				int slen;
-				int bix = skipScanVal(k, rl);
-				for( int off=bix*blksz; bix<blen && off<ru; bix+=slen+1, off+=blksz ) {
-					slen = _data[boff+bix];
-					for (int i = 1; i <= slen; i++) {
-						int rix = off + _data[boff+bix + i];
-						kbuff.set(c[2*rix], c[2*rix+1]);
-						kplus.execute2(kbuff, val);
-						c[2*rix] = kbuff._sum;
-						c[2*rix+1] = kbuff._correction;
+			//step 1: prepare position and value arrays
+			int[] apos = skipScan(numVals, rl);
+			double[] aval = sumAllValues(kplus, kbuff, false);
+					
+			//step 2: cache conscious row sums via horizontal scans 
+			for( int bi=rl; bi<ru; bi+=blksz2 ) 
+			{
+				int bimax = Math.min(bi+blksz2, ru);
+				
+				//horizontal segment scan, incl pos maintenance
+				for (int k = 0; k < numVals; k++) {
+					int boff = _ptr[k];
+					int blen = len(k);
+					double val = aval[k];
+					int bix = apos[k];
+					
+					for( int ii=bi; ii<bimax && bix<blen; ii+=blksz ) {
+						//prepare length, start, and end pos
+						int len = _data[boff+bix];
+						int pos = boff+bix+1;
+						
+						//compute partial results
+						for (int i = 0; i < len; i++) {
+							int rix = ii + _data[pos + i];
+							double[] cvals = c.values(rix);
+							int cix = c.pos(rix);
+							kbuff.set(cvals[cix], cvals[cix+1]);
+							kplus2.execute2(kbuff, val);
+							cvals[cix] = kbuff._sum;
+							cvals[cix+1] = kbuff._correction;
+						}
+						bix += len + 1;
+					}
+
+					apos[k] = bix;
+				}
+			}		
+		}
+		else
+		{
+			//iterate over all values and their bitmaps
+			for (int k = 0; k < numVals; k++) 
+			{
+				//prepare value-to-add for entire value bitmap
+				int boff = _ptr[k];
+				int blen = len(k);
+				double val = sumValues(k, kplus, kbuff);
+				
+				//iterate over bitmap blocks and add values
+				if (val != 0) {
+					int slen;
+					int bix = skipScanVal(k, rl);
+					for( int off=((rl+1)/blksz)*blksz; bix<blen && off<ru; bix+=slen+1, off+=blksz ) {
+						slen = _data[boff+bix];
+						for (int i = 1; i <= slen; i++) {
+							int rix = off + _data[boff+bix + i];
+							double[] cvals = c.values(rix);
+							int cix = c.pos(rix);
+							kbuff.set(cvals[cix], cvals[cix+1]);
+							kplus2.execute2(kbuff, val);
+							cvals[cix] = kbuff._sum;
+							cvals[cix+1] = kbuff._correction;
+						}
 					}
 				}
 			}
 		}
 	}
-	
-	/**
-	 * 
-	 * @param result
-	 */
-	private void computeColSums(MatrixBlock result, KahanFunction kplus)
+
+	@Override
+	protected final void computeColSums(MatrixBlock result, KahanFunction kplus)
 	{
 		KahanObject kbuff = new KahanObject(0, 0);
 		
@@ -569,18 +618,14 @@ public class ColGroupOLE extends ColGroupBitmap
 			}
 		}
 	}
-	
-	
-	/**
-	 * 
-	 * @param result
-	 */
-	private void computeRowMxx(MatrixBlock result, Builtin builtin, int rl, int ru)
+
+	@Override
+	protected final void computeRowMxx(MatrixBlock result, Builtin builtin, int rl, int ru)
 	{
 		//NOTE: zeros handled once for all column groups outside
 		final int blksz = BitmapEncoder.BITMAP_BLOCK_SZ;
 		final int numVals = getNumValues();
-		double[] c = result.getDenseBlock();
+		double[] c = result.getDenseBlockValues();
 		
 		//iterate over all values and their bitmaps
 		for (int k = 0; k < numVals; k++) 
@@ -597,7 +642,7 @@ public class ColGroupOLE extends ColGroupBitmap
 				slen = _data[boff+bix];
 				for (int i = 1; i <= slen; i++) {
 					int rix = off + _data[boff+bix + i];
-					c[rix] = builtin.execute2(c[rix], val);
+					c[rix] = builtin.execute(c[rix], val);
 				}
 			}
 		}
@@ -606,11 +651,10 @@ public class ColGroupOLE extends ColGroupBitmap
 	/**
 	 * Utility function of sparse-unsafe operations.
 	 * 
-	 * @return
-	 * @throws DMLRuntimeException
+	 * @return zero indicator vector
 	 */
-	private boolean[] computeZeroIndicatorVector()
-		throws DMLRuntimeException 
+	@Override
+	protected boolean[] computeZeroIndicatorVector()
 	{
 		boolean[] ret = new boolean[_numRows];
 		final int blksz = BitmapEncoder.BITMAP_BLOCK_SZ;
@@ -644,7 +688,7 @@ public class ColGroupOLE extends ColGroupBitmap
 	protected void countNonZerosPerRow(int[] rnnz, int rl, int ru)
 	{
 		final int blksz = BitmapEncoder.BITMAP_BLOCK_SZ;
-		final int blksz2 = ColGroupBitmap.WRITE_CACHE_BLKSZ;
+		final int blksz2 = ColGroupOffset.WRITE_CACHE_BLKSZ;
 		final int numVals = getNumValues();
 		final int numCols = getNumCols();
 		
@@ -681,17 +725,17 @@ public class ColGroupOLE extends ColGroupBitmap
 	/**
 	 * Scans to given row_lower position by exploiting any existing 
 	 * skip list and scanning segment length fields. Returns array 
-	 * of positions for all values;
+	 * of positions for all values.
 	 * 
-	 * @param numVals
-	 * @param rl
-	 * @return
+	 * @param numVals number of values
+	 * @param rl row lower position
+	 * @return array of positions for all values
 	 */
 	private int[] skipScan(int numVals, int rl) {
-		int[] ret = new int[numVals];
+		int[] ret = allocIVector(numVals, rl==0);
 		final int blksz = BitmapEncoder.BITMAP_BLOCK_SZ;
 		
-		if( rl > 0 ) { //rl aligned with blksz		
+		if( rl > 0 ) { //rl aligned with blksz
 			int rskip = (getNumRows()/2/blksz)*blksz;
 			
 			for( int k = 0; k < numVals; k++ ) {
@@ -708,17 +752,11 @@ public class ColGroupOLE extends ColGroupBitmap
 		
 		return ret;
 	}
-	
-	/**
-	 * 
-	 * @param k
-	 * @param rl
-	 * @return
-	 */
+
 	private int skipScanVal(int k, int rl) {
 		final int blksz = BitmapEncoder.BITMAP_BLOCK_SZ;
 		
-		if( rl > 0 ) { //rl aligned with blksz		
+		if( rl > 0 ) { //rl aligned with blksz
 			int rskip = (getNumRows()/2/blksz)*blksz;
 			int boff = _ptr[k];
 			int blen = len(k);
@@ -731,5 +769,132 @@ public class ColGroupOLE extends ColGroupBitmap
 		}
 		
 		return 0;
+	}
+
+	@Override
+	public Iterator<Integer> getIterator(int k) {
+		return new OLEValueIterator(k, 0, getNumRows());
+	}
+	
+	@Override
+	public Iterator<Integer> getIterator(int k, int rl, int ru) {
+		return new OLEValueIterator(k, rl, ru);
+	}
+	
+	@Override
+	public ColGroupRowIterator getRowIterator(int rl, int ru) {
+		return new OLERowIterator(rl, ru);
+	}
+	
+	private class OLEValueIterator implements Iterator<Integer>
+	{
+		private final int _ru;
+		private final int _boff;
+		private final int _blen;
+		private int _bix;
+		private int _start;
+		private int _slen;
+		private int _spos;
+		private int _rpos;
+		
+		public OLEValueIterator(int k, int rl, int ru) {
+			_ru = ru;
+			_boff = _ptr[k];
+			_blen = len(k);
+			
+			//initialize position via segment-aligned skip-scan
+			int lrl = rl - rl%BitmapEncoder.BITMAP_BLOCK_SZ;
+			_bix = skipScanVal(k, lrl);
+			_start = lrl; 
+			
+			//move position to actual rl boundary
+			if( _bix < _blen ) {
+				_slen = _data[_boff + _bix];
+				_spos = 0;
+				_rpos = _data[_boff + _bix + 1];
+				while( _rpos < rl )
+					nextRowOffset();
+			}
+			else {
+				_rpos = _ru;
+			}
+		}
+
+		@Override
+		public boolean hasNext() {
+			return (_rpos < _ru);
+		}
+
+		@Override
+		public Integer next() {
+			if( !hasNext() )
+				throw new RuntimeException("No more OLE entries.");
+			int ret = _rpos;
+			nextRowOffset();
+			return ret;
+		}
+		
+		private void nextRowOffset() {
+			if( _spos+1 < _slen ) {
+				_spos++;
+				_rpos = _start + _data[_boff + _bix + _spos + 1];
+			}
+			else {
+				_start += BitmapEncoder.BITMAP_BLOCK_SZ;
+				_bix += _slen+1;
+				if( _bix < _blen ) {
+					_slen = _data[_boff + _bix];
+					_spos = 0;
+					_rpos = _start + _data[_boff + _bix + 1];
+				}
+				else {
+					_rpos = _ru;
+				}
+			}
+		}
+	}
+	
+	private class OLERowIterator extends ColGroupRowIterator
+	{
+		private final int[] _apos;
+		private final int[] _vcodes;
+		
+		public OLERowIterator(int rl, int ru) {
+			_apos = skipScan(getNumValues(), rl);
+			_vcodes = new int[Math.min(BitmapEncoder.BITMAP_BLOCK_SZ, ru-rl)];
+			Arrays.fill(_vcodes, -1); //initial reset
+			getNextSegment();
+		}
+		
+		@Override
+		public void next(double[] buff, int rowIx, int segIx, boolean last) {
+			final int clen = _colIndexes.length;
+			final int vcode = _vcodes[segIx];
+			if( vcode >= 0 ) {
+				//copy entire value tuple if necessary
+				for(int j=0, off=vcode*clen; j<clen; j++)
+					buff[_colIndexes[j]] = _values[off+j];
+				//reset vcode to avoid scan on next segment
+				_vcodes[segIx] = -1;
+			}
+			if( segIx+1==BitmapEncoder.BITMAP_BLOCK_SZ && !last )
+				getNextSegment();
+		}
+		
+		private void getNextSegment() {
+			//materialize value codes for entire segment in a 
+			//single pass over all values (store value code by pos)
+			final int numVals = getNumValues();
+			for (int k = 0; k < numVals; k++)  {
+				int boff = _ptr[k];
+				int blen = len(k);
+				int bix = _apos[k];
+				if( bix >= blen ) continue;
+				int slen = _data[boff+bix];
+				for(int i=0, off=boff+bix+1; i<slen; i++)
+					_vcodes[_data[off+i]] = k;
+				_apos[k] += slen+1;
+			}
+		}
 	}
 }

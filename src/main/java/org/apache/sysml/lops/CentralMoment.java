@@ -65,17 +65,9 @@ public class CentralMoment extends Lop
 			lps.setProperties(inputs, et, ExecLocation.ControlProgram, breaksAlignment, aligner, definesMRJob);
 		}
 	}
-	
-	public CentralMoment(Lop input1, Lop input2, DataType dt, ValueType vt) {
-		this(input1, input2, null, dt, vt, ExecType.MR);
-	}
 
 	public CentralMoment(Lop input1, Lop input2, DataType dt, ValueType vt, ExecType et) {
 		this(input1, input2, null, dt, vt, et);
-	}
-
-	public CentralMoment(Lop input1, Lop input2, Lop input3, DataType dt, ValueType vt) {
-		this(input1, input2, input3, dt, vt, ExecType.MR);
 	}
 
 	public CentralMoment(Lop input1, Lop input2, Lop input3, DataType dt, ValueType vt, ExecType et) {
@@ -85,7 +77,6 @@ public class CentralMoment extends Lop
 
 	@Override
 	public String toString() {
-
 		return "Operation = CentralMoment";
 	}
 
@@ -110,11 +101,14 @@ public class CentralMoment extends Lop
 		sb.append( OPERAND_DELIMITOR );
 		
 		// Weights
-		sb.append( getInputs().get(1).prepInputOperand(input2) );
-		sb.append( OPERAND_DELIMITOR );
+		if( input3 != null ) {
+			sb.append( getInputs().get(1).prepInputOperand(input2) );
+			sb.append( OPERAND_DELIMITOR );
+		}
 		
 		// Order
-		sb.append( getInputs().get(2).prepScalarInputOperand(getExecType()) );
+		sb.append( getInputs().get((input3!=null)?2:1)
+				.prepScalarInputOperand(getExecType()) );
 		sb.append( OPERAND_DELIMITOR );
 		
 		sb.append( prepOutputOperand(output));
@@ -130,24 +124,7 @@ public class CentralMoment extends Lop
 	 */
 	@Override
 	public String getInstructions(String input1, String input2, String output) {
-		StringBuilder sb = new StringBuilder();
-		sb.append( getExecType() );
-		sb.append( Lop.OPERAND_DELIMITOR );
-		
-		sb.append( "cm" );
-		sb.append( OPERAND_DELIMITOR ); 
-		
-		// Input data (can be weighted or unweighted)
-		sb.append( getInputs().get(0).prepInputOperand(input1));
-		sb.append( OPERAND_DELIMITOR );
-		
-		// Order
-		sb.append( getInputs().get(1).prepScalarInputOperand(getExecType()) );
-		sb.append( OPERAND_DELIMITOR );
-		
-		sb.append( this.prepOutputOperand(output));
-		
-		return sb.toString();
+		return getInstructions(input1, input2, null, output);
 	}
 	
 	/**
@@ -162,7 +139,6 @@ public class CentralMoment extends Lop
 	 */
 	@Override
 	public String getInstructions(int input_index, int output_index) {
-		return getInstructions(input_index+"", "", output_index+"");
+		return getInstructions(String.valueOf(input_index), "", String.valueOf(output_index));
 	}
-
 }

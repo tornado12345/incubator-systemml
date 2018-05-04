@@ -30,12 +30,10 @@ import org.apache.sysml.runtime.matrix.data.MatrixValue;
 
 public class CachedValueMap //extends CachedMap<IndexedMatrixValue>
 {
-
 	private HashMap<Byte, ArrayList<IndexedMatrixValue>> map = null;
 	
-	public CachedValueMap()
-	{
-		map = new HashMap<Byte, ArrayList<IndexedMatrixValue>>();
+	public CachedValueMap() {
+		map = new HashMap<>();
 	}
 	
 	public IndexedMatrixValue getFirst(byte tag) 
@@ -105,7 +103,7 @@ public class CachedValueMap //extends CachedMap<IndexedMatrixValue>
 		ArrayList<IndexedMatrixValue> list = map.get(tag);
 		
 		if( list == null ){
-			list = new ArrayList<IndexedMatrixValue>();
+			list = new ArrayList<>();
 			map.put(tag, list);	
 		}
 		

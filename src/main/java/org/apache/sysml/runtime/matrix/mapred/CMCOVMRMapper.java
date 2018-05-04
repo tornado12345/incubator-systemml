@@ -45,22 +45,20 @@ implements Mapper<Writable, Writable, Writable, Writable>
 {
 	
 	private boolean firsttime=true;
-	private HashMap<Byte, CM> cmFn = new HashMap<Byte, CM>();
+	private HashMap<Byte, CM> cmFn = new HashMap<>();
 	private COV covFn=COV.getCOMFnObject();
 	private OutputCollector<Writable, Writable> cachedCollector=null;
 	private CachedValueMap cmNcovCache=new CachedValueMap();
-	protected HashSet<Byte> cmTags=new HashSet<Byte>();
-	protected HashSet<Byte> covTags=new HashSet<Byte>();
+	protected HashSet<Byte> cmTags=new HashSet<>();
+	protected HashSet<Byte> covTags=new HashSet<>();
 	@Override
 	public void map(Writable index, Writable cell,
 			OutputCollector<Writable, Writable> out, Reporter report)
 			throws IOException {
-		if(firsttime)
-		{
+		if(firsttime) {
 			cachedCollector=out;
 			firsttime=false;
 		}
-	//	System.out.println("input: "+index+" -- "+cell);
 		commonMap(index, cell, out, report);
 	}
 
@@ -81,11 +79,7 @@ implements Mapper<Writable, Writable, Writable, Writable>
 			WeightedPair inputPair=(WeightedPair)input.getValue();
 			CM_N_COVCell cmValue = (CM_N_COVCell) cmNcovCache.getFirst(tag).getValue();
 			try {
-				
-			//	System.out.println("~~~~~\nold: "+cmValue.getCM_N_COVObject());
-			//	System.out.println("add: "+inputPair);
 				lcmFn.execute(cmValue.getCM_N_COVObject(), inputPair.getValue(), inputPair.getWeight());
-			//	System.out.println("new: "+cmValue.getCM_N_COVObject());
 			} catch (DMLRuntimeException e) {
 				throw new IOException(e);
 			}
@@ -96,41 +90,34 @@ implements Mapper<Writable, Writable, Writable, Writable>
 			IndexedMatrixValue input = cachedValues.getFirst(tag);
 			if(input==null)
 				continue;
-			//System.out.println("*** cached Value:\n"+cachedValues);
 			WeightedPair inputPair=(WeightedPair)input.getValue();
 			CM_N_COVCell comValue = (CM_N_COVCell) cmNcovCache.getFirst(tag).getValue();
 			try {
-				
-				//System.out.println("~~~~~\nold: "+comValue.getCM_N_COVObject());
-			//	System.out.println("add: "+inputPair);
 				covFn.execute(comValue.getCM_N_COVObject(), inputPair.getValue(),  inputPair.getOtherValue(), inputPair.getWeight());
-			//	System.out.println("new: "+comValue.getCM_N_COVObject());
 			} catch (DMLRuntimeException e) {
 				throw new IOException(e);
 			}
 		}
 	}
 	
+	@Override
 	public void close() throws IOException
 	{
 		if(cachedCollector!=null)
 		{
-			for(byte tag: cmTags)
-			{
+			for(byte tag: cmTags) {
 				CM_N_COVCell cmValue = (CM_N_COVCell) cmNcovCache.getFirst(tag).getValue();
 				cachedCollector.collect(new TaggedFirstSecondIndexes(1, tag, 1), cmValue);
-				//System.out.println("output to reducer with tag:"+tag+" and value: "+cmValue);
 			}
 			
-			for(byte tag: covTags)
-			{
+			for(byte tag: covTags) {
 				CM_N_COVCell comValue = (CM_N_COVCell) cmNcovCache.getFirst(tag).getValue();
 				cachedCollector.collect(new TaggedFirstSecondIndexes(1, tag, 1), comValue);
-				//System.out.println("output to reducer with tag:"+tag+" and value: "+comValue);
 			}
 		}
 	}
 
+	@Override
 	public void configure(JobConf job)
 	{
 		super.configure(job);

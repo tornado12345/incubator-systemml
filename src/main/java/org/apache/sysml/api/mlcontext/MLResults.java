@@ -23,7 +23,8 @@ import java.util.Set;
 
 import org.apache.spark.api.java.JavaRDD;
 import org.apache.spark.rdd.RDD;
-import org.apache.spark.sql.DataFrame;
+import org.apache.spark.sql.Dataset;
+import org.apache.spark.sql.Row;
 import org.apache.sysml.runtime.controlprogram.LocalVariableMap;
 import org.apache.sysml.runtime.controlprogram.caching.FrameObject;
 import org.apache.sysml.runtime.controlprogram.caching.MatrixObject;
@@ -283,7 +284,7 @@ public class MLResults {
 	 *            the name of the output
 	 * @return the output as a {@code DataFrame}
 	 */
-	public DataFrame getDataFrame(String outputName) {
+	public Dataset<Row> getDataFrame(String outputName) {
 		if (isMatrixObject(outputName)) {
 			MatrixObject mo = getMatrixObject(outputName);
 			return MLContextConversionUtil.matrixObjectToDataFrame(mo, sparkExecutionContext, false);
@@ -296,7 +297,7 @@ public class MLResults {
 
 	/**
 	 * Is the output a MatrixObject?
-	 * 
+	 *
 	 * @param outputName
 	 *            the name of the output
 	 * @return {@code true} if the output is a MatrixObject, {@code false}
@@ -309,7 +310,7 @@ public class MLResults {
 
 	/**
 	 * Is the output a FrameObject?
-	 * 
+	 *
 	 * @param outputName
 	 *            the name of the output
 	 * @return {@code true} if the output is a FrameObject, {@code false}
@@ -349,7 +350,7 @@ public class MLResults {
 	 * @return the output as a {@code DataFrame} of doubles or vectors with an
 	 *         ID column
 	 */
-	public DataFrame getDataFrame(String outputName, boolean isVectorDF) {
+	public Dataset<Row> getDataFrame(String outputName, boolean isVectorDF) {
 		if (isFrameObject(outputName)) {
 			throw new MLContextException("This method currently supports only matrices");
 		}
@@ -375,7 +376,7 @@ public class MLResults {
 	 *            the name of the output
 	 * @return the output as a {@code DataFrame} of doubles with an ID column
 	 */
-	public DataFrame getDataFrameDoubleWithIDColumn(String outputName) {
+	public Dataset<Row> getDataFrameDoubleWithIDColumn(String outputName) {
 		if (isFrameObject(outputName)) {
 			throw new MLContextException("This method currently supports only matrices");
 		}
@@ -401,7 +402,7 @@ public class MLResults {
 	 *            the name of the output
 	 * @return the output as a {@code DataFrame} of vectors with an ID column
 	 */
-	public DataFrame getDataFrameVectorWithIDColumn(String outputName) {
+	public Dataset<Row> getDataFrameVectorWithIDColumn(String outputName) {
 		if (isFrameObject(outputName)) {
 			throw new MLContextException("This method currently supports only matrices");
 		}
@@ -427,12 +428,12 @@ public class MLResults {
 	 *            the name of the output
 	 * @return the output as a {@code DataFrame} of doubles with no ID column
 	 */
-	public DataFrame getDataFrameDoubleNoIDColumn(String outputName) {
+	public Dataset<Row> getDataFrameDoubleNoIDColumn(String outputName) {
 		if (isFrameObject(outputName)) {
 			throw new MLContextException("This method currently supports only matrices");
 		}
 		MatrixObject mo = getMatrixObject(outputName);
-		DataFrame df = MLContextConversionUtil.matrixObjectToDataFrame(mo, sparkExecutionContext, false);
+		Dataset<Row> df = MLContextConversionUtil.matrixObjectToDataFrame(mo, sparkExecutionContext, false);
 		return df.drop(RDDConverterUtils.DF_ID_COLUMN);
 	}
 
@@ -454,12 +455,12 @@ public class MLResults {
 	 *            the name of the output
 	 * @return the output as a {@code DataFrame} of vectors with no ID column
 	 */
-	public DataFrame getDataFrameVectorNoIDColumn(String outputName) {
+	public Dataset<Row> getDataFrameVectorNoIDColumn(String outputName) {
 		if (isFrameObject(outputName)) {
 			throw new MLContextException("This method currently supports only matrices");
 		}
 		MatrixObject mo = getMatrixObject(outputName);
-		DataFrame df = MLContextConversionUtil.matrixObjectToDataFrame(mo, sparkExecutionContext, true);
+		Dataset<Row> df = MLContextConversionUtil.matrixObjectToDataFrame(mo, sparkExecutionContext, true);
 		return df.drop(RDDConverterUtils.DF_ID_COLUMN);
 	}
 
@@ -485,18 +486,6 @@ public class MLResults {
 	public Frame getFrame(String outputName) {
 		FrameObject fo = getFrameObject(outputName);
 		return new Frame(fo, sparkExecutionContext);
-	}
-
-	/**
-	 * Obtain an output as a {@code BinaryBlockMatrix}.
-	 *
-	 * @param outputName
-	 *            the name of the output
-	 * @return the output as a {@code BinaryBlockMatrix}
-	 */
-	public BinaryBlockMatrix getBinaryBlockMatrix(String outputName) {
-		MatrixObject mo = getMatrixObject(outputName);
-		return MLContextConversionUtil.matrixObjectToBinaryBlockMatrix(mo, sparkExecutionContext);
 	}
 
 	/**
@@ -607,7 +596,7 @@ public class MLResults {
 
 	/**
 	 * Obtain a Scala tuple.
-	 * 
+	 *
 	 * @param <T>
 	 *            the type of the first output
 	 * @param outputName1
@@ -616,12 +605,12 @@ public class MLResults {
 	 */
 	@SuppressWarnings("unchecked")
 	public <T> Tuple1<T> getTuple(String outputName1) {
-		return new Tuple1<T>((T) outputValue(outputName1));
+		return new Tuple1<>((T) outputValue(outputName1));
 	}
 
 	/**
 	 * Obtain a Scala tuple.
-	 * 
+	 *
 	 * @param <T1>
 	 *            the type of the first output
 	 * @param <T2>
@@ -634,12 +623,12 @@ public class MLResults {
 	 */
 	@SuppressWarnings("unchecked")
 	public <T1, T2> Tuple2<T1, T2> getTuple(String outputName1, String outputName2) {
-		return new Tuple2<T1, T2>((T1) outputValue(outputName1), (T2) outputValue(outputName2));
+		return new Tuple2<>((T1) outputValue(outputName1), (T2) outputValue(outputName2));
 	}
 
 	/**
 	 * Obtain a Scala tuple.
-	 * 
+	 *
 	 * @param <T1>
 	 *            the type of the first output
 	 * @param <T2>
@@ -656,13 +645,13 @@ public class MLResults {
 	 */
 	@SuppressWarnings("unchecked")
 	public <T1, T2, T3> Tuple3<T1, T2, T3> getTuple(String outputName1, String outputName2, String outputName3) {
-		return new Tuple3<T1, T2, T3>((T1) outputValue(outputName1), (T2) outputValue(outputName2),
+		return new Tuple3<>((T1) outputValue(outputName1), (T2) outputValue(outputName2),
 				(T3) outputValue(outputName3));
 	}
 
 	/**
 	 * Obtain a Scala tuple.
-	 * 
+	 *
 	 * @param <T1>
 	 *            the type of the first output
 	 * @param <T2>
@@ -684,13 +673,13 @@ public class MLResults {
 	@SuppressWarnings("unchecked")
 	public <T1, T2, T3, T4> Tuple4<T1, T2, T3, T4> getTuple(String outputName1, String outputName2, String outputName3,
 			String outputName4) {
-		return new Tuple4<T1, T2, T3, T4>((T1) outputValue(outputName1), (T2) outputValue(outputName2),
+		return new Tuple4<>((T1) outputValue(outputName1), (T2) outputValue(outputName2),
 				(T3) outputValue(outputName3), (T4) outputValue(outputName4));
 	}
 
 	/**
 	 * Obtain a Scala tuple.
-	 * 
+	 *
 	 * @param <T1>
 	 *            the type of the first output
 	 * @param <T2>
@@ -716,13 +705,13 @@ public class MLResults {
 	@SuppressWarnings("unchecked")
 	public <T1, T2, T3, T4, T5> Tuple5<T1, T2, T3, T4, T5> getTuple(String outputName1, String outputName2,
 			String outputName3, String outputName4, String outputName5) {
-		return new Tuple5<T1, T2, T3, T4, T5>((T1) outputValue(outputName1), (T2) outputValue(outputName2),
+		return new Tuple5<>((T1) outputValue(outputName1), (T2) outputValue(outputName2),
 				(T3) outputValue(outputName3), (T4) outputValue(outputName4), (T5) outputValue(outputName5));
 	}
 
 	/**
 	 * Obtain a Scala tuple.
-	 * 
+	 *
 	 * @param <T1>
 	 *            the type of the first output
 	 * @param <T2>
@@ -752,14 +741,14 @@ public class MLResults {
 	@SuppressWarnings("unchecked")
 	public <T1, T2, T3, T4, T5, T6> Tuple6<T1, T2, T3, T4, T5, T6> getTuple(String outputName1, String outputName2,
 			String outputName3, String outputName4, String outputName5, String outputName6) {
-		return new Tuple6<T1, T2, T3, T4, T5, T6>((T1) outputValue(outputName1), (T2) outputValue(outputName2),
+		return new Tuple6<>((T1) outputValue(outputName1), (T2) outputValue(outputName2),
 				(T3) outputValue(outputName3), (T4) outputValue(outputName4), (T5) outputValue(outputName5),
 				(T6) outputValue(outputName6));
 	}
 
 	/**
 	 * Obtain a Scala tuple.
-	 * 
+	 *
 	 * @param <T1>
 	 *            the type of the first output
 	 * @param <T2>
@@ -794,14 +783,14 @@ public class MLResults {
 	public <T1, T2, T3, T4, T5, T6, T7> Tuple7<T1, T2, T3, T4, T5, T6, T7> getTuple(String outputName1,
 			String outputName2, String outputName3, String outputName4, String outputName5, String outputName6,
 			String outputName7) {
-		return new Tuple7<T1, T2, T3, T4, T5, T6, T7>((T1) outputValue(outputName1), (T2) outputValue(outputName2),
+		return new Tuple7<>((T1) outputValue(outputName1), (T2) outputValue(outputName2),
 				(T3) outputValue(outputName3), (T4) outputValue(outputName4), (T5) outputValue(outputName5),
 				(T6) outputValue(outputName6), (T7) outputValue(outputName7));
 	}
 
 	/**
 	 * Obtain a Scala tuple.
-	 * 
+	 *
 	 * @param <T1>
 	 *            the type of the first output
 	 * @param <T2>
@@ -840,14 +829,14 @@ public class MLResults {
 	public <T1, T2, T3, T4, T5, T6, T7, T8> Tuple8<T1, T2, T3, T4, T5, T6, T7, T8> getTuple(String outputName1,
 			String outputName2, String outputName3, String outputName4, String outputName5, String outputName6,
 			String outputName7, String outputName8) {
-		return new Tuple8<T1, T2, T3, T4, T5, T6, T7, T8>((T1) outputValue(outputName1), (T2) outputValue(outputName2),
+		return new Tuple8<>((T1) outputValue(outputName1), (T2) outputValue(outputName2),
 				(T3) outputValue(outputName3), (T4) outputValue(outputName4), (T5) outputValue(outputName5),
 				(T6) outputValue(outputName6), (T7) outputValue(outputName7), (T8) outputValue(outputName8));
 	}
 
 	/**
 	 * Obtain a Scala tuple.
-	 * 
+	 *
 	 * @param <T1>
 	 *            the type of the first output
 	 * @param <T2>
@@ -890,7 +879,7 @@ public class MLResults {
 	public <T1, T2, T3, T4, T5, T6, T7, T8, T9> Tuple9<T1, T2, T3, T4, T5, T6, T7, T8, T9> getTuple(String outputName1,
 			String outputName2, String outputName3, String outputName4, String outputName5, String outputName6,
 			String outputName7, String outputName8, String outputName9) {
-		return new Tuple9<T1, T2, T3, T4, T5, T6, T7, T8, T9>((T1) outputValue(outputName1),
+		return new Tuple9<>((T1) outputValue(outputName1),
 				(T2) outputValue(outputName2), (T3) outputValue(outputName3), (T4) outputValue(outputName4),
 				(T5) outputValue(outputName5), (T6) outputValue(outputName6), (T7) outputValue(outputName7),
 				(T8) outputValue(outputName8), (T9) outputValue(outputName9));
@@ -898,7 +887,7 @@ public class MLResults {
 
 	/**
 	 * Obtain a Scala tuple.
-	 * 
+	 *
 	 * @param <T1>
 	 *            the type of the first output
 	 * @param <T2>
@@ -945,7 +934,7 @@ public class MLResults {
 	public <T1, T2, T3, T4, T5, T6, T7, T8, T9, T10> Tuple10<T1, T2, T3, T4, T5, T6, T7, T8, T9, T10> getTuple(
 			String outputName1, String outputName2, String outputName3, String outputName4, String outputName5,
 			String outputName6, String outputName7, String outputName8, String outputName9, String outputName10) {
-		return new Tuple10<T1, T2, T3, T4, T5, T6, T7, T8, T9, T10>((T1) outputValue(outputName1),
+		return new Tuple10<>((T1) outputValue(outputName1),
 				(T2) outputValue(outputName2), (T3) outputValue(outputName3), (T4) outputValue(outputName4),
 				(T5) outputValue(outputName5), (T6) outputValue(outputName6), (T7) outputValue(outputName7),
 				(T8) outputValue(outputName8), (T9) outputValue(outputName9), (T10) outputValue(outputName10));
@@ -953,7 +942,7 @@ public class MLResults {
 
 	/**
 	 * Obtain a Scala tuple.
-	 * 
+	 *
 	 * @param <T1>
 	 *            the type of the first output
 	 * @param <T2>
@@ -1005,7 +994,7 @@ public class MLResults {
 			String outputName1, String outputName2, String outputName3, String outputName4, String outputName5,
 			String outputName6, String outputName7, String outputName8, String outputName9, String outputName10,
 			String outputName11) {
-		return new Tuple11<T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11>((T1) outputValue(outputName1),
+		return new Tuple11<>((T1) outputValue(outputName1),
 				(T2) outputValue(outputName2), (T3) outputValue(outputName3), (T4) outputValue(outputName4),
 				(T5) outputValue(outputName5), (T6) outputValue(outputName6), (T7) outputValue(outputName7),
 				(T8) outputValue(outputName8), (T9) outputValue(outputName9), (T10) outputValue(outputName10),
@@ -1014,7 +1003,7 @@ public class MLResults {
 
 	/**
 	 * Obtain a Scala tuple.
-	 * 
+	 *
 	 * @param <T1>
 	 *            the type of the first output
 	 * @param <T2>
@@ -1070,7 +1059,7 @@ public class MLResults {
 			String outputName1, String outputName2, String outputName3, String outputName4, String outputName5,
 			String outputName6, String outputName7, String outputName8, String outputName9, String outputName10,
 			String outputName11, String outputName12) {
-		return new Tuple12<T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12>((T1) outputValue(outputName1),
+		return new Tuple12<>((T1) outputValue(outputName1),
 				(T2) outputValue(outputName2), (T3) outputValue(outputName3), (T4) outputValue(outputName4),
 				(T5) outputValue(outputName5), (T6) outputValue(outputName6), (T7) outputValue(outputName7),
 				(T8) outputValue(outputName8), (T9) outputValue(outputName9), (T10) outputValue(outputName10),
@@ -1079,7 +1068,7 @@ public class MLResults {
 
 	/**
 	 * Obtain a Scala tuple.
-	 * 
+	 *
 	 * @param <T1>
 	 *            the type of the first output
 	 * @param <T2>
@@ -1139,7 +1128,7 @@ public class MLResults {
 			String outputName1, String outputName2, String outputName3, String outputName4, String outputName5,
 			String outputName6, String outputName7, String outputName8, String outputName9, String outputName10,
 			String outputName11, String outputName12, String outputName13) {
-		return new Tuple13<T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13>((T1) outputValue(outputName1),
+		return new Tuple13<>((T1) outputValue(outputName1),
 				(T2) outputValue(outputName2), (T3) outputValue(outputName3), (T4) outputValue(outputName4),
 				(T5) outputValue(outputName5), (T6) outputValue(outputName6), (T7) outputValue(outputName7),
 				(T8) outputValue(outputName8), (T9) outputValue(outputName9), (T10) outputValue(outputName10),
@@ -1148,7 +1137,7 @@ public class MLResults {
 
 	/**
 	 * Obtain a Scala tuple.
-	 * 
+	 *
 	 * @param <T1>
 	 *            the type of the first output
 	 * @param <T2>
@@ -1212,7 +1201,7 @@ public class MLResults {
 			String outputName1, String outputName2, String outputName3, String outputName4, String outputName5,
 			String outputName6, String outputName7, String outputName8, String outputName9, String outputName10,
 			String outputName11, String outputName12, String outputName13, String outputName14) {
-		return new Tuple14<T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14>((T1) outputValue(outputName1),
+		return new Tuple14<>((T1) outputValue(outputName1),
 				(T2) outputValue(outputName2), (T3) outputValue(outputName3), (T4) outputValue(outputName4),
 				(T5) outputValue(outputName5), (T6) outputValue(outputName6), (T7) outputValue(outputName7),
 				(T8) outputValue(outputName8), (T9) outputValue(outputName9), (T10) outputValue(outputName10),
@@ -1222,7 +1211,7 @@ public class MLResults {
 
 	/**
 	 * Obtain a Scala tuple.
-	 * 
+	 *
 	 * @param <T1>
 	 *            the type of the first output
 	 * @param <T2>
@@ -1290,7 +1279,7 @@ public class MLResults {
 			String outputName1, String outputName2, String outputName3, String outputName4, String outputName5,
 			String outputName6, String outputName7, String outputName8, String outputName9, String outputName10,
 			String outputName11, String outputName12, String outputName13, String outputName14, String outputName15) {
-		return new Tuple15<T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14, T15>(
+		return new Tuple15<>(
 				(T1) outputValue(outputName1), (T2) outputValue(outputName2), (T3) outputValue(outputName3),
 				(T4) outputValue(outputName4), (T5) outputValue(outputName5), (T6) outputValue(outputName6),
 				(T7) outputValue(outputName7), (T8) outputValue(outputName8), (T9) outputValue(outputName9),
@@ -1300,7 +1289,7 @@ public class MLResults {
 
 	/**
 	 * Obtain a Scala tuple.
-	 * 
+	 *
 	 * @param <T1>
 	 *            the type of the first output
 	 * @param <T2>
@@ -1373,7 +1362,7 @@ public class MLResults {
 			String outputName6, String outputName7, String outputName8, String outputName9, String outputName10,
 			String outputName11, String outputName12, String outputName13, String outputName14, String outputName15,
 			String outputName16) {
-		return new Tuple16<T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14, T15, T16>(
+		return new Tuple16<>(
 				(T1) outputValue(outputName1), (T2) outputValue(outputName2), (T3) outputValue(outputName3),
 				(T4) outputValue(outputName4), (T5) outputValue(outputName5), (T6) outputValue(outputName6),
 				(T7) outputValue(outputName7), (T8) outputValue(outputName8), (T9) outputValue(outputName9),
@@ -1384,7 +1373,7 @@ public class MLResults {
 
 	/**
 	 * Obtain a Scala tuple.
-	 * 
+	 *
 	 * @param <T1>
 	 *            the type of the first output
 	 * @param <T2>
@@ -1461,7 +1450,7 @@ public class MLResults {
 			String outputName6, String outputName7, String outputName8, String outputName9, String outputName10,
 			String outputName11, String outputName12, String outputName13, String outputName14, String outputName15,
 			String outputName16, String outputName17) {
-		return new Tuple17<T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14, T15, T16, T17>(
+		return new Tuple17<>(
 				(T1) outputValue(outputName1), (T2) outputValue(outputName2), (T3) outputValue(outputName3),
 				(T4) outputValue(outputName4), (T5) outputValue(outputName5), (T6) outputValue(outputName6),
 				(T7) outputValue(outputName7), (T8) outputValue(outputName8), (T9) outputValue(outputName9),
@@ -1472,7 +1461,7 @@ public class MLResults {
 
 	/**
 	 * Obtain a Scala tuple.
-	 * 
+	 *
 	 * @param <T1>
 	 *            the type of the first output
 	 * @param <T2>
@@ -1553,7 +1542,7 @@ public class MLResults {
 			String outputName6, String outputName7, String outputName8, String outputName9, String outputName10,
 			String outputName11, String outputName12, String outputName13, String outputName14, String outputName15,
 			String outputName16, String outputName17, String outputName18) {
-		return new Tuple18<T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14, T15, T16, T17, T18>(
+		return new Tuple18<>(
 				(T1) outputValue(outputName1), (T2) outputValue(outputName2), (T3) outputValue(outputName3),
 				(T4) outputValue(outputName4), (T5) outputValue(outputName5), (T6) outputValue(outputName6),
 				(T7) outputValue(outputName7), (T8) outputValue(outputName8), (T9) outputValue(outputName9),
@@ -1564,7 +1553,7 @@ public class MLResults {
 
 	/**
 	 * Obtain a Scala tuple.
-	 * 
+	 *
 	 * @param <T1>
 	 *            the type of the first output
 	 * @param <T2>
@@ -1649,7 +1638,7 @@ public class MLResults {
 			String outputName6, String outputName7, String outputName8, String outputName9, String outputName10,
 			String outputName11, String outputName12, String outputName13, String outputName14, String outputName15,
 			String outputName16, String outputName17, String outputName18, String outputName19) {
-		return new Tuple19<T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14, T15, T16, T17, T18, T19>(
+		return new Tuple19<>(
 				(T1) outputValue(outputName1), (T2) outputValue(outputName2), (T3) outputValue(outputName3),
 				(T4) outputValue(outputName4), (T5) outputValue(outputName5), (T6) outputValue(outputName6),
 				(T7) outputValue(outputName7), (T8) outputValue(outputName8), (T9) outputValue(outputName9),
@@ -1661,7 +1650,7 @@ public class MLResults {
 
 	/**
 	 * Obtain a Scala tuple.
-	 * 
+	 *
 	 * @param <T1>
 	 *            the type of the first output
 	 * @param <T2>
@@ -1750,7 +1739,7 @@ public class MLResults {
 			String outputName6, String outputName7, String outputName8, String outputName9, String outputName10,
 			String outputName11, String outputName12, String outputName13, String outputName14, String outputName15,
 			String outputName16, String outputName17, String outputName18, String outputName19, String outputName20) {
-		return new Tuple20<T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14, T15, T16, T17, T18, T19, T20>(
+		return new Tuple20<>(
 				(T1) outputValue(outputName1), (T2) outputValue(outputName2), (T3) outputValue(outputName3),
 				(T4) outputValue(outputName4), (T5) outputValue(outputName5), (T6) outputValue(outputName6),
 				(T7) outputValue(outputName7), (T8) outputValue(outputName8), (T9) outputValue(outputName9),
@@ -1762,7 +1751,7 @@ public class MLResults {
 
 	/**
 	 * Obtain a Scala tuple.
-	 * 
+	 *
 	 * @param <T1>
 	 *            the type of the first output
 	 * @param <T2>
@@ -1856,7 +1845,7 @@ public class MLResults {
 			String outputName11, String outputName12, String outputName13, String outputName14, String outputName15,
 			String outputName16, String outputName17, String outputName18, String outputName19, String outputName20,
 			String outputName21) {
-		return new Tuple21<T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14, T15, T16, T17, T18, T19, T20, T21>(
+		return new Tuple21<>(
 				(T1) outputValue(outputName1), (T2) outputValue(outputName2), (T3) outputValue(outputName3),
 				(T4) outputValue(outputName4), (T5) outputValue(outputName5), (T6) outputValue(outputName6),
 				(T7) outputValue(outputName7), (T8) outputValue(outputName8), (T9) outputValue(outputName9),
@@ -1868,7 +1857,7 @@ public class MLResults {
 
 	/**
 	 * Obtain a Scala tuple.
-	 * 
+	 *
 	 * @param <T1>
 	 *            the type of the first output
 	 * @param <T2>
@@ -1966,7 +1955,7 @@ public class MLResults {
 			String outputName11, String outputName12, String outputName13, String outputName14, String outputName15,
 			String outputName16, String outputName17, String outputName18, String outputName19, String outputName20,
 			String outputName21, String outputName22) {
-		return new Tuple22<T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14, T15, T16, T17, T18, T19, T20, T21, T22>(
+		return new Tuple22<>(
 				(T1) outputValue(outputName1), (T2) outputValue(outputName2), (T3) outputValue(outputName3),
 				(T4) outputValue(outputName4), (T5) outputValue(outputName5), (T6) outputValue(outputName6),
 				(T7) outputValue(outputName7), (T8) outputValue(outputName8), (T9) outputValue(outputName9),
@@ -1991,7 +1980,7 @@ public class MLResults {
 	private <T> T outputValue(String outputName) {
 		Data data = getData(outputName);
 		if (data instanceof BooleanObject) {
-			return (T) new Boolean(((BooleanObject) data).getBooleanValue());
+			return (T) Boolean.valueOf(((BooleanObject) data).getBooleanValue());
 		} else if (data instanceof DoubleObject) {
 			return (T) new Double(((DoubleObject) data).getDoubleValue());
 		} else if (data instanceof IntObject) {

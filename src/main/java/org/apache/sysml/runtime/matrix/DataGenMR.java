@@ -26,7 +26,6 @@ import java.util.HashSet;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.commons.math3.random.Well1024a;
-import org.apache.hadoop.fs.FSDataOutputStream;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.io.Writable;
@@ -43,9 +42,10 @@ import org.apache.sysml.runtime.instructions.MRInstructionParser;
 import org.apache.sysml.runtime.instructions.MRJobInstruction;
 import org.apache.sysml.runtime.instructions.mr.DataGenMRInstruction;
 import org.apache.sysml.runtime.instructions.mr.MRInstruction;
-import org.apache.sysml.runtime.instructions.mr.MRInstruction.MRINSTRUCTION_TYPE;
+import org.apache.sysml.runtime.instructions.mr.MRInstruction.MRType;
 import org.apache.sysml.runtime.instructions.mr.RandInstruction;
 import org.apache.sysml.runtime.instructions.mr.SeqInstruction;
+import org.apache.sysml.runtime.io.IOUtilFunctions;
 import org.apache.sysml.runtime.matrix.data.InputInfo;
 import org.apache.sysml.runtime.matrix.data.LibMatrixDatagen;
 import org.apache.sysml.runtime.matrix.data.MatrixIndexes;
@@ -59,6 +59,7 @@ import org.apache.sysml.runtime.matrix.mapred.MRJobConfiguration;
 import org.apache.sysml.runtime.matrix.mapred.MRJobConfiguration.ConvertTarget;
 import org.apache.sysml.runtime.matrix.mapred.MRJobConfiguration.MatrixChar_N_ReducerGroups;
 import org.apache.sysml.runtime.util.MapReduceTool;
+import org.apache.sysml.runtime.util.UtilFunctions;
 import org.apache.sysml.yarn.DMLAppMasterUtils;
 import org.apache.sysml.yarn.ropt.YarnClusterAnalyzer;
 
@@ -78,24 +79,20 @@ public class DataGenMR
 	/**
 	 * <p>Starts a Rand MapReduce job which will produce one or more random objects.</p>
 	 * 
-	 * @param numRows number of rows for each random object
-	 * @param numCols number of columns for each random object
-	 * @param blockRowSize number of rows in a block for each random object
-	 * @param blockColSize number of columns in a block for each random object
-	 * @param minValue minimum of the random values for each random object
-	 * @param maxValue maximum of the random values for each random object
-	 * @param sparsity sparsity for each random object
-	 * @param pdf probability density function for each random object
+	 * @param inst MR job instruction
+	 * @param dataGenInstructions array of data gen instructions
+	 * @param instructionsInMapper instructions in mapper
+	 * @param aggInstructionsInReducer aggregate instructions in reducer
+	 * @param otherInstructionsInReducer other instructions in reducer
+	 * @param numReducers number of reducers
 	 * @param replication file replication
-	 * @param inputs input file for each random object
+	 * @param resultIndexes result indexes for each random object
+	 * @param dimsUnknownFilePrefix file path prefix when dimensions unknown
 	 * @param outputs output file for each random object
 	 * @param outputInfos output information for each random object
-	 * @param instructionsInMapper instruction for each random object
-	 * @param resultIndexes result indexes for each random object
 	 * @return matrix characteristics for each random object
-	 * @throws Exception if an error occurred in the MapReduce phase
+	 * @throws Exception if Exception occurs
 	 */
-	
 	public static JobReturn runJob(MRJobInstruction inst, String[] dataGenInstructions, 
 			String instructionsInMapper, String aggInstructionsInReducer, String otherInstructionsInReducer, 
 			int numReducers, int replication, byte[] resultIndexes, String dimsUnknownFilePrefix, 
@@ -131,7 +128,7 @@ public class DataGenMR
 			dataGenInsStr=dataGenInsStr+Lop.INSTRUCTION_DELIMITOR+dataGenInstructions[i];
 			
 			MRInstruction mrins = MRInstructionParser.parseSingleInstruction(dataGenInstructions[i]);
-			MRINSTRUCTION_TYPE mrtype = mrins.getMRInstructionType();
+			MRType mrtype = mrins.getMRInstructionType();
 			DataGenMRInstruction genInst = (DataGenMRInstruction) mrins;
 			
 			rlens[i]  = genInst.getRows();
@@ -142,49 +139,46 @@ public class DataGenMR
 			maxbrlen = Math.max(maxbrlen, brlens[i]);
 			maxbclen = Math.max(maxbclen, bclens[i]);
 
-			if ( mrtype == MRINSTRUCTION_TYPE.Rand ) 
+			if ( mrtype == MRType.Rand ) 
 			{
 				RandInstruction randInst = (RandInstruction) mrins;
 				inputs[i]=LibMatrixDatagen.generateUniqueSeedPath(genInst.getBaseDir());
 				maxsparsity = Math.max(maxsparsity, randInst.getSparsity());
 				
-				FSDataOutputStream fsOut = fs.create(new Path(inputs[i]));
-				PrintWriter pw = new PrintWriter(fsOut);
-				
-				//for obj reuse and preventing repeated buffer re-allocations
-				StringBuilder sb = new StringBuilder();
-				
-				//seed generation
-				Well1024a bigrand = LibMatrixDatagen.setupSeedsForRand(randInst.getSeed());
-				long[] nnz = LibMatrixDatagen.computeNNZperBlock(rlens[i], clens[i], brlens[i], bclens[i], randInst.getSparsity());
-				int nnzIx = 0;
-				for(long r = 0; r < rlens[i]; r += brlens[i]) {
-					long curBlockRowSize = Math.min(brlens[i], (rlens[i] - r));
-					for(long c = 0; c < clens[i]; c += bclens[i])
-					{
-						long curBlockColSize = Math.min(bclens[i], (clens[i] - c));
-						
-						sb.append((r / brlens[i]) + 1);
-						sb.append(',');
-						sb.append((c / bclens[i]) + 1);
-						sb.append(',');
-						sb.append(curBlockRowSize);
-						sb.append(',');
-						sb.append(curBlockColSize);
-						sb.append(',');
-						sb.append(nnz[nnzIx++]);
-						sb.append(',');
-						sb.append(bigrand.nextLong());
-						pw.println(sb.toString());
-						sb.setLength(0);
-						numblocks++;
+				PrintWriter pw = null;
+				try {
+					pw = new PrintWriter(fs.create(new Path(inputs[i])));
+					
+					//for obj reuse and preventing repeated buffer re-allocations
+					StringBuilder sb = new StringBuilder();
+					
+					//seed generation
+					Well1024a bigrand = LibMatrixDatagen.setupSeedsForRand(randInst.getSeed());
+					for(long r = 0; r < Math.max(rlens[i],1); r += brlens[i]) {
+						long curBlockRowSize = Math.min(brlens[i], (rlens[i] - r));
+						for(long c = 0; c < Math.max(clens[i],1); c += bclens[i]) {
+							long curBlockColSize = Math.min(bclens[i], (clens[i] - c));
+							sb.append((r / brlens[i]) + 1);
+							sb.append(',');
+							sb.append((c / bclens[i]) + 1);
+							sb.append(',');
+							sb.append(curBlockRowSize);
+							sb.append(',');
+							sb.append(curBlockColSize);
+							sb.append(',');
+							sb.append(bigrand.nextLong());
+							pw.println(sb.toString());
+							sb.setLength(0);
+							numblocks++;
+						}
 					}
 				}
-				pw.close();
-				fsOut.close();
+				finally {
+					IOUtilFunctions.closeSilently(pw);
+				}
 				inputInfos[i] = InputInfo.TextCellInputInfo;
 			}
-			else if ( mrtype == MRINSTRUCTION_TYPE.Seq ) {
+			else if ( mrtype == MRType.Seq ) {
 				SeqInstruction seqInst = (SeqInstruction) mrins;
 				inputs[i]=genInst.getBaseDir() + System.currentTimeMillis()+".seqinput";
 				maxsparsity = 1.0; //always dense
@@ -205,7 +199,7 @@ public class DataGenMR
 					throw new DMLRuntimeException("Wrong sign for the increment in a call to seq()");
 				
 				// Compute the number of rows in the sequence
-				long numrows = 1 + (long)Math.floor((to-from)/incr);
+				long numrows = UtilFunctions.getSeqLength(from, to, incr);
 				if ( rlens[i] > 0 ) {
 					if ( numrows != rlens[i] )
 						throw new DMLRuntimeException("Unexpected error while processing sequence instruction. Expected number of rows does not match given number: " + rlens[i] + " != " + numrows);
@@ -219,46 +213,41 @@ public class DataGenMR
 				else 
 					clens[i] = 1;
 
-				FSDataOutputStream fsOut = fs.create(new Path(inputs[i]));
-				PrintWriter pw = new PrintWriter(fsOut);
-				StringBuilder sb = new StringBuilder();
-				
-				double temp = from;
-				double block_from, block_to;
-				for(long r = 0; r < rlens[i]; r += brlens[i]) {
-					long curBlockRowSize = Math.min(brlens[i], (rlens[i] - r));
+				PrintWriter pw = null;
+				try {
+					pw = new PrintWriter(fs.create(new Path(inputs[i])));
+					StringBuilder sb = new StringBuilder();
 					
-					// block (bid_i,bid_j) generates a sequence from the interval [block_from, block_to] (inclusive of both end points of the interval) 
-					long bid_i = ((r / brlens[i]) + 1);
-					long bid_j = 1;
-					block_from = temp;
-					block_to   = temp+(curBlockRowSize-1)*incr;
-					temp = block_to + incr; // next block starts from here
-					
-					sb.append(bid_i);
-					sb.append(',');
-					sb.append(bid_j);
-					sb.append(',');
-					/*
-					// Need not include block size while generating seq()
-					sb.append(curBlockRowSize);
-					sb.append(',');
-					sb.append(1);
-					sb.append(',');*/
-					sb.append(block_from);
-					sb.append(',');
-					sb.append(block_to);
-					sb.append(',');
-					sb.append(incr);
-					
-					pw.println(sb.toString());
-					//System.out.println("MapTask " + r + ": " + sb.toString());
-					sb.setLength(0);
-					numblocks++;
+					double temp = from;
+					double block_from, block_to;
+					for(long r = 0; r < rlens[i]; r += brlens[i]) {
+						long curBlockRowSize = Math.min(brlens[i], (rlens[i] - r));
+						
+						// block (bid_i,bid_j) generates a sequence from the interval [block_from, block_to] (inclusive of both end points of the interval) 
+						long bid_i = ((r / brlens[i]) + 1);
+						long bid_j = 1;
+						block_from = temp;
+						block_to   = temp+(curBlockRowSize-1)*incr;
+						temp = block_to + incr; // next block starts from here
+						
+						sb.append(bid_i);
+						sb.append(',');
+						sb.append(bid_j);
+						sb.append(',');
+						sb.append(block_from);
+						sb.append(',');
+						sb.append(block_to);
+						sb.append(',');
+						sb.append(incr);
+						
+						pw.println(sb.toString());
+						sb.setLength(0);
+						numblocks++;
+					}
 				}
-				
-				pw.close();
-				fsOut.close();
+				finally {
+					IOUtilFunctions.closeSilently(pw);
+				}
 				inputInfos[i] = InputInfo.TextCellInputInfo;
 			} else {
 				throw new DMLRuntimeException("Unexpected Data Generation Instruction Type: " + mrtype );

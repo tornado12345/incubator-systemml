@@ -19,11 +19,9 @@
 
 package org.apache.sysml.runtime.instructions.spark;
 
-
 import java.io.Serializable;
 import java.util.ArrayList;
 import java.util.Iterator;
-import java.util.LinkedList;
 
 import org.apache.spark.api.java.JavaPairRDD;
 import org.apache.spark.api.java.function.PairFlatMapFunction;
@@ -53,6 +51,7 @@ import org.apache.sysml.runtime.instructions.cp.DoubleObject;
 import org.apache.sysml.runtime.instructions.spark.data.LazyIterableIterator;
 import org.apache.sysml.runtime.instructions.spark.data.PartitionedBroadcast;
 import org.apache.sysml.runtime.instructions.spark.functions.FilterNonEmptyBlocksFunction;
+import org.apache.sysml.runtime.instructions.spark.functions.ReplicateBlockFunction;
 import org.apache.sysml.runtime.instructions.spark.utils.RDDAggregateUtils;
 import org.apache.sysml.runtime.matrix.MatrixCharacteristics;
 import org.apache.sysml.runtime.matrix.data.MatrixBlock;
@@ -60,35 +59,20 @@ import org.apache.sysml.runtime.matrix.data.MatrixIndexes;
 import org.apache.sysml.runtime.matrix.operators.Operator;
 import org.apache.sysml.runtime.matrix.operators.QuaternaryOperator;
 
-/**
- * 
- */
-public class QuaternarySPInstruction extends ComputationSPInstruction 
-{
-	
+public class QuaternarySPInstruction extends ComputationSPInstruction {
 	private CPOperand _input4 = null;
 	private boolean _cacheU = false;
 	private boolean _cacheV = false;
-	
-	public QuaternarySPInstruction(Operator op, CPOperand in1, CPOperand in2, CPOperand in3, CPOperand in4, CPOperand out, boolean cacheU, boolean cacheV, String opcode, String str)
-	{
-		super(op, in1, in2, in3, out, opcode, str);
-		_sptype = SPINSTRUCTION_TYPE.Quaternary;
+
+	private QuaternarySPInstruction(Operator op, CPOperand in1, CPOperand in2, CPOperand in3, CPOperand in4,
+			CPOperand out, boolean cacheU, boolean cacheV, String opcode, String str) {
+		super(SPType.Quaternary, op, in1, in2, in3, out, opcode, str);
 		_input4 = in4;
-		
 		_cacheU = cacheU;
 		_cacheV = cacheV;
 	}
 
-	/**
-	 * 
-	 * @param str
-	 * @return
-	 * @throws DMLRuntimeException
-	 */
-	public static QuaternarySPInstruction parseInstruction( String str ) 
-		throws DMLRuntimeException 
-	{
+	public static QuaternarySPInstruction parseInstruction( String str ) {
 		String[] parts = InstructionUtils.getInstructionPartsWithValueType(str);
 		String opcode = parts[0];
 		
@@ -205,15 +189,13 @@ public class QuaternarySPInstruction extends ComputationSPInstruction
 	}
 	
 	@Override
-	public void processInstruction(ExecutionContext ec) 
-		throws DMLRuntimeException
-	{	
+	public void processInstruction(ExecutionContext ec) {
 		SparkExecutionContext sec = (SparkExecutionContext)ec;
 		QuaternaryOperator qop = (QuaternaryOperator) _optr;
 		
 		//tracking of rdds and broadcasts (for lineage maintenance)
-		ArrayList<String> rddVars = new ArrayList<String>();
-		ArrayList<String> bcVars = new ArrayList<String>();
+		ArrayList<String> rddVars = new ArrayList<>();
+		ArrayList<String> bcVars = new ArrayList<>();
 
 		JavaPairRDD<MatrixIndexes,MatrixBlock> in = sec.getBinaryBlockRDDHandleForVariable( input1.getName() );
 		JavaPairRDD<MatrixIndexes, MatrixBlock> out = null;
@@ -260,12 +242,12 @@ public class QuaternarySPInstruction extends ComputationSPInstruction
 
 			//preparation of transposed and replicated U
 			if( inU != null )
-				inU = inU.flatMapToPair(new ReplicateBlocksFunction(clen, bclen, true));
+				inU = inU.flatMapToPair(new ReplicateBlockFunction(clen, bclen, true));
 
 			//preparation of transposed and replicated V
 			if( inV != null )
 				inV = inV.mapToPair(new TransposeFactorIndexesFunction())
-				         .flatMapToPair(new ReplicateBlocksFunction(rlen, brlen, false));
+				         .flatMapToPair(new ReplicateBlockFunction(rlen, brlen, false));
 			
 			//functions calls w/ two rdd inputs		
 			if( inU != null && inV == null && inW == null )
@@ -313,7 +295,7 @@ public class QuaternarySPInstruction extends ComputationSPInstruction
 		{
 			//aggregation if required (map/redwdivmm)
 			if( qop.wtype3 != null && !qop.wtype3.isBasic() )
-				out = RDDAggregateUtils.sumByKeyStable( out );
+				out = RDDAggregateUtils.sumByKeyStable(out, false);
 				
 			//put output RDD handle into symbol table
 			sec.setRDDHandleForVariable(output.getName(), out);
@@ -327,35 +309,23 @@ public class QuaternarySPInstruction extends ComputationSPInstruction
 			updateOutputMatrixCharacteristics(sec, qop);
 		}
 	}
-	
-	/**
-	 * 
-	 * @param sec
-	 * @param qop
-	 * @throws DMLRuntimeException 
-	 */
-	private void updateOutputMatrixCharacteristics(SparkExecutionContext sec, QuaternaryOperator qop) 
-		throws DMLRuntimeException
-	{
+
+	private void updateOutputMatrixCharacteristics(SparkExecutionContext sec, QuaternaryOperator qop) {
 		MatrixCharacteristics mcIn1 = sec.getMatrixCharacteristics(input1.getName());
 		MatrixCharacteristics mcIn2 = sec.getMatrixCharacteristics(input2.getName());
 		MatrixCharacteristics mcIn3 = sec.getMatrixCharacteristics(input3.getName());
 		MatrixCharacteristics mcOut = sec.getMatrixCharacteristics(output.getName());
-		
 		if( qop.wtype2 != null || qop.wtype5 != null ) {
 			//output size determined by main input
 			mcOut.set(mcIn1.getRows(), mcIn1.getCols(), mcIn1.getRowsPerBlock(), mcIn1.getColsPerBlock());
 		}
 		else if(qop.wtype3 != null ) { //wdivmm
 			long rank = qop.wtype3.isLeft() ? mcIn3.getCols() : mcIn2.getCols();
-			MatrixCharacteristics mcTmp = qop.wtype3.computeOutputCharacteristics(mcIn1.getRows(), mcIn1.getCols(), rank);		
-			mcOut.set(mcTmp.getRows(), mcTmp.getCols(), mcIn1.getRowsPerBlock(), mcIn1.getColsPerBlock());		
+			MatrixCharacteristics mcTmp = qop.wtype3.computeOutputCharacteristics(mcIn1.getRows(), mcIn1.getCols(), rank);
+			mcOut.set(mcTmp.getRows(), mcTmp.getCols(), mcIn1.getRowsPerBlock(), mcIn1.getColsPerBlock());
 		}
 	}
-	
-	/**
-	 * 
-	 */
+
 	private abstract static class RDDQuaternaryBaseFunction implements Serializable
 	{
 		private static final long serialVersionUID = -3175397651350954930L;
@@ -365,39 +335,31 @@ public class QuaternarySPInstruction extends ComputationSPInstruction
 		protected PartitionedBroadcast<MatrixBlock> _pmV = null;
 		
 		public RDDQuaternaryBaseFunction( QuaternaryOperator qop, PartitionedBroadcast<MatrixBlock> bcU, PartitionedBroadcast<MatrixBlock> bcV ) {
-			_qop = qop;		
+			_qop = qop;
 			_pmU = bcU;
 			_pmV = bcV;
 		}
 
-		protected MatrixIndexes createOutputIndexes(MatrixIndexes in) 
-		{
+		protected MatrixIndexes createOutputIndexes(MatrixIndexes in) {
 			if( _qop.wtype3 != null && !_qop.wtype3.isBasic() ){ //key change
 				boolean left = _qop.wtype3.isLeft();
 				return new MatrixIndexes(left?in.getColumnIndex():in.getRowIndex(), 1);
-			}				
+			}
 			return in;
 		}
 	}
-	
-	/**
-	 * 
-	 */
+
 	private static class RDDQuaternaryFunction1 extends RDDQuaternaryBaseFunction //one rdd input
 		implements PairFlatMapFunction<Iterator<Tuple2<MatrixIndexes, MatrixBlock>>, MatrixIndexes, MatrixBlock>
 	{
 		private static final long serialVersionUID = -8209188316939435099L;
 		
-		public RDDQuaternaryFunction1( QuaternaryOperator qop, PartitionedBroadcast<MatrixBlock> bcU, PartitionedBroadcast<MatrixBlock> bcV ) 
-			throws DMLRuntimeException
-		{
+		public RDDQuaternaryFunction1( QuaternaryOperator qop, PartitionedBroadcast<MatrixBlock> bcU, PartitionedBroadcast<MatrixBlock> bcV ) {
 			super(qop, bcU, bcV);
 		}
 	
 		@Override
-		public Iterable<Tuple2<MatrixIndexes, MatrixBlock>> call(Iterator<Tuple2<MatrixIndexes, MatrixBlock>> arg)
-			throws Exception 
-		{
+		public LazyIterableIterator<Tuple2<MatrixIndexes, MatrixBlock>> call(Iterator<Tuple2<MatrixIndexes, MatrixBlock>> arg) {
 			return new RDDQuaternaryPartitionIterator(arg);
 		}
 		
@@ -408,13 +370,10 @@ public class QuaternarySPInstruction extends ComputationSPInstruction
 			}
 			
 			@Override
-			protected Tuple2<MatrixIndexes, MatrixBlock> computeNext(Tuple2<MatrixIndexes, MatrixBlock> arg) 
-				throws Exception 
-			{
+			protected Tuple2<MatrixIndexes, MatrixBlock> computeNext(Tuple2<MatrixIndexes, MatrixBlock> arg) {
 				MatrixIndexes ixIn = arg._1();
 				MatrixBlock blkIn = arg._2();
 				MatrixBlock blkOut = new MatrixBlock();
-				
 				MatrixBlock mbU = _pmU.getBlock((int)ixIn.getRowIndex(), 1);
 				MatrixBlock mbV = _pmV.getBlock((int)ixIn.getColumnIndex(), 1);
 				
@@ -423,35 +382,26 @@ public class QuaternarySPInstruction extends ComputationSPInstruction
 				
 				//create return tuple
 				MatrixIndexes ixOut = createOutputIndexes(ixIn);
-				return new Tuple2<MatrixIndexes,MatrixBlock>(ixOut, blkOut);
-			}			
-			
+				return new Tuple2<>(ixOut, blkOut);
+			}
 		}
 	}
-	
-	/**
-	 * 
-	 */
+
 	private static class RDDQuaternaryFunction2 extends RDDQuaternaryBaseFunction //two rdd input
 		implements PairFunction<Tuple2<MatrixIndexes, Tuple2<MatrixBlock,MatrixBlock>>, MatrixIndexes, MatrixBlock>
 	{
 		private static final long serialVersionUID = 7493974462943080693L;
 		
-		public RDDQuaternaryFunction2( QuaternaryOperator qop, PartitionedBroadcast<MatrixBlock> bcU, PartitionedBroadcast<MatrixBlock> bcV ) 
-			throws DMLRuntimeException
-		{
+		public RDDQuaternaryFunction2( QuaternaryOperator qop, PartitionedBroadcast<MatrixBlock> bcU, PartitionedBroadcast<MatrixBlock> bcV ) {
 			super(qop, bcU, bcV);
 		}
 
 		@Override
-		public Tuple2<MatrixIndexes, MatrixBlock> call(Tuple2<MatrixIndexes, Tuple2<MatrixBlock, MatrixBlock>> arg0)
-			throws Exception 
-		{
+		public Tuple2<MatrixIndexes, MatrixBlock> call(Tuple2<MatrixIndexes, Tuple2<MatrixBlock, MatrixBlock>> arg0) {
 			MatrixIndexes ixIn = arg0._1();
 			MatrixBlock blkIn1 = arg0._2()._1();
 			MatrixBlock blkIn2 = arg0._2()._2();
 			MatrixBlock blkOut = new MatrixBlock();
-			
 			MatrixBlock mbU = (_pmU!=null)?_pmU.getBlock((int)ixIn.getRowIndex(), 1) : blkIn2;
 			MatrixBlock mbV = (_pmV!=null)?_pmV.getBlock((int)ixIn.getColumnIndex(), 1) : blkIn2;
 			MatrixBlock mbW = (_qop.hasFourInputs()) ? blkIn2 : null;
@@ -460,36 +410,27 @@ public class QuaternarySPInstruction extends ComputationSPInstruction
 			blkIn1.quaternaryOperations(_qop, mbU, mbV, mbW, blkOut);
 			
 			//create return tuple
-			MatrixIndexes ixOut = createOutputIndexes(ixIn);			
-			return new Tuple2<MatrixIndexes,MatrixBlock>(ixOut, blkOut);
+			MatrixIndexes ixOut = createOutputIndexes(ixIn);
+			return new Tuple2<>(ixOut, blkOut);
 		}
 	}
-	
-	/**
-	 * 
-	 */
+
 	private static class RDDQuaternaryFunction3 extends RDDQuaternaryBaseFunction //three rdd input
 		implements PairFunction<Tuple2<MatrixIndexes, Tuple2<Tuple2<MatrixBlock,MatrixBlock>,MatrixBlock>>, MatrixIndexes, MatrixBlock>
 	{
 		private static final long serialVersionUID = -2294086455843773095L;
 		
-		public RDDQuaternaryFunction3( QuaternaryOperator qop, PartitionedBroadcast<MatrixBlock> bcU, PartitionedBroadcast<MatrixBlock> bcV ) 
-			throws DMLRuntimeException
-		{
+		public RDDQuaternaryFunction3( QuaternaryOperator qop, PartitionedBroadcast<MatrixBlock> bcU, PartitionedBroadcast<MatrixBlock> bcV ) {
 			super(qop, bcU, bcV);
 		}
 
 		@Override
-		public Tuple2<MatrixIndexes, MatrixBlock> call(Tuple2<MatrixIndexes, Tuple2<Tuple2<MatrixBlock, MatrixBlock>, MatrixBlock>> arg0)
-			throws Exception 
-		{
+		public Tuple2<MatrixIndexes, MatrixBlock> call(Tuple2<MatrixIndexes, Tuple2<Tuple2<MatrixBlock, MatrixBlock>, MatrixBlock>> arg0) {
 			MatrixIndexes ixIn = arg0._1();
 			MatrixBlock blkIn1 = arg0._2()._1()._1();
 			MatrixBlock blkIn2 = arg0._2()._1()._2();
 			MatrixBlock blkIn3 = arg0._2()._2();
-			
 			MatrixBlock blkOut = new MatrixBlock();
-			
 			MatrixBlock mbU = (_pmU!=null)?_pmU.getBlock((int)ixIn.getRowIndex(), 1) : blkIn2;
 			MatrixBlock mbV = (_pmV!=null)?_pmV.getBlock((int)ixIn.getColumnIndex(), 1) : 
 				              (_pmU!=null)? blkIn2 : blkIn3;
@@ -500,7 +441,7 @@ public class QuaternarySPInstruction extends ComputationSPInstruction
 			
 			//create return tuple
 			MatrixIndexes ixOut = createOutputIndexes(ixIn);
-			return new Tuple2<MatrixIndexes,MatrixBlock>(ixOut, blkOut);
+			return new Tuple2<>(ixOut, blkOut);
 		}
 	}
 	
@@ -512,15 +453,12 @@ public class QuaternarySPInstruction extends ComputationSPInstruction
 	{
 		private static final long serialVersionUID = 7328911771600289250L;
 		
-		public RDDQuaternaryFunction4( QuaternaryOperator qop ) 
-			throws DMLRuntimeException
-		{ 
-			super(qop, null, null);		
+		public RDDQuaternaryFunction4( QuaternaryOperator qop ) {
+			super(qop, null, null);
 		}
 
 		@Override
 		public Tuple2<MatrixIndexes, MatrixBlock> call(Tuple2<MatrixIndexes, Tuple2<Tuple2<Tuple2<MatrixBlock, MatrixBlock>, MatrixBlock>, MatrixBlock>> arg0)
-			throws Exception 
 		{
 			MatrixIndexes ixIn1 = arg0._1();
 			MatrixBlock blkIn1 = arg0._2()._1()._1()._1();
@@ -534,7 +472,7 @@ public class QuaternarySPInstruction extends ComputationSPInstruction
 			
 			//create return tuple
 			MatrixIndexes ixOut = createOutputIndexes(ixIn1);
-			return new Tuple2<MatrixIndexes,MatrixBlock>(ixOut, blkOut);
+			return new Tuple2<>(ixOut, blkOut);
 		}
 	}
 	
@@ -543,9 +481,7 @@ public class QuaternarySPInstruction extends ComputationSPInstruction
 		private static final long serialVersionUID = -2571724736131823708L;
 		
 		@Override
-		public Tuple2<MatrixIndexes, MatrixBlock> call( Tuple2<MatrixIndexes, MatrixBlock> arg0 ) 
-			throws Exception 
-		{
+		public Tuple2<MatrixIndexes, MatrixBlock> call( Tuple2<MatrixIndexes, MatrixBlock> arg0 ) {
 			MatrixIndexes ixIn = arg0._1();
 			MatrixBlock blkIn = arg0._2();
 
@@ -554,59 +490,7 @@ public class QuaternarySPInstruction extends ComputationSPInstruction
 			MatrixBlock blkOut = new MatrixBlock(blkIn);
 			
 			//output new tuple
-			return new Tuple2<MatrixIndexes, MatrixBlock>(ixOut,blkOut);
-		}
-		
-	}
-
-	private static class ReplicateBlocksFunction implements PairFlatMapFunction<Tuple2<MatrixIndexes, MatrixBlock>, MatrixIndexes, MatrixBlock> 
-	{
-		private static final long serialVersionUID = -1184696764516975609L;
-		
-		private long _len = -1;
-		private long _blen = -1;
-		private boolean _left = false;
-		
-		public ReplicateBlocksFunction(long len, long blen, boolean left)
-		{
-			_len = len;
-			_blen = blen;
-			_left = left;
-		}
-		
-		@Override
-		public Iterable<Tuple2<MatrixIndexes, MatrixBlock>> call( Tuple2<MatrixIndexes, MatrixBlock> arg0 ) 
-			throws Exception 
-		{
-			LinkedList<Tuple2<MatrixIndexes, MatrixBlock>> ret = new LinkedList<Tuple2<MatrixIndexes, MatrixBlock>>();
-			MatrixIndexes ixIn = arg0._1();
-			MatrixBlock blkIn = arg0._2();
-			
-			long numBlocks = (long) Math.ceil((double)_len/_blen); 
-			
-			if( _left ) //LHS MATRIX
-			{
-				//replicate wrt # column blocks in RHS
-				long i = ixIn.getRowIndex();
-				for( long j=1; j<=numBlocks; j++ ) {
-					MatrixIndexes tmpix = new MatrixIndexes(i, j);
-					MatrixBlock tmpblk = new MatrixBlock(blkIn);
-					ret.add( new Tuple2<MatrixIndexes, MatrixBlock>(tmpix, tmpblk) );
-				}
-			} 
-			else // RHS MATRIX
-			{
-				//replicate wrt # row blocks in LHS
-				long j = ixIn.getColumnIndex();
-				for( long i=1; i<=numBlocks; i++ ) {
-					MatrixIndexes tmpix = new MatrixIndexes(i, j);
-					MatrixBlock tmpblk = new MatrixBlock(blkIn);
-					ret.add( new Tuple2<MatrixIndexes, MatrixBlock>(tmpix, tmpblk) );
-				}
-			}
-			
-			//output list of new tuples
-			return ret;
+			return new Tuple2<>(ixOut,blkOut);
 		}
 	}
 }

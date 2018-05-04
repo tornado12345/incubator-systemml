@@ -26,33 +26,18 @@ import org.apache.sysml.runtime.instructions.InstructionUtils;
 import org.apache.sysml.runtime.matrix.data.MatrixBlock;
 import org.apache.sysml.runtime.matrix.operators.Operator;
 
-/**
- * 
- * 
- */
-public class MMTSJCPInstruction extends UnaryCPInstruction
-{	
-	
-	private MMTSJType _type = null;
-	private int _numThreads = 1;
-	
-	public MMTSJCPInstruction(Operator op, CPOperand in1, MMTSJType type, CPOperand out, int k, String opcode, String istr)
-	{
-		super(op, in1, out, opcode, istr);
-		_cptype = CPINSTRUCTION_TYPE.MMTSJ;
+public class MMTSJCPInstruction extends UnaryCPInstruction {
+	private final MMTSJType _type;
+	private final int _numThreads;
+
+	private MMTSJCPInstruction(Operator op, CPOperand in1, MMTSJType type, CPOperand out, int k, String opcode,
+			String istr) {
+		super(CPType.MMTSJ, op, in1, out, opcode, istr);
 		_type = type;
 		_numThreads = k;
 	}
-	
-	/**
-	 * 
-	 * @param str
-	 * @return
-	 * @throws DMLRuntimeException
-	 */
-	public static MMTSJCPInstruction parseInstruction ( String str ) 
-		throws DMLRuntimeException 
-	{
+
+	public static MMTSJCPInstruction parseInstruction ( String str ) {
 		String[] parts = InstructionUtils.getInstructionPartsWithValueType(str);
 		InstructionUtils.checkNumFields ( parts, 4 );
 		
@@ -69,18 +54,16 @@ public class MMTSJCPInstruction extends UnaryCPInstruction
 	}
 	
 	@Override
-	public void processInstruction(ExecutionContext ec)
-		throws DMLRuntimeException 
-	{
+	public void processInstruction(ExecutionContext ec) {
 		//get inputs
-		MatrixBlock matBlock1 = ec.getMatrixInput(input1.getName());
+		MatrixBlock matBlock1 = ec.getMatrixInput(input1.getName(), getExtendedOpcode());
 
 		//execute operations 
 		MatrixBlock ret = (MatrixBlock) matBlock1.transposeSelfMatrixMultOperations(new MatrixBlock(), _type, _numThreads );
 		
 		//set output and release inputs
-		ec.setMatrixOutput(output.getName(), ret);
-		ec.releaseMatrixInput(input1.getName());
+		ec.setMatrixOutput(output.getName(), ret, getExtendedOpcode());
+		ec.releaseMatrixInput(input1.getName(), getExtendedOpcode());
 	}
 	
 	public MMTSJType getMMTSJType()

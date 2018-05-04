@@ -21,7 +21,6 @@ package org.apache.sysml.runtime.matrix.data;
 
 import java.util.Arrays;
 
-import org.apache.sysml.runtime.DMLRuntimeException;
 import org.apache.sysml.runtime.functionobjects.Builtin;
 import org.apache.sysml.runtime.functionobjects.Equals;
 import org.apache.sysml.runtime.functionobjects.GreaterThan;
@@ -44,8 +43,8 @@ import org.apache.sysml.runtime.util.SortUtils;
  * Purpose of this library is to make some of the unary outer aggregate operator more efficient.
  * Today these operators are being handled through common operations.
  * This library will expand per need and priority to include these operators through this support.
- * To begin with, first operator being handled is unary aggregate for less than (<), rowsum operation.
- * Other list will be added soon are rowsum on >, <=, >=, ==, and != operation.  
+ * To begin with, first operator being handled is unary aggregate for less than (&lt;), rowsum operation.
+ * Other list will be added soon are rowsum on &gt;, &lt;=, &gt;=, ==, and != operation.  
  */
 public class LibMatrixOuterAgg 
 {
@@ -58,8 +57,8 @@ public class LibMatrixOuterAgg
 	/**
 	 * This will return if uaggOp is of type RowIndexMax
 	 * 
-	 * @param uaggOp
-	 * @return
+	 * @param uaggOp aggregate unary operator
+	 * @return true if aggregate unary operator is of type rowIndexMax
 	 */
 	public static boolean isRowIndexMax(AggregateUnaryOperator uaggOp)
 	{
@@ -70,8 +69,8 @@ public class LibMatrixOuterAgg
 	/**
 	 * This will return if uaggOp is of type RowIndexMin
 	 * 
-	 * @param uaggOp
-	 * @return
+	 * @param uaggOp aggregate unary operator
+	 * @return true if aggregate unary operator is of type rowIndexMin
 	 */
 	public static boolean isRowIndexMin(AggregateUnaryOperator uaggOp)
 	{
@@ -83,8 +82,8 @@ public class LibMatrixOuterAgg
 	/**
 	 * This will return if uaggOp is of type RowIndexMin
 	 * 
-	 * @param bOp
-	 * @return true/false, based on if its one of the six operators (<, <=, >, >=, == and !=)
+	 * @param bOp binary operator
+	 * @return true/false, based on if its one of the six operators (&lt;, &lt;=, &gt;, &gt;=, == and !=)
 	 */
 	public static boolean isCompareOperator(BinaryOperator bOp)
 	{
@@ -92,13 +91,7 @@ public class LibMatrixOuterAgg
 			|| bOp.fn instanceof GreaterThan || bOp.fn instanceof GreaterThanEquals //				 >, >=
 			|| bOp.fn instanceof Equals || bOp.fn instanceof NotEquals);				//				==, !=
 	}
-		
-		
-			/**
-	 * @param uaggOp
-	 * @param bOp
-	 * @return
-	 */
+
 	public static boolean isSupportedUaggOp( AggregateUnaryOperator uaggOp, BinaryOperator bOp )
 	{
 		boolean bSupported = false;
@@ -119,18 +112,7 @@ public class LibMatrixOuterAgg
 			
 	}
 
-	/**
-	 * 
-	 * @param iCols
-	 * @param vmb
-	 * @param bOp
-	 * @param uaggOp
-	 * @return
-	 * @throws DMLRuntimeException
-	 */
-	public static int[] prepareRowIndices(int iCols, double vmb[], BinaryOperator bOp, AggregateUnaryOperator uaggOp) 
-		throws DMLRuntimeException
-	{
+	public static int[] prepareRowIndices(int iCols, double vmb[], BinaryOperator bOp, AggregateUnaryOperator uaggOp) {
 		return (isRowIndexMax(uaggOp)?prepareRowIndicesMax(iCols, vmb, bOp):prepareRowIndicesMin(iCols, vmb, bOp));
 	}
 	
@@ -148,21 +130,20 @@ public class LibMatrixOuterAgg
 	 * CumMax of I2 will be A:  (CumMin(I2))                5   5   8   8   8   8   8   8
 	 * CumMax of I2 in reverse order be B:                  8   8   8   7   7   4   4   3
 	 * 
-	 * Values from vector A is used to compute RowIndexMax for > & >= operators
-	 * Values from vector B is used to compute RowIndexMax for < & <= operators
+	 * Values from vector A is used to compute RowIndexMax for &gt; &amp; &gt;= operators
+	 * Values from vector B is used to compute RowIndexMax for &lt; &amp; &lt;= operators
 	 * Values from I2 is used to compute RowIndexMax for == operator.
 	 * Original values are directly used to compute RowIndexMax for != operator
 	 * 
 	 * Shifting values from vector A or B is required to compute final indices.
 	 * Once indices are shifted from vector A or B, their cell value corresponding to input data will be used. 
-	 *  
 	 * 
-	 * @param iCols
-	 * @param vmb
-	 * @param bOp
-	 * @return vixCumSum
+	 * @param iCols ?
+	 * @param vmb ?
+	 * @param bOp binary operator
+	 * @return array of maximum row indices
 	 */
-	public static int[] prepareRowIndicesMax(int iCols, double vmb[], BinaryOperator bOp) throws DMLRuntimeException
+	public static int[] prepareRowIndicesMax(int iCols, double vmb[], BinaryOperator bOp)
 	{
 		int[] vixCumSum = null;
 		int[] vix = new int[iCols];
@@ -228,21 +209,20 @@ public class LibMatrixOuterAgg
 	 * CumMin of I2 will be A:  (CumMin(I2))                5   2   2   2   2   1   1   1
 	 * CumMin of I2 in reverse order be B:                  1   1   1   1   1   1   3   3
 	 * 
-	 * Values from vector A is used to compute RowIndexMin for > operator
-	 * Values from vector B is used to compute RowIndexMin for <, <= and >= operators
+	 * Values from vector A is used to compute RowIndexMin for &gt; operator
+	 * Values from vector B is used to compute RowIndexMin for &lt;, &lt;= and &gt;= operators
 	 * Values from I2 is used to compute RowIndexMax for == operator.
 	 * Original values are directly used to compute RowIndexMax for != operator
 	 * 
 	 * Shifting values from vector A or B is required to compute final indices.
-	 * Once indices are shifted from vector A or B, their cell value corresponding to input data will be used. 
-	 *  
+	 * Once indices are shifted from vector A or B, their cell value corresponding to input data will be used.
 	 * 
-	 * @param iCols
-	 * @param vmb
-	 * @param bOp
-	 * @return vixCumSum
+	 * @param iCols ?
+	 * @param vmb ?
+	 * @param bOp binary operator
+	 * @return array of minimum row indices
 	 */
-	public static int[] prepareRowIndicesMin(int iCols, double vmb[], BinaryOperator bOp) throws DMLRuntimeException
+	public static int[] prepareRowIndicesMin(int iCols, double vmb[], BinaryOperator bOp)
 	{
 		int[] vixCumSum = null;
 		int[] vix = new int[iCols];
@@ -297,14 +277,14 @@ public class LibMatrixOuterAgg
 	/**
 	 * ReSet output matrix
 	 * 
-	 * @param in1Ix
-	 * @param in1Val
-	 * @param outIx
-	 * @param outVal
-	 * @param uaggOp
+	 * @param in1Ix input matrix indexes
+	 * @param in1Val input matrix block
+	 * @param outIx output matrix indexes
+	 * @param outVal output matrix block
+	 * @param uaggOp aggregate unary operator
 	 */
-	public static void resetOutputMatix(MatrixIndexes in1Ix, MatrixBlock in1Val, MatrixIndexes outIx, MatrixBlock outVal, AggregateUnaryOperator uaggOp) 
-	{		
+	public static void resetOutputMatrix(MatrixIndexes in1Ix, MatrixBlock in1Val, MatrixIndexes outIx, MatrixBlock outVal, AggregateUnaryOperator uaggOp) 
+	{
 		if(uaggOp.indexFn instanceof ReduceCol) {
 			outIx.setIndexes(in1Ix.getRowIndex(), 1); 
 			outVal.reset(in1Val.getNumRows(), 2, false);
@@ -316,20 +296,8 @@ public class LibMatrixOuterAgg
 			outVal.reset(1, 2, false);
 		}
 	}
-	
-	
-	/**
-	 * 
-	 * @param in1Val
-	 * @param outVal
-	 * @param bv
-	 * @param bOp
-	 * @param uaggOp
-	 * @throws DMLRuntimeException
-	 */
-	public static void aggregateMatrix(MatrixBlock in1Val, MatrixBlock outVal, double[] bv, int[] bvi, BinaryOperator bOp, AggregateUnaryOperator uaggOp) 
-			throws DMLRuntimeException
-	{		
+
+	public static void aggregateMatrix(MatrixBlock in1Val, MatrixBlock outVal, double[] bv, int[] bvi, BinaryOperator bOp, AggregateUnaryOperator uaggOp) {
 		// compute unary aggregate outer chain
 		if(isRowIndexMax(uaggOp)) 
 		{
@@ -391,18 +359,14 @@ public class LibMatrixOuterAgg
 	/**
 	 * UAgg rowSums for LessThan and GreaterThanEqual operator
 	 * 
-	 * @param in
-	 * @param out
-	 * @param bv
-	 * @param bOp
-	 * @throws DMLRuntimeException
+	 * @param in input matrix block
+	 * @param out output matrix block
+	 * @param bv ?
+	 * @param bOp binary operator
 	 */
-	private static void uaRowSumLtGe(MatrixBlock in, MatrixBlock out, double[] bv, BinaryOperator bOp) 
-			throws DMLRuntimeException
-	{		
+	private static void uaRowSumLtGe(MatrixBlock in, MatrixBlock out, double[] bv, BinaryOperator bOp) {
 		int agg0 = sumRowSumLtGeColSumGtLe(0.0, bv, bOp);
 		int m = in.rlen;
-		
 		for( int i=0; i<m; i++ ) {
 			double ai = in.quickGetValue(i, 0);
 			int cnt = (ai == 0) ? agg0: sumRowSumLtGeColSumGtLe(ai, bv, bOp);
@@ -413,18 +377,14 @@ public class LibMatrixOuterAgg
 	/**
 	 * UAgg rowSums for GreaterThan and LessThanEqual operator
 	 * 
-	 * @param in
-	 * @param out
-	 * @param bv
-	 * @param bOp
-	 * @throws DMLRuntimeException
+	 * @param in input matrix block
+	 * @param out output matrix block
+	 * @param bv ?
+	 * @param bOp binary operator
 	 */
-	private static void uaRowSumGtLe(MatrixBlock in, MatrixBlock out, double[] bv, BinaryOperator bOp) 
-			throws DMLRuntimeException
-	{		
+	private static void uaRowSumGtLe(MatrixBlock in, MatrixBlock out, double[] bv, BinaryOperator bOp) {
 		int agg0 = sumRowSumGtLeColSumLtGe(0.0, bv, bOp);
 		int m = in.rlen;
-		
 		for( int i=0; i<m; i++ ) {
 			double ai = in.quickGetValue(i, 0);
 			int cnt = (ai == 0) ? agg0: sumRowSumGtLeColSumLtGe(ai, bv, bOp);
@@ -436,18 +396,14 @@ public class LibMatrixOuterAgg
 	/**
 	 * UAgg rowSums for Equal and NotEqual operator
 	 * 
-	 * @param in
-	 * @param out
-	 * @param bv
-	 * @param bOp
-	 * @throws DMLRuntimeException
+	 * @param in input matrix block
+	 * @param out output matrix block
+	 * @param bv ?
+	 * @param bOp binary operator
 	 */
-	private static void uaRowSumEqNe(MatrixBlock in, MatrixBlock out, double[] bv, BinaryOperator bOp) 
-			throws DMLRuntimeException
-	{		
+	private static void uaRowSumEqNe(MatrixBlock in, MatrixBlock out, double[] bv, BinaryOperator bOp) {
 		int agg0 = sumEqNe(0.0, bv, bOp);
 		int m = in.rlen;
-		
 		for( int i=0; i<m; i++ ) {
 			double ai = in.quickGetValue(i, 0);
 			int cnt = (ai == 0) ? agg0: sumEqNe(ai, bv, bOp);
@@ -458,15 +414,12 @@ public class LibMatrixOuterAgg
 	/**
 	 * UAgg colSums for LessThan and GreaterThanEqual operator
 	 * 
-	 * @param in
-	 * @param out
-	 * @param bv
-	 * @param bOp
-	 * @throws DMLRuntimeException
+	 * @param in input matrix block
+	 * @param out output matrix block
+	 * @param bv ?
+	 * @param bOp binary operator
 	 */
-	private static void uaColSumLtGe(MatrixBlock in1Val, MatrixBlock outVal, double[] bv, BinaryOperator bOp) 
-			throws DMLRuntimeException
-	{		
+	private static void uaColSumLtGe(MatrixBlock in1Val, MatrixBlock outVal, double[] bv, BinaryOperator bOp) {
 		if (in1Val.isInSparseFormat())
 			s_uaColSumLtGe(in1Val, outVal, bv, bOp);
 		else
@@ -476,15 +429,12 @@ public class LibMatrixOuterAgg
 	/**
 	 * UAgg colSums for GreaterThan and LessThanEqual operator
 	 * 
-	 * @param in
-	 * @param out
-	 * @param bv
-	 * @param bOp
-	 * @throws DMLRuntimeException
+	 * @param in input matrix block
+	 * @param out output matrix block
+	 * @param bv ?
+	 * @param bOp binary operator
 	 */
-	private static void uaColSumGtLe(MatrixBlock in1Val, MatrixBlock outVal, double[] bv, BinaryOperator bOp) 
-			throws DMLRuntimeException
-	{		
+	private static void uaColSumGtLe(MatrixBlock in1Val, MatrixBlock outVal, double[] bv, BinaryOperator bOp) {
 		if (in1Val.isInSparseFormat())
 			s_uaColSumGtLe(in1Val, outVal, bv, bOp);
 		else
@@ -495,15 +445,12 @@ public class LibMatrixOuterAgg
 	/**
 	 * UAgg colSums for Equal and NotEqual operator
 	 * 
-	 * @param in
-	 * @param out
-	 * @param bv
-	 * @param bOp
-	 * @throws DMLRuntimeException
+	 * @param in input matrix block
+	 * @param out output matrix block
+	 * @param bv ?
+	 * @param bOp binary operator
 	 */
-	private static void uaColSumEqNe(MatrixBlock in1Val, MatrixBlock outVal, double[] bv, BinaryOperator bOp) 
-			throws DMLRuntimeException
-	{		
+	private static void uaColSumEqNe(MatrixBlock in1Val, MatrixBlock outVal, double[] bv, BinaryOperator bOp) {
 		if (in1Val.isInSparseFormat())
 			s_uaColSumEqNe(in1Val, outVal, bv, bOp);
 		else
@@ -514,18 +461,14 @@ public class LibMatrixOuterAgg
 	/**
 	 * UAgg sums for LessThan and GreaterThanEqual operator
 	 * 
-	 * @param in
-	 * @param out
-	 * @param bv
-	 * @param bOp
-	 * @throws DMLRuntimeException
+	 * @param in input matrix block
+	 * @param out output matrix block
+	 * @param bv ?
+	 * @param bOp binary operator
 	 */
-	private static void uaSumLtGe(MatrixBlock in, MatrixBlock out, double[] bv, BinaryOperator bOp) 
-			throws DMLRuntimeException
-	{		
+	private static void uaSumLtGe(MatrixBlock in, MatrixBlock out, double[] bv, BinaryOperator bOp) {
 		int agg0 = sumRowSumLtGeColSumGtLe(0.0, bv, bOp);
 		int m = in.rlen;
-		
 		for( int i=0; i<m; i++ ) {
 			double ai = in.quickGetValue(i, 0);
 			int cnt = (ai == 0) ? agg0: sumRowSumLtGeColSumGtLe(ai, bv, bOp);
@@ -537,15 +480,12 @@ public class LibMatrixOuterAgg
 	/**
 	 * UAgg sums for GreaterThan and LessThanEqual operator
 	 * 
-	 * @param in
-	 * @param out
-	 * @param bv
-	 * @param bOp
-	 * @throws DMLRuntimeException
+	 * @param in input matrix block
+	 * @param out output matrix block
+	 * @param bv ?
+	 * @param bOp binary operator
 	 */
-	private static void uaSumGtLe(MatrixBlock in, MatrixBlock out, double[] bv, BinaryOperator bOp) 
-			throws DMLRuntimeException
-	{		
+	private static void uaSumGtLe(MatrixBlock in, MatrixBlock out, double[] bv, BinaryOperator bOp) {
 		int agg0 = sumRowSumGtLeColSumLtGe(0.0, bv, bOp);
 		int m = in.rlen;
 		
@@ -561,18 +501,14 @@ public class LibMatrixOuterAgg
 	/**
 	 * UAgg sums for Equal and NotEqual operator
 	 * 
-	 * @param in
-	 * @param out
-	 * @param bv
-	 * @param bOp
-	 * @throws DMLRuntimeException
+	 * @param in input matrix block
+	 * @param out output matrix block
+	 * @param bv ?
+	 * @param bOp binary operator
 	 */
-	private static void uaSumEqNe(MatrixBlock in, MatrixBlock out, double[] bv, BinaryOperator bOp) 
-			throws DMLRuntimeException
-	{		
+	private static void uaSumEqNe(MatrixBlock in, MatrixBlock out, double[] bv, BinaryOperator bOp) {
 		int agg0 = sumEqNe(0.0, bv, bOp);
 		int m = in.rlen;
-		
 		for( int i=0; i<m; i++ ) {
 			double ai = in.quickGetValue(i, 0);
 			int cnt = (ai == 0) ? agg0: sumEqNe(ai, bv, bOp);
@@ -585,18 +521,14 @@ public class LibMatrixOuterAgg
 	/**
 	 * UAgg rowIndexMax for LessThan operator
 	 * 
-	 * @param in
-	 * @param out
-	 * @param bv
-	 * @param bOp
-	 * @throws DMLRuntimeException
+	 * @param in input matrix block
+	 * @param out output matrix block
+	 * @param bv ?
+	 * @param bOp binary operator
 	 */
-	private static void uaRIMLt(MatrixBlock in, MatrixBlock out, double[] bv, int[] bvi, BinaryOperator bOp) 
-			throws DMLRuntimeException
-	{		
+	private static void uaRIMLt(MatrixBlock in, MatrixBlock out, double[] bv, int[] bvi, BinaryOperator bOp) {
 		int ind0 = uarimaxLt(0.0, bv, bvi, bOp);
 		int m = in.rlen;
-		
 		for( int i=0; i<m; i++ ) {
 			double ai = in.quickGetValue(i, 0);
 			int ind = (ai == 0) ? ind0: uarimaxLt(ai, bv, bvi, bOp);
@@ -607,15 +539,12 @@ public class LibMatrixOuterAgg
 	/**
 	 * UAgg rowIndexMax for LessThanEquals operator
 	 * 
-	 * @param in
-	 * @param out
-	 * @param bv
-	 * @param bOp
-	 * @throws DMLRuntimeException
+	 * @param in input matrix block
+	 * @param out output matrix block
+	 * @param bv ?
+	 * @param bOp binary operator
 	 */
-	private static void uaRIMLe(MatrixBlock in, MatrixBlock out, double[] bv, int[] bvi, BinaryOperator bOp) 
-			throws DMLRuntimeException
-	{		
+	private static void uaRIMLe(MatrixBlock in, MatrixBlock out, double[] bv, int[] bvi, BinaryOperator bOp) {
 		int ind0 = uarimaxLe(0.0, bv, bvi, bOp);
 		int m = in.rlen;
 		
@@ -629,15 +558,12 @@ public class LibMatrixOuterAgg
 	/**
 	 * UAgg rowIndexMax for GreaterThan operator
 	 * 
-	 * @param in
-	 * @param out
-	 * @param bv
-	 * @param bOp
-	 * @throws DMLRuntimeException
+	 * @param in input matrix block
+	 * @param out output matrix block
+	 * @param bv ?
+	 * @param bOp binary operator
 	 */
-	private static void uaRIMGt(MatrixBlock in, MatrixBlock out, double[] bv, int[] bvi, BinaryOperator bOp) 
-			throws DMLRuntimeException
-	{		
+	private static void uaRIMGt(MatrixBlock in, MatrixBlock out, double[] bv, int[] bvi, BinaryOperator bOp) {
 		int ind0 = uarimaxGt(0.0, bv, bvi, bOp);
 		int m = in.rlen;
 		
@@ -652,18 +578,14 @@ public class LibMatrixOuterAgg
 	/**
 	 * UAgg rowIndexMax for GreaterThanEqual operator
 	 * 
-	 * @param in
-	 * @param out
-	 * @param bv
-	 * @param bOp
-	 * @throws DMLRuntimeException
+	 * @param in input matrix block
+	 * @param out output matrix block
+	 * @param bv ?
+	 * @param bOp binary operator
 	 */
-	private static void uaRIMGe(MatrixBlock in, MatrixBlock out, double[] bv, int[] bvi, BinaryOperator bOp) 
-			throws DMLRuntimeException
-	{		
+	private static void uaRIMGe(MatrixBlock in, MatrixBlock out, double[] bv, int[] bvi, BinaryOperator bOp) {
 		int ind0 = uarimaxGe(0.0, bv, bvi, bOp);
 		int m = in.rlen;
-		
 		for( int i=0; i<m; i++ ) {
 			double ai = in.quickGetValue(i, 0);
 			int ind = (ai == 0) ? ind0: uarimaxGe(ai, bv, bvi, bOp);
@@ -675,18 +597,14 @@ public class LibMatrixOuterAgg
 	/**
 	 * UAgg rowIndexMax for Equal operator
 	 * 
-	 * @param in
-	 * @param out
-	 * @param bv
-	 * @param bOp
-	 * @throws DMLRuntimeException
+	 * @param in input matrix block
+	 * @param out output matrix block
+	 * @param bv ?
+	 * @param bOp binary operator
 	 */
-	private static void uaRIMEq(MatrixBlock in, MatrixBlock out, double[] bv, int[] bvi, BinaryOperator bOp) 
-			throws DMLRuntimeException
-	{		
+	private static void uaRIMEq(MatrixBlock in, MatrixBlock out, double[] bv, int[] bvi, BinaryOperator bOp) {
 		int ind0 = uarimaxEq(0.0, bv, bvi, bOp);
 		int m = in.rlen;
-		
 		for( int i=0; i<m; i++ ) {
 			double ai = in.quickGetValue(i, 0);
 			int ind = (ai == 0) ? ind0: uarimaxEq(ai, bv, bvi, bOp);
@@ -699,15 +617,12 @@ public class LibMatrixOuterAgg
 	/**
 	 * UAgg rowIndexMax for NotEqual operator
 	 * 
-	 * @param in
-	 * @param out
-	 * @param bv
-	 * @param bOp
-	 * @throws DMLRuntimeException
+	 * @param in input matrix block
+	 * @param out output matrix block
+	 * @param bv ?
+	 * @param bOp binary operator
 	 */
-	private static void uaRIMNe(MatrixBlock in, MatrixBlock out, double[] bv, int[] bvi, BinaryOperator bOp) 
-			throws DMLRuntimeException
-	{		
+	private static void uaRIMNe(MatrixBlock in, MatrixBlock out, double[] bv, int[] bvi, BinaryOperator bOp) {
 		int ind0 = uarimaxNe(0.0, bv, bvi, bOp);
 		int m = in.rlen;
 		
@@ -722,18 +637,14 @@ public class LibMatrixOuterAgg
 	/**
 	 * UAgg rowIndexMin for LessThan operator
 	 * 
-	 * @param in
-	 * @param out
-	 * @param bv
-	 * @param bOp
-	 * @throws DMLRuntimeException
+	 * @param in input matrix block
+	 * @param out output matrix block
+	 * @param bv ?
+	 * @param bOp binary operator
 	 */
-	private static void uaRIMinLt(MatrixBlock in, MatrixBlock out, double[] bv, int[] bvi, BinaryOperator bOp) 
-			throws DMLRuntimeException
-	{		
+	private static void uaRIMinLt(MatrixBlock in, MatrixBlock out, double[] bv, int[] bvi, BinaryOperator bOp) {
 		int ind0 = uariminLt(0.0, bv, bvi, bOp);
 		int m = in.rlen;
-		
 		for( int i=0; i<m; i++ ) {
 			double ai = in.quickGetValue(i, 0);
 			int ind = (ai == 0) ? ind0: uariminLt(ai, bv, bvi, bOp);
@@ -744,18 +655,14 @@ public class LibMatrixOuterAgg
 	/**
 	 * UAgg rowIndexMin for LessThanEquals operator
 	 * 
-	 * @param in
-	 * @param out
-	 * @param bv
-	 * @param bOp
-	 * @throws DMLRuntimeException
+	 * @param in input matrix block
+	 * @param out output matrix block
+	 * @param bv ?
+	 * @param bOp binary operator
 	 */
-	private static void uaRIMinLe(MatrixBlock in, MatrixBlock out, double[] bv, int[] bvi, BinaryOperator bOp) 
-			throws DMLRuntimeException
-	{		
+	private static void uaRIMinLe(MatrixBlock in, MatrixBlock out, double[] bv, int[] bvi, BinaryOperator bOp) {
 		int ind0 = uariminLe(0.0, bv, bvi, bOp);
 		int m = in.rlen;
-		
 		for( int i=0; i<m; i++ ) {
 			double ai = in.quickGetValue(i, 0);
 			int ind = (ai == 0) ? ind0: uariminLe(ai, bv, bvi, bOp);
@@ -766,18 +673,14 @@ public class LibMatrixOuterAgg
 	/**
 	 * UAgg rowIndexMin for GreaterThan operator
 	 * 
-	 * @param in
-	 * @param out
-	 * @param bv
-	 * @param bOp
-	 * @throws DMLRuntimeException
+	 * @param in input matrix block
+	 * @param out output matrix block
+	 * @param bv ?
+	 * @param bOp binary operator
 	 */
-	private static void uaRIMinGt(MatrixBlock in, MatrixBlock out, double[] bv, int[] bvi, BinaryOperator bOp) 
-			throws DMLRuntimeException
-	{		
+	private static void uaRIMinGt(MatrixBlock in, MatrixBlock out, double[] bv, int[] bvi, BinaryOperator bOp) {
 		int ind0 = uariminGt(0.0, bv, bvi, bOp);
 		int m = in.rlen;
-		
 		for( int i=0; i<m; i++ ) {
 			double ai = in.quickGetValue(i, 0);
 			int ind = (ai == 0) ? ind0: uariminGt(ai, bv, bvi, bOp);
@@ -789,15 +692,12 @@ public class LibMatrixOuterAgg
 	/**
 	 * UAgg rowIndexMin for GreaterThanEqual operator
 	 * 
-	 * @param in
-	 * @param out
-	 * @param bv
-	 * @param bOp
-	 * @throws DMLRuntimeException
+	 * @param in input matrix block
+	 * @param out output matrix block
+	 * @param bv ?
+	 * @param bOp binary operator
 	 */
-	private static void uaRIMinGe(MatrixBlock in, MatrixBlock out, double[] bv, int[] bvi, BinaryOperator bOp) 
-			throws DMLRuntimeException
-	{		
+	private static void uaRIMinGe(MatrixBlock in, MatrixBlock out, double[] bv, int[] bvi, BinaryOperator bOp) {
 		int ind0 = uariminGe(0.0, bv, bvi, bOp);
 		int m = in.rlen;
 		
@@ -812,18 +712,14 @@ public class LibMatrixOuterAgg
 	/**
 	 * UAgg rowIndexMin for Equal operator
 	 * 
-	 * @param in
-	 * @param out
-	 * @param bv
-	 * @param bOp
-	 * @throws DMLRuntimeException
+	 * @param in input matrix block
+	 * @param out output matrix block
+	 * @param bv ?
+	 * @param bOp binary operator
 	 */
-	private static void uaRIMinEq(MatrixBlock in, MatrixBlock out, double[] bv, int[] bvi, BinaryOperator bOp) 
-			throws DMLRuntimeException
-	{		
+	private static void uaRIMinEq(MatrixBlock in, MatrixBlock out, double[] bv, int[] bvi, BinaryOperator bOp) {
 		int ind0 = uariminEq(0.0, bv, bvi, bOp);
 		int m = in.rlen;
-		
 		for( int i=0; i<m; i++ ) {
 			double ai = in.quickGetValue(i, 0);
 			int ind = (ai == 0) ? ind0: uariminEq(ai, bv, bvi, bOp);
@@ -836,18 +732,14 @@ public class LibMatrixOuterAgg
 	/**
 	 * UAgg rowIndexMin for NotEqual operator
 	 * 
-	 * @param in
-	 * @param out
-	 * @param bv
-	 * @param bOp
-	 * @throws DMLRuntimeException
+	 * @param in input matrix block
+	 * @param out output matrix block
+	 * @param bv ?
+	 * @param bOp binary operator
 	 */
-	private static void uaRIMinNe(MatrixBlock in, MatrixBlock out, double[] bv, int[] bvi, BinaryOperator bOp) 
-			throws DMLRuntimeException
-	{		
+	private static void uaRIMinNe(MatrixBlock in, MatrixBlock out, double[] bv, int[] bvi, BinaryOperator bOp) {
 		int ind0 = uariminNe(0.0, bv, bvi, bOp);
 		int m = in.rlen;
-		
 		for( int i=0; i<m; i++ ) {
 			double ai = in.quickGetValue(i, 0);
 			int ind = (ai == 0) ? ind0: uariminNe(ai, bv, bvi, bOp);
@@ -859,19 +751,14 @@ public class LibMatrixOuterAgg
 	/**
 	 * UAgg colSums Dense Matrix for LessThan and GreaterThanEqual operator
 	 * 
-	 * @param in
-	 * @param out
-	 * @param bv
-	 * @param bOp
-	 * @throws DMLRuntimeException
+	 * @param in input matrix block
+	 * @param out output matrix block
+	 * @param bv ?
+	 * @param bOp binary operator
 	 */
-	private static void d_uaColSumLtGe(MatrixBlock in, MatrixBlock out, double[] bv, 
-			BinaryOperator bOp) 
-			throws DMLRuntimeException
-	{
+	private static void d_uaColSumLtGe(MatrixBlock in, MatrixBlock out, double[] bv, BinaryOperator bOp) {
 		int agg0 = sumRowSumGtLeColSumLtGe(0.0, bv, bOp);
 		int m = in.clen;
-		
 		for( int i=0; i<m; i++ ) {
 			double ai = in.quickGetValue(0, i);
 			int cnt = (ai == 0) ? agg0: sumRowSumGtLeColSumLtGe(ai, bv, bOp);
@@ -882,56 +769,49 @@ public class LibMatrixOuterAgg
 	/**
 	 * UAgg colSums Sparse Matrix for LessThan and GreaterThanEqual operator
 	 * 
-	 * @param in
-	 * @param out
-	 * @param bv
-	 * @param bOp
-	 * @throws DMLRuntimeException
+	 * @param in input matrix block
+	 * @param out output matrix block
+	 * @param bv ?
+	 * @param bOp binary operator
 	 */
-	private static void s_uaColSumLtGe(MatrixBlock in, MatrixBlock out, double[] bv,	BinaryOperator bOp) 
-			throws DMLRuntimeException
-	{
+	private static void s_uaColSumLtGe(MatrixBlock in, MatrixBlock out, double[] bv,	BinaryOperator bOp) {
 		int agg0 = sumRowSumGtLeColSumLtGe(0.0, bv, bOp);
 
 		//allocate and initialize output values (not indices) 
 		out.allocateDenseBlock(true);
-		Arrays.fill(out.getDenseBlock(), 0, out.getNumColumns(), agg0);
-		if(agg0 != 0.0)
-			out.setNonZeros(out.getNumColumns());
+		if(agg0 != 0.0) {
+			out.getDenseBlock().set(0, 1, 0, out.clen, agg0);
+			out.setNonZeros(out.clen);
+		}
 		
 		if( in.isEmptyBlock(false) )
 			return;
-			
-		SparseBlock sblock = in.getSparseBlock();		
+		
+		SparseBlock sblock = in.getSparseBlock();
 		for( int j = 0; j < sblock.numRows(); j++)
 		if( !sblock.isEmpty(j) ) {
 			int apos = sblock.pos(j);
 			int alen = sblock.size(j);
 			int[] aix = sblock.indexes(j);
 			double [] avals = sblock.values(j);
-			
 			for (int i=apos; i < apos+alen; i++) {
 				int cnt = sumRowSumGtLeColSumLtGe(avals[i], bv, bOp);
 				out.quickSetValue(0, aix[i], cnt);
 			}
-		}		
+		}
 	}
 
 	/**
 	 * UAgg colSums Dense Matrix for GreaterThan and LessThanEqual operator
 	 * 
-	 * @param in
-	 * @param out
-	 * @param bv
-	 * @param bOp
-	 * @throws DMLRuntimeException
+	 * @param in input matrix block
+	 * @param out output matrix block
+	 * @param bv ?
+	 * @param bOp binary operator
 	 */
-	private static void d_uaColSumGtLe(MatrixBlock in, MatrixBlock out, double[] bv, BinaryOperator bOp) 
-			throws DMLRuntimeException
-	{
+	private static void d_uaColSumGtLe(MatrixBlock in, MatrixBlock out, double[] bv, BinaryOperator bOp) {
 		int agg0 = sumRowSumLtGeColSumGtLe(0.0, bv, bOp);
 		int m = in.clen;
-		
 		for( int i=0; i<m; i++ ) {
 			double ai = in.quickGetValue(0, i);
 			int cnt = (ai == 0) ? agg0: sumRowSumLtGeColSumGtLe(ai, bv, bOp);
@@ -942,53 +822,47 @@ public class LibMatrixOuterAgg
 	/**
 	 * UAgg colSums Sparse Matrix for GreaterThan and LessThanEqual operator
 	 * 
-	 * @param in
-	 * @param out
-	 * @param bv
-	 * @param bOp
-	 * @throws DMLRuntimeException
+	 * @param in input matrix block
+	 * @param out output matrix block
+	 * @param bv ?
+	 * @param bOp binary operator
 	 */
-	private static void s_uaColSumGtLe(MatrixBlock in, MatrixBlock out, double[] bv, BinaryOperator bOp) 
-			throws DMLRuntimeException
-	{
+	private static void s_uaColSumGtLe(MatrixBlock in, MatrixBlock out, double[] bv, BinaryOperator bOp) {
 		int agg0 = sumRowSumLtGeColSumGtLe(0.0, bv, bOp);
-
+		
 		//allocate and initialize output values (not indices) 
 		out.allocateDenseBlock(true);
-		Arrays.fill(out.getDenseBlock(), 0, out.getNumColumns(), agg0);
-		if(agg0 != 0.0)
+		if(agg0 != 0.0) {
+			out.getDenseBlock().set(0, 1, 0, out.clen, agg0);
 			out.setNonZeros(out.getNumColumns());
+		}
 		
 		if( in.isEmptyBlock(false) )
 			return;
-			
-		SparseBlock sblock = in.getSparseBlock();		
+		
+		SparseBlock sblock = in.getSparseBlock();
 		for (int j = 0; j < sblock.numRows(); j++)
 		if( !sblock.isEmpty(j) ) {
 			int apos = sblock.pos(j);
 			int alen = sblock.size(j);
 			int[] aix = sblock.indexes(j);
 			double [] avals = sblock.values(j);
-			
 			for (int i=apos; i < apos+alen; i++) {
 				int cnt = sumRowSumLtGeColSumGtLe(avals[i], bv, bOp);
 				out.quickSetValue(0, aix[i], cnt);
 			}
-		}		
+		}
 	}
 
 	/**
 	 * UAgg colSums Dense Matrix for Equal and NotEqual operator 
 	 * 
-	 * @param in
-	 * @param out
-	 * @param bv
-	 * @param bOp
-	 * @throws DMLRuntimeException
+	 * @param in input matrix block
+	 * @param out output matrix block
+	 * @param bv ?
+	 * @param bOp binary operator
 	 */
-	private static void d_uaColSumEqNe(MatrixBlock in, MatrixBlock out, double[] bv, BinaryOperator bOp) 
-			throws DMLRuntimeException
-	{		
+	private static void d_uaColSumEqNe(MatrixBlock in, MatrixBlock out, double[] bv, BinaryOperator bOp) {
 		int agg0 = sumEqNe(0.0, bv, bOp);
 		int m = in.clen;
 		
@@ -1002,39 +876,36 @@ public class LibMatrixOuterAgg
 	/**
 	 * UAgg colSums Sparse Matrix for Equal and NotEqual operator 
 	 * 
-	 * @param in
-	 * @param out
-	 * @param bv
-	 * @param bOp
-	 * @throws DMLRuntimeException
+	 * @param in input matrix block
+	 * @param out output matrix block
+	 * @param bv ?
+	 * @param bOp binary operator
 	 */
-	private static void s_uaColSumEqNe(MatrixBlock in, MatrixBlock out, double[] bv, BinaryOperator bOp) 
-			throws DMLRuntimeException
-	{		
+	private static void s_uaColSumEqNe(MatrixBlock in, MatrixBlock out, double[] bv, BinaryOperator bOp) {
 		int agg0 = sumEqNe(0.0, bv, bOp);
 
 		//allocate and initialize output values (not indices) 
 		out.allocateDenseBlock(true);
-		Arrays.fill(out.getDenseBlock(), 0, out.getNumColumns(), agg0);
-		if(agg0 != 0.0)
+		if(agg0 != 0.0) {
+			out.getDenseBlock().set(0, 1, 0, out.clen, agg0);
 			out.setNonZeros(out.getNumColumns());
+		}
 		
 		if( in.isEmptyBlock(false) )
 			return;
-			
-		SparseBlock sblock = in.getSparseBlock();		
+		
+		SparseBlock sblock = in.getSparseBlock();
 		for (int j = 0; j < sblock.numRows(); j++)
 		if( !sblock.isEmpty(j) ) {
 			int apos = sblock.pos(j);
 			int alen = sblock.size(j);
 			int[] aix = sblock.indexes(j);
 			double [] avals = sblock.values(j);
-			
 			for (int i=apos; i < apos+alen; i++) {
 				int cnt = sumEqNe(avals[i], bv, bOp);
 				out.quickSetValue(0, aix[i], cnt);
 			}
-		}		
+		}
 	}
 
 	
@@ -1042,17 +913,13 @@ public class LibMatrixOuterAgg
 	 * Calculates the sum of number for rowSum of GreaterThan and LessThanEqual, and 
 	 * 									colSum of LessThan and GreaterThanEqual operators.
 	 * 
-	 * @param value
-	 * @param bv
-	 * @param bOp
-	 * @throws DMLRuntimeException
+	 * @param value ?
+	 * @param bv ?
+	 * @param bOp binary operator
 	 */
-	private static int sumRowSumGtLeColSumLtGe(double value, double[] bv, BinaryOperator bOp) 
-			throws DMLRuntimeException
-	{
+	private static int sumRowSumGtLeColSumLtGe(double value, double[] bv, BinaryOperator bOp) {
 		int ix = Arrays.binarySearch(bv, value);
 		int cnt = 0;
-		
 		if( ix >= 0 ){ //match, scan to next val
 			while( ix > 0 && value==bv[ix-1]) --ix;
 			ix++;	//Readjust index to match subsenquent index calculation.
@@ -1072,19 +939,16 @@ public class LibMatrixOuterAgg
 	 * Calculates the sum of number for rowSum of LessThan and GreaterThanEqual, and 
 	 * 									colSum of GreaterThan and LessThanEqual operators.
 	 * 
-	 * @param value
-	 * @param bv
-	 * @param bOp
-	 * @throws DMLRuntimeException
+	 * @param value ?
+	 * @param bv ?
+	 * @param bOp binary operator
 	 */
-	private static int sumRowSumLtGeColSumGtLe(double value, double[] bv, BinaryOperator bOp) 
-			throws DMLRuntimeException
-	{
+	private static int sumRowSumLtGeColSumGtLe(double value, double[] bv, BinaryOperator bOp) {
 		int ix = Arrays.binarySearch(bv, value);
 		int cnt = 0;
 		
 		if( ix >= 0 ){ //match, scan to next val
-			while( value==bv[ix++] && ix<bv.length );
+			while( value==bv[ix++] && ix<bv.length ) {}
 			ix += (value==bv[bv.length-1])?1:0;
 		}
 			
@@ -1100,14 +964,11 @@ public class LibMatrixOuterAgg
 	/**
 	 * Calculates the sum of number for Equal and NotEqual operators 
 	 * 
-	 * @param value
-	 * @param bv
-	 * @param bOp
-	 * @throws DMLRuntimeException
+	 * @param value ?
+	 * @param bv ?
+	 * @param bOp binary operator
 	 */
-	private static int sumEqNe(double value, double[] bv, BinaryOperator bOp) 
-			throws DMLRuntimeException
-	{
+	private static int sumEqNe(double value, double[] bv, BinaryOperator bOp) {
 		int ix = Arrays.binarySearch(bv, value);
 		int cnt = 0;
 		
@@ -1127,14 +988,11 @@ public class LibMatrixOuterAgg
 	/**
 	 * Find out rowIndexMax for Equal operator. 
 	 * 
-	 * @param value
-	 * @param bv
-	 * @param bOp
-	 * @throws DMLRuntimeException
+	 * @param value ?
+	 * @param bv ?
+	 * @param bOp binary operator
 	 */
-	private static int uarimaxEq(double value, double[] bv, int bvi[], BinaryOperator bOp) 
-			throws DMLRuntimeException
-	{
+	private static int uarimaxEq(double value, double[] bv, int bvi[], BinaryOperator bOp) {
 		int ix = Arrays.binarySearch(bv, value);
 		int ixMax = bv.length;
 		
@@ -1147,16 +1005,12 @@ public class LibMatrixOuterAgg
 	/**
 	 * Find out rowIndexMax for NotEqual operator. 
 	 * 
-	 * @param value
-	 * @param bv
-	 * @param bOp
-	 * @throws DMLRuntimeException
+	 * @param value ?
+	 * @param bv ?
+	 * @param bOp binary operator
 	 */
-	private static int uarimaxNe(double value, double[] bv, int bvi[], BinaryOperator bOp) 
-			throws DMLRuntimeException
-	{
+	private static int uarimaxNe(double value, double[] bv, int bvi[], BinaryOperator bOp) {
 		int ixMax = bv.length;
-		
 		if( bv[bv.length-1] == value ) 
 			ixMax = bvi[0]+1;
 		return ixMax;
@@ -1166,14 +1020,11 @@ public class LibMatrixOuterAgg
 	/**
 	 * Find out rowIndexMax for GreaterThan operator. 
 	 * 
-	 * @param value
-	 * @param bv
-	 * @param bOp
-	 * @throws DMLRuntimeException
+	 * @param value ?
+	 * @param bv ?
+	 * @param bOp binary operator
 	 */
-	private static int uarimaxGt(double value, double[] bv, int bvi[], BinaryOperator bOp) 
-			throws DMLRuntimeException
-	{
+	private static int uarimaxGt(double value, double[] bv, int bvi[], BinaryOperator bOp) {
 		int ixMax = bv.length;
 		
 		if(value <= bv[0] || value > bv[bv.length-1]) 
@@ -1190,24 +1041,18 @@ public class LibMatrixOuterAgg
 	/**
 	 * Find out rowIndexMax for GreaterThanEqual operator. 
 	 * 
-	 * @param value
-	 * @param bv
-	 * @param bOp
-	 * @throws DMLRuntimeException
+	 * @param value ?
+	 * @param bv ?
+	 * @param bOp binary operator
 	 */
-	private static int uarimaxGe(double value, double[] bv, int[] bvi, BinaryOperator bOp) 
-			throws DMLRuntimeException
-	{
+	private static int uarimaxGe(double value, double[] bv, int[] bvi, BinaryOperator bOp) {
 		int ixMax = bv.length;
-		
 		if(value < bv[0] || value >= bv[bv.length-1]) 
 			return ixMax;
-		
 		int ix = Arrays.binarySearch(bv, value);
 		if(ix < 0)
 			ix = Math.abs(ix)-2;
 		ixMax = bvi[ix]+1; 
-		
 		return ixMax;
 	}
 
@@ -1215,48 +1060,36 @@ public class LibMatrixOuterAgg
 	/**
 	 * Find out rowIndexMax for LessThan operator. 
 	 * 
-	 * @param value
-	 * @param bv
-	 * @param bOp
-	 * @throws DMLRuntimeException
+	 * @param value ?
+	 * @param bv ?
+	 * @param bOp binary operator
 	 */
-	private static int uarimaxLt(double value, double[] bv, int[] bvi, BinaryOperator bOp) 
-			throws DMLRuntimeException
-	{
+	private static int uarimaxLt(double value, double[] bv, int[] bvi, BinaryOperator bOp) {
 		int ixMax = bv.length;
-		
 		if(value < bv[0] || value >= bv[bv.length-1]) 
 			return ixMax;
-		
 		int ix = Arrays.binarySearch(bv, value);
 		if (ix < 0) 
 			ix = Math.abs(ix)-2;
 		ixMax = bvi[ix]+1; 
-		
 		return ixMax;
 	}
 
 	/**
 	 * Find out rowIndexMax for LessThanEquals operator. 
 	 * 
-	 * @param value
-	 * @param bv
-	 * @param bOp
-	 * @throws DMLRuntimeException
+	 * @param value ?
+	 * @param bv ?
+	 * @param bOp binary operator
 	 */
-	private static int uarimaxLe(double value, double[] bv, int[] bvi, BinaryOperator bOp) 
-			throws DMLRuntimeException
-	{
+	private static int uarimaxLe(double value, double[] bv, int[] bvi, BinaryOperator bOp) {
 		int ixMax = bv.length;
-		
 		if(value <= bv[0] || value > bv[bv.length-1]) 
 			return ixMax;
-		
 		int ix = Arrays.binarySearch(bv, value);
 		if(ix < 0)
 			ix = Math.abs(ix)-1;
 		ixMax = bvi[ix]+1; 
-		
 		return ixMax;
 	}
 	
@@ -1264,16 +1097,12 @@ public class LibMatrixOuterAgg
 	/**
 	 * Find out rowIndexMin for Equal operator. 
 	 * 
-	 * @param value
-	 * @param bv
-	 * @param bOp
-	 * @throws DMLRuntimeException
+	 * @param value ?
+	 * @param bv ?
+	 * @param bOp binary operator
 	 */
-	private static int uariminEq(double value, double[] bv, int bvi[], BinaryOperator bOp) 
-			throws DMLRuntimeException
-	{
+	private static int uariminEq(double value, double[] bv, int bvi[], BinaryOperator bOp) {
 		int ixMin = 1;
-		
 		if(value == bv[0])
 			ixMin = bvi[0]+1;
 		return ixMin;
@@ -1283,16 +1112,12 @@ public class LibMatrixOuterAgg
 	/**
 	 * Find out rowIndexMin for NotEqual operator. 
 	 * 
-	 * @param value
-	 * @param bv
-	 * @param bOp
-	 * @throws DMLRuntimeException
+	 * @param value ?
+	 * @param bv ?
+	 * @param bOp binary operator
 	 */
-	private static int uariminNe(double value, double[] bv, int bvi[], BinaryOperator bOp) 
-			throws DMLRuntimeException
-	{
+	private static int uariminNe(double value, double[] bv, int bvi[], BinaryOperator bOp) {
 		int ixMin = 1;
-		
 		if( bv[0] != value ) 
 			ixMin = bvi[0]+1;
 		return ixMin;
@@ -1302,23 +1127,17 @@ public class LibMatrixOuterAgg
 	/**
 	 * Find out rowIndexMin for GreaterThan operator. 
 	 * 
-	 * @param value
-	 * @param bv
-	 * @param bOp
-	 * @throws DMLRuntimeException
+	 * @param value ?
+	 * @param bv ?
+	 * @param bOp binary operator
 	 */
-	private static int uariminGt(double value, double[] bv, int bvi[], BinaryOperator bOp) 
-			throws DMLRuntimeException
-	{
+	private static int uariminGt(double value, double[] bv, int bvi[], BinaryOperator bOp) {
 		int ixMin = 1;
-		
 		if(value <= bv[0] || value > bv[bv.length-1]) 
 			return ixMin;
-		
 		int ix = Arrays.binarySearch(bv, value);
 		ix = Math.abs(ix)-1;
 		ixMin = bvi[ix]+1; 
-		
 		return ixMin;
 	}
 
@@ -1326,24 +1145,18 @@ public class LibMatrixOuterAgg
 	/**
 	 * Find out rowIndexMin for GreaterThanEqual operator. 
 	 * 
-	 * @param value
-	 * @param bv
-	 * @param bOp
-	 * @throws DMLRuntimeException
+	 * @param value ?
+	 * @param bv ?
+	 * @param bOp binary operator
 	 */
-	private static int uariminGe(double value, double[] bv, int[] bvi, BinaryOperator bOp) 
-			throws DMLRuntimeException
-	{
+	private static int uariminGe(double value, double[] bv, int[] bvi, BinaryOperator bOp) {
 		int ixMin = 1;
-		
 		if(value <= bv[0] || value > bv[bv.length-1]) 
 			return ixMin;
-		
 		int ix = Arrays.binarySearch(bv, value);
 		if(ix < 0)
 			ix = Math.abs(ix)-1;
 		ixMin = bvi[ix-1]+1; 
-		
 		return ixMin;
 	}
 
@@ -1351,48 +1164,36 @@ public class LibMatrixOuterAgg
 	/**
 	 * Find out rowIndexMin for LessThan operator. 
 	 * 
-	 * @param value
-	 * @param bv
-	 * @param bOp
-	 * @throws DMLRuntimeException
+	 * @param value ?
+	 * @param bv ?
+	 * @param bOp binary operator
 	 */
-	private static int uariminLt(double value, double[] bv, int[] bvi, BinaryOperator bOp) 
-			throws DMLRuntimeException
-	{
+	private static int uariminLt(double value, double[] bv, int[] bvi, BinaryOperator bOp) {
 		int ixMin = 1;
-		
 		if(value < bv[0] || value >= bv[bv.length-1]) 
 			return ixMin;
-		
 		int ix = Arrays.binarySearch(bv, value);
 		if (ix < 0) 
 			ix = Math.abs(ix)-2;
 		ixMin = bvi[ix]+1; 
-		
 		return ixMin;
 	}
 
 	/**
 	 * Find out rowIndexMin for LessThanEquals operator. 
 	 * 
-	 * @param value
-	 * @param bv
-	 * @param bOp
-	 * @throws DMLRuntimeException
+	 * @param value ?
+	 * @param bv ?
+	 * @param bOp binary operator
 	 */
-	private static int uariminLe(double value, double[] bv, int[] bvi, BinaryOperator bOp) 
-			throws DMLRuntimeException
-	{
+	private static int uariminLe(double value, double[] bv, int[] bvi, BinaryOperator bOp) {
 		int ixMin = 1;
-		
 		if(value < bv[0] || value > bv[bv.length-1]) 
 			return ixMin;
-		
 		int ix = Arrays.binarySearch(bv, value);
 		if (ix < 0) 
 			ix = Math.abs(ix)-1;
 		ixMin = bvi[ix]+1; 
-		
 		return ixMin;
 	}
 	
@@ -1400,12 +1201,12 @@ public class LibMatrixOuterAgg
 	/**
 	 * This function adjusts indices to be leveraged in uarimaxXX functions.
 	 * Initially vector containing indices are sorted based on value and then CumMax/CumMin 
-	 * per need for <, <=, >, >= operator, where as just sorted indices based on value for ==, and != operators.
+	 * per need for &lt;, &lt;=, &gt;, &gt;= operator, where as just sorted indices based on value for ==, and != operators.
 	 * There is need to shift these indices for different operators, which is handled through this function. 
 	 * 
-	 * @param vix
-	 * @param vmb
-	 * @param bOp
+	 * @param vix ?
+	 * @param vmb ?
+	 * @param bOp binary operator
 	 */
 	public static void adjustRowIndicesMax(int[] vix, double[] vmb,BinaryOperator bOp)
     {
@@ -1427,12 +1228,12 @@ public class LibMatrixOuterAgg
 	/**
 	 * This function adjusts indices to be leveraged in uariminXX functions.
 	 * Initially vector containing indices are sorted based on value and then CumMin 
-	 * per need for <, <=, >, >= operator, where as just sorted indices based on value for ==, and != operators.
+	 * per need for &lt;, &lt;=, &gt;, &gt;= operator, where as just sorted indices based on value for ==, and != operators.
 	 * There is need to shift these indices for different operators, which is handled through this function. 
 	 * 
-	 * @param vix
-	 * @param vmb
-	 * @param bOp
+	 * @param vix ?
+	 * @param vmb ?
+	 * @param bOp binary operator
 	 */
 	public static void adjustRowIndicesMin(int[] vix, double[] vmb,BinaryOperator bOp)
     {
@@ -1478,8 +1279,8 @@ public class LibMatrixOuterAgg
 	 * 
 	 *    Shift Right by one partition (I2")                5   5   2   8   6   7   1   4
 	 * 
-	 * @param vix
-	 * @param vmb
+	 * @param vix ?
+	 * @param vmb ?
 	 */
 	
 	public static void shiftRight(int[] vix, double[] vmb)
@@ -1512,8 +1313,8 @@ public class LibMatrixOuterAgg
 	 * 
 	 *    Shift Left by one partition (I2")                 2   8   6   7   1   4   3   3
 	 * 
-	 * @param vix
-	 * @param vmb
+	 * @param vix ?
+	 * @param vmb ?
 	 */
 	
 	public static void shiftLeft(int[] vix, double[] vmb)
@@ -1547,8 +1348,8 @@ public class LibMatrixOuterAgg
 	 * 
 	 *    Minimum indices set in the partition (I2")        5   2   8   6   6   1   4   3
 	 * 
-	 * @param vix
-	 * @param vmb
+	 * @param vix ?
+	 * @param vmb ?
 	 */
 	public static void setMinIndexInPartition(int[] vix, double[] vmb)
 	{
@@ -1581,8 +1382,8 @@ public class LibMatrixOuterAgg
 	 * 
 	 *    Maximum indices set in the partition (I2")        5   2   8   7   7   1   4   3
 	 * 
-	 * @param vix
-	 * @param vmb
+	 * @param vix ?
+	 * @param vmb ?
 	 */
 	public static void setMaxIndexInPartition(int[] vix, double[] vmb)
 	{

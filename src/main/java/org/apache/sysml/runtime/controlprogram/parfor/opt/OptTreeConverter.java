@@ -30,7 +30,6 @@ import org.apache.sysml.hops.Hop;
 import org.apache.sysml.hops.Hop.MultiThreadedHop;
 import org.apache.sysml.hops.HopsException;
 import org.apache.sysml.hops.LiteralOp;
-import org.apache.sysml.hops.Hop.VisitStatus;
 import org.apache.sysml.hops.OptimizerUtils;
 import org.apache.sysml.lops.LopProperties;
 import org.apache.sysml.parser.DMLProgram;
@@ -44,7 +43,6 @@ import org.apache.sysml.parser.ParForStatement;
 import org.apache.sysml.parser.ParForStatementBlock;
 import org.apache.sysml.parser.StatementBlock;
 import org.apache.sysml.parser.WhileStatement;
-import org.apache.sysml.parser.Expression.DataType;
 import org.apache.sysml.parser.WhileStatementBlock;
 import org.apache.sysml.runtime.DMLRuntimeException;
 import org.apache.sysml.runtime.controlprogram.ForProgramBlock;
@@ -55,25 +53,16 @@ import org.apache.sysml.runtime.controlprogram.ParForProgramBlock;
 import org.apache.sysml.runtime.controlprogram.Program;
 import org.apache.sysml.runtime.controlprogram.ProgramBlock;
 import org.apache.sysml.runtime.controlprogram.WhileProgramBlock;
-import org.apache.sysml.runtime.controlprogram.caching.MatrixObject;
 import org.apache.sysml.runtime.controlprogram.context.ExecutionContext;
 import org.apache.sysml.runtime.controlprogram.parfor.opt.OptNode.ExecType;
 import org.apache.sysml.runtime.controlprogram.parfor.opt.OptNode.NodeType;
 import org.apache.sysml.runtime.controlprogram.parfor.opt.OptNode.ParamType;
 import org.apache.sysml.runtime.controlprogram.parfor.opt.Optimizer.PlanInputType;
-import org.apache.sysml.runtime.controlprogram.parfor.opt.PerfTestTool.DataFormat;
 import org.apache.sysml.runtime.instructions.Instruction;
 import org.apache.sysml.runtime.instructions.MRJobInstruction;
-import org.apache.sysml.runtime.instructions.cp.ComputationCPInstruction;
-import org.apache.sysml.runtime.instructions.cp.Data;
 import org.apache.sysml.runtime.instructions.cp.FunctionCallCPInstruction;
-import org.apache.sysml.runtime.instructions.cp.DataGenCPInstruction;
 import org.apache.sysml.runtime.instructions.cpfile.MatrixIndexingCPFileInstruction;
-import org.apache.sysml.runtime.instructions.cpfile.ParameterizedBuiltinCPFileInstruction;
 import org.apache.sysml.runtime.instructions.spark.SPInstruction;
-import org.apache.sysml.runtime.matrix.MatrixCharacteristics;
-import org.apache.sysml.runtime.matrix.MatrixFormatMetaData;
-import org.apache.sysml.runtime.matrix.data.MatrixBlock;
 
 /**
  * Converter for creating an internal plan representation for a given runtime program
@@ -91,9 +80,6 @@ public class OptTreeConverter
 	//internal state
 	private static OptTreePlanMappingAbstract _hlMap = null; 
 	private static OptTreePlanMappingRuntime  _rtMap = null;	
-	private static OptNode _tmpParent   = null;
-	private static OptNode _tmpChildOld = null;
-	private static OptNode _tmpChildNew = null;
 	
 	static
 	{
@@ -101,15 +87,13 @@ public class OptTreeConverter
 		_rtMap = new OptTreePlanMappingRuntime();
 	}
 	
-	public static OptTree createOptTree( int ck, double cm, PlanInputType type, ParForStatementBlock pfsb, ParForProgramBlock pfpb, ExecutionContext ec ) 
-		throws DMLRuntimeException, HopsException
-	{	
+	public static OptTree createOptTree( int ck, double cm, PlanInputType type, ParForStatementBlock pfsb, ParForProgramBlock pfpb, ExecutionContext ec )  {
 		OptNode root = null;
 		switch( type )
 		{
 			case ABSTRACT_PLAN:
 				_hlMap.putRootProgram(pfsb.getDMLProg(), pfpb.getProgram());
-				Set<String> memo = new HashSet<String>();
+				Set<String> memo = new HashSet<>();
 				root = rCreateAbstractOptNode(pfsb, pfpb, ec.getVariables(), true, memo);	
 				root.checkAndCleanupRecursiveFunc(new HashSet<String>()); //create consistency between recursive info
 				root.checkAndCleanupLeafNodes(); //prune unnecessary nodes
@@ -125,29 +109,8 @@ public class OptTreeConverter
 		
 		return tree;
 	}
-	
-	/**
-	 * 
-	 * @param ck
-	 * @param cm
-	 * @param pfpb
-	 * @return
-	 * @throws DMLRuntimeException
-	 */
-	public static OptTree createOptTree( int ck, double cm, ParForProgramBlock pfpb ) 
-		throws DMLRuntimeException
-	{
-		// TODO: Passing an empty variable map here, for now. Must be reevaluated 
-		// whenever this function is used.
-		LocalVariableMap vars = new LocalVariableMap();
-		OptNode root = rCreateOptNode( pfpb, vars, true, true );		
-		OptTree tree = new OptTree(ck, cm, root);
-			
-		return tree;
-	}
-	
+
 	public static OptTree createAbstractOptTree( int ck, double cm, ParForStatementBlock pfsb, ParForProgramBlock pfpb, Set<String> memo, ExecutionContext ec ) 
-		throws DMLRuntimeException
 	{
 		OptTree tree = null;
 		OptNode root = null;
@@ -165,16 +128,7 @@ public class OptTreeConverter
 		return tree;
 	}
 
-	/**
-	 * 
-	 * @param pb
-	 * @param vars
-	 * @param topLevel
-	 * @return
-	 * @throws DMLRuntimeException
-	 */
 	public static OptNode rCreateOptNode( ProgramBlock pb, LocalVariableMap vars, boolean topLevel, boolean storeObjs ) 
-		throws DMLRuntimeException 
 	{
 		OptNode node = null;
 		
@@ -222,8 +176,9 @@ public class OptTreeConverter
 				_rtMap.putMapping(fpb, node);
 			node.setExecType(ExecType.CP);
 			
-			//TODO use constant value if known
-			node.addParam(ParamType.NUM_ITERATIONS, String.valueOf(CostEstimator.FACTOR_NUM_ITERATIONS));
+			//determine number of iterations
+			long N = OptimizerUtils.getNumIterations(fpb, vars, CostEstimator.FACTOR_NUM_ITERATIONS);
+			node.addParam(ParamType.NUM_ITERATIONS, String.valueOf(N));
 			
 			node.addChilds( createOptNodes( fpb.getFromInstructions(), vars,storeObjs ) );
 			node.addChilds( createOptNodes( fpb.getToInstructions(), vars,storeObjs ) );
@@ -235,14 +190,14 @@ public class OptTreeConverter
 		}
 		else if( pb instanceof ParForProgramBlock )
 		{
-			ParForProgramBlock fpb = (ParForProgramBlock) pb;			
+			ParForProgramBlock fpb = (ParForProgramBlock) pb;
 			node = new OptNode( NodeType.PARFOR );
 			if(storeObjs)
 				_rtMap.putMapping(fpb, node);
 			node.setK( fpb.getDegreeOfParallelism() );
 			long N = fpb.getNumIterations();
-			node.addParam(ParamType.NUM_ITERATIONS, (N!=-1) ? String.valueOf(N) : 
-															  String.valueOf(CostEstimatorRuntime.FACTOR_NUM_ITERATIONS));
+			node.addParam(ParamType.NUM_ITERATIONS, (N!=-1) ? 
+				String.valueOf(N) : String.valueOf(CostEstimator.FACTOR_NUM_ITERATIONS));
 			
 			switch(fpb.getExecMode())
 			{
@@ -285,35 +240,15 @@ public class OptTreeConverter
 			
 		return node;
 	}
-	
 
-
-	/**
-	 * 
-	 * @param instset
-	 * @param vars
-	 * @return
-	 * @throws DMLRuntimeException
-	 */
-	public static ArrayList<OptNode> createOptNodes (ArrayList<Instruction> instset, LocalVariableMap vars, boolean storeObjs) 
-		throws DMLRuntimeException
-	{
-		ArrayList<OptNode> tmp = new ArrayList<OptNode>(instset.size());
+	public static ArrayList<OptNode> createOptNodes (ArrayList<Instruction> instset, LocalVariableMap vars, boolean storeObjs) {
+		ArrayList<OptNode> tmp = new ArrayList<>(instset.size());
 		for( Instruction inst : instset )
 			tmp.add( createOptNode(inst,vars,storeObjs) );
 		return tmp;
 	}
-	
-	/**
-	 * 
-	 * @param inst
-	 * @param vars
-	 * @return
-	 * @throws DMLRuntimeException
-	 */
-	public static OptNode createOptNode( Instruction inst, LocalVariableMap vars, boolean storeObjs ) 
-		throws DMLRuntimeException
-	{
+
+	public static OptNode createOptNode( Instruction inst, LocalVariableMap vars, boolean storeObjs ) {
 		OptNode node = new OptNode(NodeType.INST);
 		String instStr = inst.toString();
 		String opstr = instStr.split(Instruction.OPERAND_DELIM)[1];
@@ -342,25 +277,10 @@ public class OptTreeConverter
 				throw new DMLRuntimeException("Unsupported instruction type.");
 		}
 		
-		//create statistics 
-		OptNodeStatistics stats = analyzeStatistics(inst, node, vars);
-		node.setStatistics(stats);
-		
 		return node;
 	}
-	
-	/**
-	 * 
-	 * @param sb
-	 * @param pb
-	 * @param vars
-	 * @param topLevel
-	 * @return
-	 * @throws DMLRuntimeException
-	 * @throws HopsException
-	 */
+
 	public static OptNode rCreateAbstractOptNode( StatementBlock sb, ProgramBlock pb, LocalVariableMap vars, boolean topLevel, Set<String> memo ) 
-		throws DMLRuntimeException, HopsException 
 	{
 		OptNode node = null;
 		
@@ -424,12 +344,11 @@ public class OptTreeConverter
 			
 			//process body
 			int len = ws.getBody().size();
-			for( int i=0; i<wpb.getChildBlocks().size() && i<len; i++ )
-			{
+			for( int i=0; i<wpb.getChildBlocks().size() && i<len; i++ ) {
 				ProgramBlock lpb = wpb.getChildBlocks().get(i);
 				StatementBlock lsb = ws.getBody().get(i);
 				node.addChild( rCreateAbstractOptNode(lsb,lpb,vars,false, memo) );
-			}			
+			}
 		}
 		else if( pb instanceof ForProgramBlock && sb instanceof ForStatementBlock && !(pb instanceof ParForProgramBlock) )
 		{
@@ -442,7 +361,9 @@ public class OptTreeConverter
 			node.setExecType(ExecType.CP);
 			node.setLineNumbers(fsb.getBeginLine(), fsb.getEndLine());
 			
-			node.addParam(ParamType.NUM_ITERATIONS, String.valueOf(CostEstimator.FACTOR_NUM_ITERATIONS));
+			//determine number of iterations
+			long N = OptimizerUtils.getNumIterations(fpb, vars, CostEstimator.FACTOR_NUM_ITERATIONS);
+			node.addParam(ParamType.NUM_ITERATIONS, String.valueOf(N));
 			
 			//handle predicate
 			fsb.getFromHops().resetVisitStatus();
@@ -456,12 +377,11 @@ public class OptTreeConverter
 			
 			//process body
 			int len = fs.getBody().size();
-			for( int i=0; i<fpb.getChildBlocks().size() && i<len; i++ )
-			{
+			for( int i=0; i<fpb.getChildBlocks().size() && i<len; i++ ) {
 				ProgramBlock lpb = fpb.getChildBlocks().get(i);
 				StatementBlock lsb = fs.getBody().get(i);
 				node.addChild( rCreateAbstractOptNode(lsb,lpb,vars,false, memo) );
-			}	
+			}
 		}
 		else if( pb instanceof ParForProgramBlock && sb instanceof ParForStatementBlock )
 		{
@@ -473,11 +393,10 @@ public class OptTreeConverter
 			_hlMap.putProgMapping(sb, pb, node);
 			node.setK( fpb.getDegreeOfParallelism() );
 			long N = fpb.getNumIterations();
-			node.addParam(ParamType.NUM_ITERATIONS, (N!=-1) ? String.valueOf(N) : 
-															  String.valueOf(CostEstimator.FACTOR_NUM_ITERATIONS));
-
-			switch(fpb.getExecMode())
-			{
+			node.addParam(ParamType.NUM_ITERATIONS, (N!=-1) ? String.valueOf(N) :
+				String.valueOf(CostEstimator.FACTOR_NUM_ITERATIONS));
+			
+			switch(fpb.getExecMode()) {
 				case LOCAL:
 					node.setExecType(ExecType.CP);
 					break;
@@ -493,8 +412,7 @@ public class OptTreeConverter
 					node.setExecType(null);
 			}
 			
-			if( !topLevel )
-			{
+			if( !topLevel ) {
 				fsb.getFromHops().resetVisitStatus();
 				fsb.getToHops().resetVisitStatus();
 				if( fsb.getIncrementHops()!=null )
@@ -507,8 +425,7 @@ public class OptTreeConverter
 			
 			//process body
 			int len = fs.getBody().size();
-			for( int i=0; i<fpb.getChildBlocks().size() && i<len; i++ )
-			{
+			for( int i=0; i<fpb.getChildBlocks().size() && i<len; i++ ) {
 				ProgramBlock lpb = fpb.getChildBlocks().get(i);
 				StatementBlock lsb = fs.getBody().get(i);
 				node.addChild( rCreateAbstractOptNode(lsb,lpb,vars,false, memo) );
@@ -528,15 +445,16 @@ public class OptTreeConverter
 			//process all hops
 			node = new OptNode(NodeType.GENERIC);
 			_hlMap.putProgMapping(sb, pb, node);
-			node.addChilds( createAbstractOptNodes(sb.get_hops(), vars, memo) );
+			node.addChilds( createAbstractOptNodes(sb.getHops(), vars, memo) );
 			node.setExecType(ExecType.CP);
 			node.setLineNumbers(sb.getBeginLine(), sb.getEndLine());
 			
 			//TODO remove this workaround once this information can be obtained from hops/lops compiler
 			if( node.isCPOnly() ) {
-				if( containsMRJobInstruction(pb, false, false) )
+				boolean isSparkExec = OptimizerUtils.isSparkExecutionMode();
+				if( !isSparkExec && containsMRJobInstruction(pb, false, false) )
 					node.setExecType(ExecType.MR);
-				else if(containsMRJobInstruction(pb, false, true))
+				else if( isSparkExec && containsMRJobInstruction(pb, false, true))
 					node.setExecType(ExecType.SPARK);
 			}
 		}
@@ -547,18 +465,8 @@ public class OptTreeConverter
 		return node;
 	}
 
-	/**
-	 * 
-	 * @param hops
-	 * @param vars
-	 * @return
-	 * @throws DMLRuntimeException 
-	 * @throws HopsException 
-	 */
-	public static ArrayList<OptNode> createAbstractOptNodes(ArrayList<Hop> hops, LocalVariableMap vars, Set<String> memo ) 
-		throws DMLRuntimeException, HopsException 
-	{
-		ArrayList<OptNode> ret = new ArrayList<OptNode>(); 
+	public static ArrayList<OptNode> createAbstractOptNodes(ArrayList<Hop> hops, LocalVariableMap vars, Set<String> memo ) {
+		ArrayList<OptNode> ret = new ArrayList<>(); 
 		
 		//reset all hops
 		Hop.resetVisitStatus(hops);
@@ -570,22 +478,12 @@ public class OptTreeConverter
 		
 		return ret;
 	}
-	
-	/**
-	 * 
-	 * @param hop
-	 * @param vars
-	 * @return
-	 * @throws DMLRuntimeException  
-	 * @throws HopsException 
-	 */
-	public static ArrayList<OptNode> rCreateAbstractOptNodes(Hop hop, LocalVariableMap vars, Set<String> memo) 
-		throws DMLRuntimeException, HopsException 
-	{
-		ArrayList<OptNode> ret = new ArrayList<OptNode>(); 
+
+	public static ArrayList<OptNode> rCreateAbstractOptNodes(Hop hop, LocalVariableMap vars, Set<String> memo) {
+		ArrayList<OptNode> ret = new ArrayList<>(); 
 		ArrayList<Hop> in = hop.getInput();
 	
-		if( hop.getVisited() == VisitStatus.DONE )
+		if( hop.isVisited() )
 			return ret;
 		
 		//general case
@@ -599,7 +497,7 @@ public class OptTreeConverter
 			LopProperties.ExecType et = (hop.getExecType()!=null) ? 
 					   hop.getExecType() : LopProperties.ExecType.CP;
 			switch( et ) {
-				case CP:
+				case CP:case GPU:
 					node.setExecType(ExecType.CP); break;
 				case SPARK:
 					node.setExecType(ExecType.SPARK); break;
@@ -625,7 +523,7 @@ public class OptTreeConverter
 			FunctionOp fhop = (FunctionOp) hop;
 			String fname = fhop.getFunctionName();
 			String fnspace = fhop.getFunctionNamespace();
-			String fKey = DMLProgram.constructFunctionKey(fnspace, fname);
+			String fKey = fhop.getFunctionKey();
 			Object[] prog = _hlMap.getRootProgram();
 
 			OptNode node = new OptNode(NodeType.FUNCCALL);
@@ -643,16 +541,13 @@ public class OptTreeConverter
 				if( !memo.contains(fKey) )
 				{
 					memo.add(fKey); 
-				
 					int len = fs.getBody().size();
-					for( int i=0; i<fpb.getChildBlocks().size() && i<len; i++ )
-					{
+					for( int i=0; i<fpb.getChildBlocks().size() && i<len; i++ ) {
 						ProgramBlock lpb = fpb.getChildBlocks().get(i);
 						StatementBlock lsb = fs.getBody().get(i);
 						node.addChild( rCreateAbstractOptNode(lsb, lpb, vars, false, memo) );
 					}
-				
-					memo.remove(fKey);							
+					memo.remove(fKey);
 				}
 				else
 					node.addParam(ParamType.RECURSIVE_CALL, "true");
@@ -666,16 +561,11 @@ public class OptTreeConverter
 				if( !(hin instanceof DataOp || hin instanceof LiteralOp ) ) //no need for opt nodes
 					ret.addAll(rCreateAbstractOptNodes(hin, vars, memo));
 
-		hop.setVisited(VisitStatus.DONE);
+		hop.setVisited();
 		
 		return ret;
 	}
 
-	/**
-	 * 
-	 * @param pb
-	 * @return
-	 */
 	public static boolean rContainsMRJobInstruction( ProgramBlock pb, boolean inclFunctions )
 	{
 		boolean ret = false;
@@ -715,7 +605,7 @@ public class OptTreeConverter
 				ret = rContainsMRJobInstruction(pb2, inclFunctions);
 				if( ret ) return ret;
 			}
-		}		
+		}
 		else if (  pb instanceof FunctionProgramBlock ) //includes ExternalFunctionProgramBlock and ExternalFunctionProgramBlockCP)
 		{
 			//do nothing
@@ -723,178 +613,28 @@ public class OptTreeConverter
 		else 
 		{
 			ret =   containsMRJobInstruction(pb, true, true)
-			      | (inclFunctions && containsFunctionCallInstruction(pb));
+				|| (inclFunctions && containsFunctionCallInstruction(pb));
 		}
 
 		return ret;
 	}
-	
-	/**
-	 * 
-	 * @param pb
-	 * @return
-	 */
-	public static boolean containsMRJobInstruction( ProgramBlock pb, boolean inclCPFile, boolean inclSpark )
-	{
+
+	public static boolean containsMRJobInstruction( ProgramBlock pb, boolean inclCPFile, boolean inclSpark ) {
 		return containsMRJobInstruction(pb.getInstructions(), inclCPFile, inclSpark);
 	}
-	
-	/**
-	 * 
-	 * @param pb
-	 * @return
-	 */
-	public static boolean containsMRJobInstruction( ArrayList<Instruction> instSet, boolean inclCPFile, boolean inclSpark )
-	{
-		boolean ret = false;
-		if( instSet!=null )
-			for( Instruction inst : instSet )
-				if(    inst instanceof MRJobInstruction
-					|| (inclSpark && inst instanceof SPInstruction)	
-					|| (inclCPFile && (inst instanceof MatrixIndexingCPFileInstruction || inst instanceof ParameterizedBuiltinCPFileInstruction)))
-				{
-					ret = true;
-					break;
-				}
 
-		return ret;
-	}
-	
-	/**
-	 * 
-	 * @param pb
-	 * @return
-	 */
-	public static boolean containsFunctionCallInstruction( ProgramBlock pb )
-	{
-		boolean ret = false;
-		for( Instruction inst : pb.getInstructions() )
-			if( inst instanceof FunctionCallCPInstruction )
-			{
-				ret = true;
-				break;
-			}
-
-		return ret;
-	}	
-	
-	
-	/**
-	 * 
-	 * @param inst
-	 * @param on
-	 * @param vars
-	 * @return
-	 * @throws DMLRuntimeException
-	 */
-	private static OptNodeStatistics analyzeStatistics(Instruction inst, OptNode on, LocalVariableMap vars) 
-		throws DMLRuntimeException 
-	{
-		OptNodeStatistics ret = null;
-		String instName = on.getInstructionName();
-		
-		if( PerfTestTool.isRegisteredInstruction(instName) )
-		{	
-			if( inst instanceof DataGenCPInstruction )
-			{
-				DataGenCPInstruction linst = (DataGenCPInstruction) inst;
-				DataFormat df = (   MatrixBlock.evalSparseFormatInMemory(linst.getRows(), linst.getCols(), (long)(linst.getSparsity()*linst.getRows()*linst.getCols())) ? 
-						            DataFormat.SPARSE : DataFormat.DENSE ); 
-				ret = new OptNodeStatistics(linst.getRows(), linst.getCols(), -1, -1, linst.getSparsity(), df);
-			}
-			else if ( inst instanceof FunctionCallCPInstruction )
-			{
-				FunctionCallCPInstruction linst = (FunctionCallCPInstruction)inst;
-				ArrayList<String> params = linst.getBoundInputParamNames();
-				ret = new OptNodeStatistics(); //default vals
-				
-				double maxSize = 0;
-				for( String param : params ) //use the largest input matrix
-				{
-					Data dat = vars.get(param);
-					if( dat!=null && dat.getDataType()==DataType.MATRIX )
-					{
-						MatrixObject mdat1 = (MatrixObject) dat;
-						MatrixCharacteristics mc1 = mdat1.getMatrixCharacteristics();
-						
-						if( mc1.getRows()*mc1.getCols() > maxSize )
-						{
-							ret.setDim1( mc1.getRows() );
-							ret.setDim2( mc1.getCols() );
-							ret.setSparsity( OptimizerUtils.getSparsity(ret.getDim1(), ret.getDim2(), mc1.getNonZeros()) ); //sparsity
-							ret.setDataFormat( MatrixBlock.evalSparseFormatInMemory(mc1.getRows(), mc1.getCols(), mc1.getNonZeros()) ? 
-									            DataFormat.SPARSE : DataFormat.DENSE ); 
-							maxSize = mc1.getRows()*mc1.getCols();
-						}
-					}
-				}
-			}
-			else if ( inst instanceof ComputationCPInstruction ) //needs to be last CP case
-			{
-				//AggregateBinaryCPInstruction, AggregateUnaryCPInstruction, 
-				//FunctionCallCPInstruction, ReorgCPInstruction
-				
-				ComputationCPInstruction linst = (ComputationCPInstruction) inst;
-				ret = new OptNodeStatistics(); //default
-				
-				if( linst.input1 != null && linst.input2 != null ) //binary
-				{
-					Data dat1 = vars.get( linst.input1.getName() );
-					Data dat2 = vars.get( linst.input2.getName() );
-					
-					if( dat1 != null )
-					{
-						MatrixObject mdat1 = (MatrixObject) dat1;
-						MatrixCharacteristics mc1 = ((MatrixFormatMetaData)mdat1.getMetaData()).getMatrixCharacteristics();
-						ret.setDim1( mc1.getRows() );
-						ret.setDim2( mc1.getCols() );
-						ret.setSparsity( OptimizerUtils.getSparsity(ret.getDim1(), ret.getDim2(), mc1.getNonZeros()) ); //sparsity
-						ret.setDataFormat( MatrixBlock.evalSparseFormatInMemory(mc1.getRows(), mc1.getCols(), mc1.getNonZeros())? DataFormat.SPARSE : DataFormat.DENSE); 
-					}
-					if( dat2 != null )
-					{
-						MatrixObject mdat2 = (MatrixObject) dat2;
-						MatrixCharacteristics mc2 = ((MatrixFormatMetaData)mdat2.getMetaData()).getMatrixCharacteristics();
-						ret.setDim3( mc2.getRows() );
-						ret.setDim4( mc2.getCols() );
-						ret.setDataFormat( MatrixBlock.evalSparseFormatInMemory(mc2.getRows(), mc2.getCols(), mc2.getNonZeros()) ? DataFormat.SPARSE : DataFormat.DENSE ); 
-					}
-				}
-				else //unary
-				{
-					if( linst.input1 != null ) 
-					{
-						Data dat1 = vars.get( linst.input1.getName() );
-						if( dat1 != null ) {
-							MatrixObject mdat1 = (MatrixObject) dat1;
-							MatrixCharacteristics mc1 = ((MatrixFormatMetaData)mdat1.getMetaData()).getMatrixCharacteristics();
-							ret.setDim1( mc1.getRows() );
-							ret.setDim2( mc1.getCols() );
-							ret.setSparsity( OptimizerUtils.getSparsity(ret.getDim1(), ret.getDim2(), mc1.getNonZeros()) ); //sparsity
-							ret.setDataFormat(MatrixBlock.evalSparseFormatInMemory(mc1.getRows(), mc1.getCols(), mc1.getNonZeros()) ? DataFormat.SPARSE : DataFormat.DENSE); 
-						}
-					}
-				}
-			}
-		}
-		
-		if( ret == null )
-			ret = new OptNodeStatistics(); //default values
-		
-		return ret; //null if not reqistered for profiling
+	public static boolean containsMRJobInstruction( ArrayList<Instruction> instSet, boolean inclCPFile, boolean inclSpark ) {
+		return instSet.stream().anyMatch(inst -> inst instanceof MRJobInstruction
+			|| (inclSpark && inst instanceof SPInstruction)
+			|| (inclCPFile && inst instanceof MatrixIndexingCPFileInstruction));
 	}
 
-	/**
-	 * 
-	 * @param parent
-	 * @param n
-	 * @param pbOld
-	 * @param pbNew
-	 * @throws DMLRuntimeException 
-	 */
-	public static void replaceProgramBlock(OptNode parent, OptNode n, ProgramBlock pbOld, ProgramBlock pbNew, boolean rtMap) 
-		throws DMLRuntimeException
-	{
+	public static boolean containsFunctionCallInstruction( ProgramBlock pb ) {
+		return pb.getInstructions().stream()
+			.anyMatch(inst -> inst instanceof FunctionCallCPInstruction);
+	}
+
+	public static void replaceProgramBlock(OptNode parent, OptNode n, ProgramBlock pbOld, ProgramBlock pbNew, boolean rtMap) {
 		ProgramBlock pbParent = null;
 		if( rtMap )
 			pbParent = (ProgramBlock)_rtMap.getMappedObject( parent.getID() );
@@ -913,22 +653,22 @@ public class OptTreeConverter
 		{
 			IfProgramBlock ipb = (IfProgramBlock) pbParent;
 			replaceProgramBlock( ipb.getChildBlocksIfBody(), pbOld, pbNew );
-			replaceProgramBlock( ipb.getChildBlocksElseBody(), pbOld, pbNew );				
+			replaceProgramBlock( ipb.getChildBlocksElseBody(), pbOld, pbNew );
 		}
 		else if( pbParent instanceof WhileProgramBlock )
 		{
 			WhileProgramBlock wpb = (WhileProgramBlock) pbParent;
-			replaceProgramBlock( wpb.getChildBlocks(), pbOld, pbNew );			
+			replaceProgramBlock( wpb.getChildBlocks(), pbOld, pbNew );
 		}
 		else if( pbParent instanceof ForProgramBlock || pbParent instanceof ParForProgramBlock )
 		{
 			ForProgramBlock fpb = (ForProgramBlock) pbParent;
-			replaceProgramBlock( fpb.getChildBlocks(), pbOld, pbNew );	
+			replaceProgramBlock( fpb.getChildBlocks(), pbOld, pbNew );
 		}
 		else if( pbParent instanceof FunctionProgramBlock )
 		{
 			FunctionProgramBlock fpb = (FunctionProgramBlock) pbParent;
-			replaceProgramBlock( fpb.getChildBlocks(), pbOld, pbNew );	
+			replaceProgramBlock( fpb.getChildBlocks(), pbOld, pbNew );
 		}
 		else
 			throw new DMLRuntimeException("Optimizer doesn't support "+pbParent.getClass().getName());
@@ -939,13 +679,7 @@ public class OptTreeConverter
 		else
 			_hlMap.replaceMapping(pbNew, n);
 	}
-	
-	/**
-	 * 
-	 * @param pbs
-	 * @param pbOld
-	 * @param pbNew
-	 */
+
 	public static void replaceProgramBlock(ArrayList<ProgramBlock> pbs, ProgramBlock pbOld, ProgramBlock pbNew)
 	{
 		int len = pbs.size();
@@ -967,127 +701,6 @@ public class OptTreeConverter
 	{
 		return _hlMap;
 	}
-	
-	public static OptTreePlanMappingRuntime getRuntimePlanMapping()
-	{
-		return _rtMap;
-	}
-	
-	/**
-	 * 
-	 * @param pRoot
-	 * @param hlNodeID
-	 * @param newRtNode
-	 * @return
-	 * @throws DMLRuntimeException
-	 */
-	public static OptNode exchangeTemporary(OptNode pRoot, long hlNodeID, OptNode newRtNode) 
-		throws DMLRuntimeException 
-	{
-		OptNode hlNode = _hlMap.getOptNode(hlNodeID);
-		if( hlNode.getNodeType() == NodeType.PARFOR )
-		{
-			ParForProgramBlock pb = (ParForProgramBlock) _hlMap.getMappedProg(hlNodeID)[1];
-			OptNode rtNode = _rtMap.getOptNode(pb);
-			
-			//copy node internals (because it might be root node)
-			_tmpChildOld = rtNode.createShallowClone();
-			rtNode.setExecType(newRtNode.getExecType()); //TODO extend as required
-		}
-		else if (hlNode.getNodeType() == NodeType.HOP)
-		{
-			long pid1 = _hlMap.getMappedParentID(hlNode.getID()); //pbID
-			ProgramBlock pb = (ProgramBlock) _hlMap.getMappedProg(pid1)[1];
-			OptNode rtNode1 = _rtMap.getOptNode(pb);
-			long pid2 = _rtMap.getMappedParentID(rtNode1.getID());
-			OptNode rtNode2 = _rtMap.getOptNode(pid2);
-			
-			_tmpParent = rtNode2;
-			_tmpChildOld = rtNode1;		
-			_tmpChildNew = newRtNode;
-			_tmpParent.exchangeChild(_tmpChildOld, _tmpChildNew);
-		}
-		else
-		{
-			throw new DMLRuntimeException("Unexpected node type for plan node exchange.");
-		}
-		
-		return pRoot;
-	}
-	
-	/**
-	 * 
-	 * @param hlNodeID
-	 * @throws DMLRuntimeException
-	 */
-	public static void revertTemporaryChange( long hlNodeID ) 
-		throws DMLRuntimeException 
-	{
-		OptNode node = _hlMap.getOptNode(hlNodeID);
-		
-		if( node.getNodeType() == NodeType.PARFOR )
-		{
-			ParForProgramBlock pb = (ParForProgramBlock) _hlMap.getMappedProg(hlNodeID)[1];
-			OptNode rtNode = _rtMap.getOptNode(pb);
-			rtNode.setExecType(_tmpChildOld.getExecType()); 	
-		}
-		else if( node.getNodeType() == NodeType.HOP )
-		{
-			//revert change (overwrite tmp child)
-			_tmpParent.exchangeChild(_tmpChildNew,_tmpChildOld);	
-		}
-		else
-		{
-			throw new DMLRuntimeException("Unexpected node type for plan node exchange.");
-		}
-		
-		//cleanup
-		_tmpParent = null;
-		_tmpChildOld = null;
-	}
-
-	/**
-	 * 
-	 * @param pRoot
-	 * @param hlNodeID
-	 * @param newRtNode
-	 * @return
-	 * @throws DMLRuntimeException
-	 */
-	public static OptNode exchangePermanently(OptNode pRoot, long hlNodeID, OptNode newRtNode) 
-		throws DMLRuntimeException 
-	{
-		OptNode hlNode = _hlMap.getOptNode(hlNodeID);
-		if( hlNode.getNodeType() == NodeType.PARFOR )
-		{
-			ParForProgramBlock pb = (ParForProgramBlock) _hlMap.getMappedProg(hlNodeID)[1];
-			OptNode rtNode = _rtMap.getOptNode(pb);
-			
-			//copy node internals (because it might be root node)
-			//(no need for update mapping)
-			rtNode.setExecType(newRtNode.getExecType()); //
-		}
-		else if (hlNode.getNodeType() == NodeType.HOP)
-		{
-			long pid1 = _hlMap.getMappedParentID(hlNode.getID()); //pbID
-			ProgramBlock pb = (ProgramBlock) _hlMap.getMappedProg(pid1)[1];
-			OptNode rtNode1 = _rtMap.getOptNode(pb);
-			long pid2 = _rtMap.getMappedParentID(rtNode1.getID());
-			OptNode rtNode2 = _rtMap.getOptNode(pid2);
-			
-			rtNode2.exchangeChild(rtNode1, newRtNode);
-			
-			//finally update mapping (all internal repositories)
-			newRtNode.setID(rtNode1.getID());
-			_rtMap.replaceMapping(pb, newRtNode);
-		}
-		else
-		{
-			throw new DMLRuntimeException("Unexpected node type for plan node exchange.");
-		}
-		
-		return pRoot;
-	}
 
 	public static void clear()
 	{
@@ -1095,10 +708,6 @@ public class OptTreeConverter
 			_hlMap.clear();
 		if( _rtMap != null )
 			_rtMap.clear();
-		
-		_tmpParent = null;
-		_tmpChildOld = null;
-		_tmpChildNew = null;
 	}
 
 }

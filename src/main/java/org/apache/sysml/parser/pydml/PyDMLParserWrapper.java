@@ -36,15 +36,14 @@ import org.antlr.v4.runtime.tree.ParseTreeWalker;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.sysml.api.DMLScript;
-import org.apache.sysml.parser.AParserWrapper;
 import org.apache.sysml.parser.DMLProgram;
 import org.apache.sysml.parser.FunctionStatementBlock;
 import org.apache.sysml.parser.ImportStatement;
 import org.apache.sysml.parser.LanguageException;
 import org.apache.sysml.parser.ParseException;
+import org.apache.sysml.parser.ParserWrapper;
 import org.apache.sysml.parser.Statement;
 import org.apache.sysml.parser.common.CustomErrorListener;
-import org.apache.sysml.parser.dml.DMLParserWrapper;
 import org.apache.sysml.parser.pydml.PydmlParser.FunctionStatementContext;
 import org.apache.sysml.parser.pydml.PydmlParser.ProgramrootContext;
 import org.apache.sysml.parser.pydml.PydmlParser.StatementContext;
@@ -55,20 +54,19 @@ import org.apache.sysml.parser.pydml.PydmlParser.StatementContext;
  * Note: ExpressionInfo and StatementInfo are simply wrapper objects and are reused in both DML and PyDML parsers.
  *
  */
-public class PyDMLParserWrapper extends AParserWrapper
+public class PyDMLParserWrapper extends ParserWrapper
 {
 	private static final Log LOG = LogFactory.getLog(DMLScript.class.getName());
 
 	/**
 	 * Parses the passed file with command line parameters. You can either pass both (local file) or just dmlScript (hdfs) or just file name (import command)
-	 * @param fileName either full path or null --> only used for better error handling
-	 * @param dmlScript required
-	 * @param argVals
-	 * @return
-	 * @throws ParseException
+	 * @param fileName either full path or null --&gt; only used for better error handling
+	 * @param dmlScript script file contents
+	 * @param argVals script arguments
+	 * @return dml program, or null if error
 	 */
 	@Override
-	public DMLProgram parse(String fileName, String dmlScript, Map<String,String> argVals) throws ParseException {
+	public DMLProgram parse(String fileName, String dmlScript, Map<String,String> argVals) {
 		DMLProgram prog = doParse(fileName, dmlScript, null, argVals);
 		
 		return prog;
@@ -80,23 +78,22 @@ public class PyDMLParserWrapper extends AParserWrapper
 	 * @param dmlScript script file contents
 	 * @param sourceNamespace namespace from source statement
 	 * @param argVals script arguments
-	 * @return null if at least one error
-	 * @throws ParseException
+	 * @return dml program, or null if at least one error
 	 */
-	public DMLProgram doParse(String fileName, String dmlScript, String sourceNamespace, Map<String,String> argVals) throws ParseException {
+	public DMLProgram doParse(String fileName, String dmlScript, String sourceNamespace, Map<String,String> argVals) {
 		DMLProgram dmlPgm = null;
 		
 		ANTLRInputStream in;
 		try {
 			if(dmlScript == null) {
-				dmlScript = DMLParserWrapper.readDMLScript(fileName, LOG);
+				dmlScript = readDMLScript(fileName, LOG);
 			}
 			
 			InputStream stream = new ByteArrayInputStream(dmlScript.getBytes());
 			in = new org.antlr.v4.runtime.ANTLRInputStream(stream);
 		} 
 		catch (FileNotFoundException e) {
-			throw new ParseException("Cannot find file: " + fileName, e);
+			throw new ParseException("Cannot find file/resource: " + fileName, e);
 		} 
 		catch (IOException e) {
 			throw new ParseException("Cannot open file: " + fileName, e);
@@ -183,7 +180,7 @@ public class PyDMLParserWrapper extends AParserWrapper
 	}
 
 
-	private DMLProgram createDMLProgram(ProgramrootContext ast, String sourceNamespace) {
+	private static DMLProgram createDMLProgram(ProgramrootContext ast, String sourceNamespace) {
 
 		DMLProgram dmlPgm = new DMLProgram();
 		String namespace = (sourceNamespace != null && sourceNamespace.length() > 0) ? sourceNamespace : DMLProgram.DEFAULT_NAMESPACE;
@@ -246,7 +243,10 @@ public class PyDMLParserWrapper extends AParserWrapper
 			dmlPgm.addStatementBlock(getStatementBlock(current));
 		}
 
+		//post-processing
+		dmlPgm.hoistFunctionCallsFromExpressions();
 		dmlPgm.mergeStatementBlocks();
+		
 		return dmlPgm;
 	}
 }

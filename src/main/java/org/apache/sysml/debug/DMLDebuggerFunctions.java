@@ -29,19 +29,14 @@ import org.apache.commons.lang.math.IntRange;
 import org.apache.sysml.hops.OptimizerUtils;
 import org.apache.sysml.lops.Lop;
 import org.apache.sysml.parser.Expression.DataType;
-import org.apache.sysml.runtime.DMLRuntimeException;
 import org.apache.sysml.runtime.controlprogram.LocalVariableMap;
 import org.apache.sysml.runtime.controlprogram.caching.MatrixObject;
+import org.apache.sysml.runtime.controlprogram.caching.CacheableData.CacheStatus;
 import org.apache.sysml.runtime.instructions.Instruction;
 import org.apache.sysml.runtime.instructions.MRJobInstruction;
-import org.apache.sysml.runtime.instructions.cp.BooleanObject;
 import org.apache.sysml.runtime.instructions.cp.BreakPointInstruction;
 import org.apache.sysml.runtime.instructions.cp.CPInstruction;
-import org.apache.sysml.runtime.instructions.cp.Data;
-import org.apache.sysml.runtime.instructions.cp.DoubleObject;
-import org.apache.sysml.runtime.instructions.cp.IntObject;
-import org.apache.sysml.runtime.instructions.cp.ScalarObject;
-import org.apache.sysml.runtime.instructions.cp.StringObject;
+import org.apache.sysml.runtime.instructions.cp.ScalarObjectFactory;
 import org.apache.sysml.runtime.instructions.cp.BreakPointInstruction.BPINSTRUCTION_STATUS;
 import org.apache.sysml.runtime.matrix.data.MatrixBlock;
 
@@ -269,28 +264,8 @@ public class DMLDebuggerFunctions {
 		if (variables != null && !variables.keySet().isEmpty()) {
 			if (variables.get(varname) != null) {
 				if (variables.get(varname).getDataType() == DataType.SCALAR) {
-					Data value;
-					switch(variables.get(varname).getValueType()) {
-						case DOUBLE:
-							double d = Double.parseDouble(args[1]);
-							value = (ScalarObject) new DoubleObject(d);
-							break;
-						case INT:
-							long i = Long.parseLong(args[1]);
-							value = (ScalarObject) new IntObject(i);
-							break;
-						case BOOLEAN:
-							boolean b = Boolean.parseBoolean(args[1]);
-							value = (ScalarObject) new BooleanObject(b);
-							break;
-						case STRING:
-							value = (ScalarObject) new StringObject(args[1]);
-							break;
-						default:
-							System.err.println("Invalid scalar value type.");
-							return;
-					}
-					variables.put(varname, value);
+					variables.put(varname, ScalarObjectFactory
+						.createScalarObject(variables.get(varname).getValueType(), args[1]));
 					System.out.println(varname + " = " + variables.get(varname).toString());
 				}
 				else
@@ -303,7 +278,7 @@ public class DMLDebuggerFunctions {
 			System.out.println("Symbol table for current frame is empty");
 	}
 	
-	public void print(LocalVariableMap variables, String varname, String displayFunction, int rowIndex, int colIndex) throws DMLRuntimeException {
+	public void print(LocalVariableMap variables, String varname, String displayFunction, int rowIndex, int colIndex) {
 		if (varname == null) {
 			System.err.println("No matrix variable name entered.");
 			return;
@@ -317,7 +292,7 @@ public class DMLDebuggerFunctions {
 						
 						try {
 							mo = (MatrixObject) variables.get(varname);
-							if (mo.getStatusAsString().equals("EMPTY") && (OptimizerUtils.estimateSizeExactSparsity(mo.getNumRows(), mo.getNumColumns(), mo.getSparsity()) > OptimizerUtils.getLocalMemBudget())) {
+							if (mo.getStatus()==CacheStatus.EMPTY && (OptimizerUtils.estimateSizeExactSparsity(mo.getNumRows(), mo.getNumColumns(), mo.getSparsity()) > OptimizerUtils.getLocalMemBudget())) {
 								//TODO @jlugoma Need to add functionality to bring and display a block. 
 								System.err.println("ERROR: Matrix dimensions are too large to fit in main memory.");
 								return;
@@ -382,9 +357,8 @@ public class DMLDebuggerFunctions {
 	 * Print DML matrix variable in current frame (if existing)
 	 * @param variables Current frame variables
  	 * @param varname Variable name
-	 * @throws DMLRuntimeException if DMLRuntimeException occurs
 	 */
-	public void printMatrixVariable(LocalVariableMap variables, String varname) throws DMLRuntimeException {
+	public void printMatrixVariable(LocalVariableMap variables, String varname) {
 		if (varname == null) {
 			System.err.println("No matrix variable name entered.");
 			return;
@@ -394,7 +368,7 @@ public class DMLDebuggerFunctions {
 				if (variables.get(varname).getDataType() == DataType.MATRIX) {
 					try {
 						MatrixObject mo = (MatrixObject) variables.get(varname);
-						if (mo.getStatusAsString().equals("EMPTY") && (OptimizerUtils.estimateSizeExactSparsity(mo.getNumRows(), mo.getNumColumns(), mo.getSparsity()) > OptimizerUtils.getLocalMemBudget())) {
+						if (mo.getStatus()==CacheStatus.EMPTY && (OptimizerUtils.estimateSizeExactSparsity(mo.getNumRows(), mo.getNumColumns(), mo.getSparsity()) > OptimizerUtils.getLocalMemBudget())) {
 							//TODO @jlugoma Need to add functionality to bring and display a block. 
 							System.err.println("ERROR: DML matrix/vector dimensions are too large to fit in main memory.");
 							return;
@@ -444,7 +418,7 @@ public class DMLDebuggerFunctions {
 					double cellValue;
 					try {
 						MatrixObject mo = (MatrixObject) variables.get(varname);
-						if (mo.getStatusAsString().equals("EMPTY") && (OptimizerUtils.estimateSizeExactSparsity(mo.getNumRows(), mo.getNumColumns(), mo.getSparsity()) > OptimizerUtils.getLocalMemBudget())) {
+						if (mo.getStatus()==CacheStatus.EMPTY && (OptimizerUtils.estimateSizeExactSparsity(mo.getNumRows(), mo.getNumColumns(), mo.getSparsity()) > OptimizerUtils.getLocalMemBudget())) {
 							//TODO @jlugoma Need to add functionality to bring and display a block. 
 							System.err.println("ERROR: DML matrix/vector dimensions are too large to fit in main memory.");
 							return;
@@ -491,14 +465,16 @@ public class DMLDebuggerFunctions {
 					double updatedCellValue;
 					try {
 						MatrixObject mo = (MatrixObject) variables.get(varname);
-						if (mo.getStatusAsString().equals("EMPTY") && (OptimizerUtils.estimateSizeExactSparsity(mo.getNumRows(), mo.getNumColumns(), mo.getSparsity()) > OptimizerUtils.getLocalMemBudget())) {
+						if (mo.getStatus()==CacheStatus.EMPTY && (OptimizerUtils.estimateSizeExactSparsity(mo.getNumRows(), mo.getNumColumns(), mo.getSparsity()) > OptimizerUtils.getLocalMemBudget())) {
 							//TODO @jlugoma Need to add functionality to bring and display a block. 
 							System.err.println("ERROR: DML matrix/vector dimensions are too large to fit in main memory.");
 							return;
-						}						
-						MatrixBlock mb = mo.acquireModify();
+						}
+						MatrixBlock mb = mo.acquireRead();
+						mo.release();
 						mb.setValue(rowIndex, columnIndex, value);
 						updatedCellValue = mb.getValue(rowIndex, columnIndex);
+						mo.acquireModify(mb);
 						mo.release();
 					} catch (Exception e) {
 						System.err.println("Error processing DML matrix variable "+varname+". Certain matrix operations are disabled due to memory constraints or read-only restrictions.");
@@ -592,16 +568,8 @@ public class DMLDebuggerFunctions {
 		return range;
 	}
 	
-	/**
-	 * Returns minimum between two integers
-	 * @param a Integer value 
-	 * @param b Integer value
-	 * @return Minimum between a and b.
-	 */
-	private int min(int a, int b) {
-		if (a < b)
-			return a;
-		return b;
+	private static int min(int a, int b) {
+		return Math.min(a, b);
 	}
 	
 	/**
@@ -610,7 +578,7 @@ public class DMLDebuggerFunctions {
 	 * @param rowIndex if rowIndex == -1, then prints all rows
 	 * @param colIndex if colIndex == -1, then prints all columns
 	 */
-	private void prettyPrintMatrixBlock(MatrixBlock mb, int rowIndex, int colIndex) {
+	private static void prettyPrintMatrixBlock(MatrixBlock mb, int rowIndex, int colIndex) {
 		if(rowIndex <= 0 && colIndex <= 0) {
 			// Print entire matrix
 			for(int i=0; i<min(mb.getNumRows(), DISPLAY_MAX_ROWS); i++) {

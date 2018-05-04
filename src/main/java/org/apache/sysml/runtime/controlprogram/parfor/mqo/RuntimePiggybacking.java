@@ -31,10 +31,6 @@ import org.apache.sysml.runtime.matrix.JobReturn;
 import org.apache.sysml.runtime.matrix.data.Pair;
 
 
-/**
- * 
- * 
- */
 public class RuntimePiggybacking 
 {
 	
@@ -59,8 +55,8 @@ public class RuntimePiggybacking
 	static
 	{
 		//initialize mr-job instruction pool
-		_pool = new HashMap<JobType, LinkedList<Long>>();	
-		_jobs = new HashMap<Long, MRJobInstruction>();
+		_pool = new HashMap<>();	
+		_jobs = new HashMap<>();
 		
 		//init id sequence
 		_idSeq = new IDSequence();
@@ -70,35 +66,16 @@ public class RuntimePiggybacking
 	/////////////////////////////////////////////////
 	// public interface to runtime piggybacking
 	///////
-	
-	/**
-	 * 
-	 * @return
-	 */
-	public static boolean isActive()
-	{
+
+	public static boolean isActive() {
 		return _active;
 	}
-	
-	/**
-	 * 
-	 * @param type
-	 * @param par
-	 * @throws DMLRuntimeException
-	 */
-	public static void start( int par ) 
-		throws DMLRuntimeException
-	{
+
+	public static void start( int par ) {
 		start( DEFAULT_WORKER_TYPE, par );
 	}
-	
-	/**
-	 * @throws DMLRuntimeException 
-	 * 
-	 */
-	public static void start( PiggybackingType type, int par ) 
-		throws DMLRuntimeException
-	{
+
+	public static void start( PiggybackingType type, int par ) {
 		//activate piggybacking server
 		_active = true;
 		
@@ -121,14 +98,8 @@ public class RuntimePiggybacking
 		//start worker
 		_worker.start();
 	}
-	
-	/**
-	 * 
-	 * @throws DMLRuntimeException
-	 */
-	public static void stop() 
-		throws DMLRuntimeException 
-	{
+
+	public static void stop() {
 		try
 		{
 			//deactivate piggybacking server
@@ -144,17 +115,8 @@ public class RuntimePiggybacking
 			throw new DMLRuntimeException("Failed to stop runtime piggybacking server.", ex);
 		}
 	}
-	
-	/**
-	 * 
-	 * @param inst
-	 * @param ec
-	 * @return
-	 * @throws DMLRuntimeException 
-	 */
-	public static JobReturn submitJob(MRJobInstruction inst) 
-		throws DMLRuntimeException 
-	{
+
+	public static JobReturn submitJob(MRJobInstruction inst) {
 		JobReturn ret = null;
 		
 		try
@@ -187,12 +149,7 @@ public class RuntimePiggybacking
 		
 		return ret;
 	}		
-	
-	/**
-	 * 
-	 * @param type
-	 * @return
-	 */
+
 	public static boolean isSupportedJobType( JobType type )
 	{
 		// reblock and datagen apply as well but this would limit the recompilation
@@ -210,7 +167,7 @@ public class RuntimePiggybacking
 	 * but are not necessarily mergable. This method returns the largest 
 	 * instruction set currently in the pool. 
 	 * 
-	 * @return
+	 * @return linked list of MR job instructions
 	 */
 	protected static LinkedList<Pair<Long,MRJobInstruction>> getMaxWorkingSet()
 	{
@@ -234,19 +191,15 @@ public class RuntimePiggybacking
 				return null;
 				
 			//create working set and remove from pool
-			ret = new LinkedList<Pair<Long,MRJobInstruction>>();
+			ret = new LinkedList<>();
 			LinkedList<Long> tmp = _pool.remove(currType);
 			for( Long id : tmp )
-				ret.add( new Pair<Long, MRJobInstruction>(id,_jobs.get(id)) );
+				ret.add( new Pair<>(id,_jobs.get(id)) );
 		}
 		
 		return ret;
 	}
-	
-	/**
-	 * 
-	 * @return
-	 */
+
 	public static boolean isEmptyJobPool()
 	{
 		return _pool.isEmpty();

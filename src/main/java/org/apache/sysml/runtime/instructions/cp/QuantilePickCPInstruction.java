@@ -28,50 +28,36 @@ import org.apache.sysml.runtime.controlprogram.caching.MatrixObject;
 import org.apache.sysml.runtime.controlprogram.context.ExecutionContext;
 import org.apache.sysml.runtime.instructions.InstructionUtils;
 import org.apache.sysml.runtime.matrix.MetaData;
+import org.apache.sysml.runtime.matrix.MetaDataNumItemsByEachReducer;
 import org.apache.sysml.runtime.matrix.data.MatrixBlock;
-import org.apache.sysml.runtime.matrix.data.NumItemsByEachReducerMetaData;
 import org.apache.sysml.runtime.matrix.operators.Operator;
 import org.apache.sysml.runtime.util.MapReduceTool;
 import org.apache.sysml.runtime.util.UtilFunctions;
 
-public class QuantilePickCPInstruction extends BinaryCPInstruction
-{
-	
-	private OperationTypes _type = null;
-	private boolean _inmem = true;
-	
-	public QuantilePickCPInstruction(Operator op, CPOperand in, CPOperand out, OperationTypes type, boolean inmem, String opcode, String istr){
+public class QuantilePickCPInstruction extends BinaryCPInstruction {
+
+	private final OperationTypes _type;
+	private final boolean _inmem;
+
+	private QuantilePickCPInstruction(Operator op, CPOperand in, CPOperand out, OperationTypes type, boolean inmem,
+			String opcode, String istr) {
 		this(op, in, null, out, type, inmem, opcode, istr);
 	}
-	
-	public QuantilePickCPInstruction(Operator op, CPOperand in, CPOperand in2, CPOperand out,  OperationTypes type, boolean inmem, String opcode, String istr){
-		super(op, in, in2, out, opcode, istr);
-		_cptype = CPINSTRUCTION_TYPE.QPick;
-		
+
+	private QuantilePickCPInstruction(Operator op, CPOperand in, CPOperand in2, CPOperand out, OperationTypes type,
+			boolean inmem, String opcode, String istr) {
+		super(CPType.QPick, op, in, in2, out, opcode, istr);
 		_type = type;
 		_inmem = inmem;
 	}
-	
-	/**
-	 * 
-	 * @param str
-	 * @return
-	 * @throws DMLRuntimeException
-	 */
-	public static QuantilePickCPInstruction parseInstruction ( String str ) 
-		throws DMLRuntimeException 
-	{
+
+	public static QuantilePickCPInstruction parseInstruction ( String str ) {
 		String[] parts = InstructionUtils.getInstructionPartsWithValueType(str);
 		String opcode = parts[0];
-		
-		//sanity check opcode
-		if ( !opcode.equalsIgnoreCase("qpick") ) {
+		if ( !opcode.equalsIgnoreCase("qpick") )
 			throw new DMLRuntimeException("Unknown opcode while parsing a QuantilePickCPInstruction: " + str);
-		}
-		
 		//instruction parsing
-		if( parts.length == 4 )
-		{
+		if( parts.length == 4 ) {
 			//instructions of length 4 originate from unary - mr-iqm
 			//TODO this should be refactored to use pickvaluecount lops
 			CPOperand in1 = new CPOperand(parts[1]);
@@ -79,18 +65,16 @@ public class QuantilePickCPInstruction extends BinaryCPInstruction
 			CPOperand out = new CPOperand(parts[3]);
 			OperationTypes ptype = OperationTypes.IQM;
 			boolean inmem = false;
-			return new QuantilePickCPInstruction(null, in1, in2, out, ptype, inmem, opcode, str);			
+			return new QuantilePickCPInstruction(null, in1, in2, out, ptype, inmem, opcode, str);
 		}
-		else if( parts.length == 5 )
-		{
+		else if( parts.length == 5 ) {
 			CPOperand in1 = new CPOperand(parts[1]);
 			CPOperand out = new CPOperand(parts[2]);
 			OperationTypes ptype = OperationTypes.valueOf(parts[3]);
 			boolean inmem = Boolean.parseBoolean(parts[4]);
 			return new QuantilePickCPInstruction(null, in1, out, ptype, inmem, opcode, str);
 		}
-		else if( parts.length == 6 )
-		{
+		else if( parts.length == 6 ) {
 			CPOperand in1 = new CPOperand(parts[1]);
 			CPOperand in2 = new CPOperand(parts[2]);
 			CPOperand out = new CPOperand(parts[3]);
@@ -98,20 +82,17 @@ public class QuantilePickCPInstruction extends BinaryCPInstruction
 			boolean inmem = Boolean.parseBoolean(parts[5]);
 			return new QuantilePickCPInstruction(null, in1, in2, out, ptype, inmem, opcode, str);
 		}
-		
 		return null;
 	}
 	
 	@Override
-	public void processInstruction(ExecutionContext ec)
-		throws DMLRuntimeException 
-	{
+	public void processInstruction(ExecutionContext ec) {
 		switch( _type ) 
 		{
 			case VALUEPICK: 
 				if( _inmem ) //INMEM VALUEPICK
 				{
-					MatrixBlock matBlock = ec.getMatrixInput(input1.getName());
+					MatrixBlock matBlock = ec.getMatrixInput(input1.getName(), getExtendedOpcode());
 
 					if ( input2.getDataType() == DataType.SCALAR ) {
 						ScalarObject quantile = ec.getScalarInput(input2.getName(), input2.getValueType(), input2.isLiteral());
@@ -119,13 +100,13 @@ public class QuantilePickCPInstruction extends BinaryCPInstruction
 						ec.setScalarOutput(output.getName(), new DoubleObject(picked));
 					} 
 					else {
-						MatrixBlock quantiles = ec.getMatrixInput(input2.getName());
+						MatrixBlock quantiles = ec.getMatrixInput(input2.getName(), getExtendedOpcode());
 						MatrixBlock resultBlock = (MatrixBlock) matBlock.pickValues(quantiles, new MatrixBlock());
 						quantiles = null;
-						ec.releaseMatrixInput(input2.getName());
-						ec.setMatrixOutput(output.getName(), resultBlock);
+						ec.releaseMatrixInput(input2.getName(), getExtendedOpcode());
+						ec.setMatrixOutput(output.getName(), resultBlock, getExtendedOpcode());
 					}
-					ec.releaseMatrixInput(input1.getName());										
+					ec.releaseMatrixInput(input1.getName(), getExtendedOpcode());
 				}
 				else //MR VALUEPICK
 				{
@@ -136,7 +117,7 @@ public class QuantilePickCPInstruction extends BinaryCPInstruction
 					
 					if ( mdata != null ) {
 						try {
-							double picked = MapReduceTool.pickValue(fname, (NumItemsByEachReducerMetaData) mdata, pickindex.getDoubleValue());
+							double picked = MapReduceTool.pickValue(fname, (MetaDataNumItemsByEachReducer) mdata, pickindex.getDoubleValue());
 							ec.setVariable(output.getName(), new DoubleObject(picked));
 						} catch (Exception e ) {
 							throw new DMLRuntimeException(e);
@@ -145,15 +126,15 @@ public class QuantilePickCPInstruction extends BinaryCPInstruction
 					else {
 						throw new DMLRuntimeException("Unexpected error while executing ValuePickCP: otherMetaData for file (" + fname + ") not found." );
 					}
-				}				
+				}
 				break;
 
 			case MEDIAN:
 				if( _inmem ) //INMEM MEDIAN
 				{
-					double picked = ec.getMatrixInput(input1.getName()).median();
+					double picked = ec.getMatrixInput(input1.getName(), getExtendedOpcode()).median();
 					ec.setScalarOutput(output.getName(), new DoubleObject(picked));
-					ec.releaseMatrixInput(input1.getName());
+					ec.releaseMatrixInput(input1.getName(), getExtendedOpcode());
 					break;
 				}
 				else //MR MEDIAN
@@ -164,7 +145,7 @@ public class QuantilePickCPInstruction extends BinaryCPInstruction
 					
 					if ( mdata1 != null ) {
 						try {
-							double median = MapReduceTool.median(fname1, (NumItemsByEachReducerMetaData) mdata1);
+							double median = MapReduceTool.median(fname1, (MetaDataNumItemsByEachReducer) mdata1);
 							ec.setVariable(output.getName(), new DoubleObject(median));
 						} catch (Exception e ) {
 							throw new DMLRuntimeException(e);
@@ -179,9 +160,9 @@ public class QuantilePickCPInstruction extends BinaryCPInstruction
 			case IQM:
 				if( _inmem ) //INMEM IQM
 				{
-					MatrixBlock matBlock1 = ec.getMatrixInput(input1.getName());
+					MatrixBlock matBlock1 = ec.getMatrixInput(input1.getName(), getExtendedOpcode());
 					double iqm = matBlock1.interQuartileMean();
-					ec.releaseMatrixInput(input1.getName());
+					ec.releaseMatrixInput(input1.getName(), getExtendedOpcode());
 					ec.setScalarOutput(output.getName(), new DoubleObject(iqm));
 				}
 				else //MR IQM
@@ -192,13 +173,13 @@ public class QuantilePickCPInstruction extends BinaryCPInstruction
 					double[] q25 = null;
 					double[] q75 = null;
 					try {
-						q25 = MapReduceTool.pickValueWeight(inputMatrix.getFileName(), (NumItemsByEachReducerMetaData) inputMatrix.getMetaData(), 0.25, false);
-						q75 = MapReduceTool.pickValueWeight(inputMatrix.getFileName(), (NumItemsByEachReducerMetaData) inputMatrix.getMetaData(), 0.75, false);
+						q25 = MapReduceTool.pickValueWeight(inputMatrix.getFileName(), (MetaDataNumItemsByEachReducer) inputMatrix.getMetaData(), 0.25, false);
+						q75 = MapReduceTool.pickValueWeight(inputMatrix.getFileName(), (MetaDataNumItemsByEachReducer) inputMatrix.getMetaData(), 0.75, false);
 					} catch (IOException e1) {
 						throw new DMLRuntimeException(e1);
 					}
 					
-					double sumwt = UtilFunctions.getTotalLength((NumItemsByEachReducerMetaData) ec.getMetaData(input1.getName()));
+					double sumwt = UtilFunctions.getTotalLength((MetaDataNumItemsByEachReducer) ec.getMetaData(input1.getName()));
 					double q25d = sumwt*0.25;
 					double q75d = sumwt*0.75;
 					

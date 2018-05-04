@@ -19,41 +19,41 @@
 
 package org.apache.sysml.parser;
 
-
+import org.antlr.v4.runtime.ParserRuleContext;
 
 public class StringIdentifier extends ConstIdentifier 
 {
-	
 	private String _val;
-	
-	public Expression rewriteExpression(String prefix) throws LanguageException{
+
+	@Override
+	public Expression rewriteExpression(String prefix) {
 		return this;
 	}
-	
-	public StringIdentifier(String val, String filename, int blp, int bcp, int elp, int ecp){
+
+	public StringIdentifier(String val, ParseInfo parseInfo) {
 		super();
-		 _val = val;
-		_kind = Kind.Data;
-		this.setDimensions(0,0);
-        this.computeDataType();
-        this.setValueType(ValueType.STRING);
-        this.setAllPositions(filename, blp, bcp, elp, ecp);
-		
+		setInfo(val);
+		setParseInfo(parseInfo);
 	}
-	
-	public StringIdentifier(StringIdentifier s){
+
+	public StringIdentifier(ParserRuleContext ctx, String val, String filename) {
 		super();
-		 _val = s.getValue();
-		_kind = Kind.Data;
-		this.setDimensions(0,0);
-        this.computeDataType();
-        this.setValueType(ValueType.STRING);
+		setInfo(val);
+		setCtxValuesAndFilename(ctx, filename);
 	}
-	
+
+	private void setInfo(String val) {
+		_val = val;
+		setDimensions(0, 0);
+		computeDataType();
+		setValueType(ValueType.STRING);
+	}
+
 	public String getValue(){
 		return _val;
 	}
 	
+	@Override
 	public String toString(){
 		return _val;
 	}
@@ -69,9 +69,7 @@ public class StringIdentifier extends ConstIdentifier
 	}
 	
 	@Override
-	public long getLongValue() 
-		throws LanguageException 
-	{
+	public long getLongValue() {
 		throw new LanguageException("Unsupported string-to-long conversion.");
 	}
 }

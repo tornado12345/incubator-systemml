@@ -29,6 +29,7 @@ import org.antlr.v4.runtime.Recognizer;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.sysml.api.DMLScript;
+import org.apache.sysml.parser.ParseInfo;
 
 public class CustomErrorListener extends BaseErrorListener {
 
@@ -41,7 +42,7 @@ public class CustomErrorListener extends BaseErrorListener {
 	/**
 	 * List of parse issues.
 	 */
-	private List<ParseIssue> parseIssues = new ArrayList<ParseIssue>();
+	private List<ParseIssue> parseIssues = new ArrayList<>();
 
 	public void setCurrentFileName(String currentFilePath) {
 		currentFileName = currentFilePath;
@@ -82,6 +83,25 @@ public class CustomErrorListener extends BaseErrorListener {
 			}
 		} catch (Exception e1) {
 			log.error("ERROR: while customizing error message:" + e1);
+		}
+	}
+
+	public void validationError(ParseInfo parseInfo, String msg) {
+		parseIssues.add(new ParseIssue(parseInfo.getBeginLine(), parseInfo.getBeginColumn(), msg, currentFileName,
+				ParseIssueType.VALIDATION_ERROR));
+
+		try {
+			setAtLeastOneError(true);
+			if (currentFileName == null) {
+				log.error("line " + parseInfo.getBeginLine() + ":" + parseInfo.getBeginColumn() + " ("
+						+ parseInfo.getText() + "): " + msg);
+			} else {
+				String fileName = currentFileName;
+				log.error(fileName + " line " + parseInfo.getBeginLine() + ":" + parseInfo.getBeginColumn() + " ("
+						+ parseInfo.getText() + "): " + msg);
+			}
+		} catch (Exception e) {
+			log.error("ERROR: while customizing error message:" + e);
 		}
 	}
 
@@ -177,19 +197,6 @@ public class CustomErrorListener extends BaseErrorListener {
 		 * The type of parse issue.
 		 */
 		ParseIssueType parseIssueType;
-
-		public ParseIssue(int line, int charPositionInLine, String message) {
-			this.line = line;
-			this.charPositionInLine = charPositionInLine;
-			this.message = message;
-		}
-
-		public ParseIssue(int line, int charPositionInLine, String message, String fileName) {
-			this.line = line;
-			this.charPositionInLine = charPositionInLine;
-			this.message = message;
-			this.fileName = fileName;
-		}
 
 		public ParseIssue(int line, int charPositionInLine, String message, String fileName,
 				ParseIssueType parseIssueType) {
@@ -327,14 +334,6 @@ public class CustomErrorListener extends BaseErrorListener {
 	 */
 	public void setParseIssues(List<ParseIssue> parseIssues) {
 		this.parseIssues = parseIssues;
-	}
-
-	/**
-	 * Clear the list of parse issues.
-	 * 
-	 */
-	public void clearParseIssues() {
-		parseIssues.clear();
 	}
 
 	/**

@@ -21,6 +21,7 @@ package org.apache.sysml.runtime.instructions.spark;
 
 
 import java.util.ArrayList;
+import java.util.Iterator;
 
 import org.apache.spark.api.java.JavaPairRDD;
 import org.apache.spark.api.java.function.PairFlatMapFunction;
@@ -47,56 +48,37 @@ import org.apache.sysml.runtime.matrix.operators.AggregateOperator;
 import org.apache.sysml.runtime.matrix.operators.Operator;
 import org.apache.sysml.runtime.util.UtilFunctions;
 
-/**
- * 
- */
-public class PmmSPInstruction extends BinarySPInstruction 
-{
-	
+public class PmmSPInstruction extends BinarySPInstruction {
 	private CacheType _type = null;
 	private CPOperand _nrow = null;
-	
-	public PmmSPInstruction(Operator op, CPOperand in1, CPOperand in2, CPOperand out, CPOperand nrow,
-			                CacheType type, String opcode, String istr )
-	{
-		super(op, in1, in2, out, opcode, istr);
-		_sptype = SPINSTRUCTION_TYPE.PMM;		
+
+	private PmmSPInstruction(Operator op, CPOperand in1, CPOperand in2, CPOperand out, CPOperand nrow, CacheType type,
+			String opcode, String istr) {
+		super(SPType.PMM, op, in1, in2, out, opcode, istr);
 		_type = type;
 		_nrow = nrow;
 	}
 
-	/**
-	 * 
-	 * @param str
-	 * @return
-	 * @throws DMLRuntimeException
-	 */
-	public static PmmSPInstruction parseInstruction( String str ) 
-		throws DMLRuntimeException 
-	{
+	public static PmmSPInstruction parseInstruction( String str ) {
 		String parts[] = InstructionUtils.getInstructionPartsWithValueType(str);
 		String opcode = InstructionUtils.getOpCode(str);
-
 		if ( opcode.equalsIgnoreCase(PMMJ.OPCODE)) {
 			CPOperand in1 = new CPOperand(parts[1]);
 			CPOperand in2 = new CPOperand(parts[2]);
 			CPOperand nrow = new CPOperand(parts[3]);
 			CPOperand out = new CPOperand(parts[4]);
 			CacheType type = CacheType.valueOf(parts[5]);
-			
 			AggregateOperator agg = new AggregateOperator(0, Plus.getPlusFnObject());
 			AggregateBinaryOperator aggbin = new AggregateBinaryOperator(Multiply.getMultiplyFnObject(), agg);
 			return new PmmSPInstruction(aggbin, in1, in2, out, nrow, type, opcode, str);
 		} 
 		else {
 			throw new DMLRuntimeException("PmmSPInstruction.parseInstruction():: Unknown opcode " + opcode);
-		}	
+		}
 	}
 	
 	@Override
-	public void processInstruction(ExecutionContext ec) 
-		throws DMLRuntimeException
-	{	
+	public void processInstruction(ExecutionContext ec) {
 		SparkExecutionContext sec = (SparkExecutionContext)ec;
 		
 		String rddVar = (_type==CacheType.LEFT) ? input2.getName() : input1.getName();
@@ -111,7 +93,7 @@ public class PmmSPInstruction extends BinarySPInstruction
 		//execute pmm instruction
 		JavaPairRDD<MatrixIndexes,MatrixBlock> out = in1
 				.flatMapToPair( new RDDPMMFunction(_type, in2, rlen, mc.getRowsPerBlock()) );
-		out = RDDAggregateUtils.sumByKeyStable(out);
+		out = RDDAggregateUtils.sumByKeyStable(out, false);
 		
 		//put output RDD handle into symbol table
 		sec.setRDDHandleForVariable(output.getName(), out);
@@ -121,11 +103,7 @@ public class PmmSPInstruction extends BinarySPInstruction
 		//update output statistics if not inferred
 		updateBinaryMMOutputMatrixCharacteristics(sec, false);
 	}
-	
-	/**
-	 * 
-	 * 
-	 */
+
 	private static class RDDPMMFunction implements PairFlatMapFunction<Tuple2<MatrixIndexes, MatrixBlock>, MatrixIndexes, MatrixBlock> 
 	{
 		private static final long serialVersionUID = -1696560050436469140L;
@@ -134,19 +112,15 @@ public class PmmSPInstruction extends BinarySPInstruction
 		private long _rlen = -1;
 		private int _brlen = -1;
 		
-		public RDDPMMFunction( CacheType type, PartitionedBroadcast<MatrixBlock> binput, long rlen, int brlen ) 
-			throws DMLRuntimeException
-		{
+		public RDDPMMFunction( CacheType type, PartitionedBroadcast<MatrixBlock> binput, long rlen, int brlen ) {
 			_brlen = brlen;
 			_rlen = rlen;
 			_pmV = binput;
 		}
 		
 		@Override
-		public Iterable<Tuple2<MatrixIndexes, MatrixBlock>> call( Tuple2<MatrixIndexes, MatrixBlock> arg0 ) 
-			throws Exception 
-		{
-			ArrayList<Tuple2<MatrixIndexes,MatrixBlock>> ret = new ArrayList<Tuple2<MatrixIndexes,MatrixBlock>>();
+		public Iterator<Tuple2<MatrixIndexes, MatrixBlock>> call( Tuple2<MatrixIndexes, MatrixBlock> arg0 ) {
+			ArrayList<Tuple2<MatrixIndexes,MatrixBlock>> ret = new ArrayList<>();
 			MatrixIndexes ixIn = arg0._1();
 			MatrixBlock mb2 = arg0._2();
 			
@@ -178,13 +152,12 @@ public class PmmSPInstruction extends BinarySPInstruction
 				//hence we do a meta data correction afterwards)
 				mb1.permutationMatrixMultOperations(mb2, out1, out2);
 				out1.setNumRows(UtilFunctions.computeBlockSize(_rlen, rowIX1, _brlen));
-				ret.add(new Tuple2<MatrixIndexes, MatrixBlock>(new MatrixIndexes(rowIX1, ixIn.getColumnIndex()), out1));
+				ret.add(new Tuple2<>(new MatrixIndexes(rowIX1, ixIn.getColumnIndex()), out1));
 				if( out2 != null )
-					ret.add(new Tuple2<MatrixIndexes, MatrixBlock>(new MatrixIndexes(rowIX2, ixIn.getColumnIndex()), out2));
+					ret.add(new Tuple2<>(new MatrixIndexes(rowIX2, ixIn.getColumnIndex()), out2));
 			}
 			
-			return ret;
+			return ret.iterator();
 		}
 	}
-	
 }

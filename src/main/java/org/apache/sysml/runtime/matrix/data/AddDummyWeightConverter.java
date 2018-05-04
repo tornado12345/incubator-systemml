@@ -26,10 +26,9 @@ import org.apache.hadoop.io.Writable;
 @SuppressWarnings("rawtypes")
 public class AddDummyWeightConverter implements Converter<Writable, Writable, MatrixIndexes, WeightedPair>
 {
-	
 	private Converter toCellConverter=null;
 	private WeightedPair outValue=new WeightedPair();
-	private Pair<MatrixIndexes, WeightedPair> pair=new Pair<MatrixIndexes, WeightedPair>();
+	private Pair<MatrixIndexes, WeightedPair> pair=new Pair<>();
 	private int rlen;
 	private int clen;
 	public AddDummyWeightConverter()
@@ -71,12 +70,11 @@ public class AddDummyWeightConverter implements Converter<Writable, Writable, Ma
 
 	@Override
 	public void setBlockSize(int rl, int cl) {
-		
-		if(toCellConverter==null)
-		{
+		if(toCellConverter==null) {
 			rlen=rl;
 			clen=cl;
-		}else
+		} 
+		else
 			toCellConverter.setBlockSize(rl, cl);
 	}
 

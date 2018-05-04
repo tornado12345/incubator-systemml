@@ -36,7 +36,7 @@ public class AppendGAlignedSP extends Lop
 		super(Lop.Type.Append, dt, vt);		
 		init(input1, input2, input3, dt, vt);
 		
-		_cbind = true;
+		_cbind = cbind;
 	}
 	
 	public void init(Lop input1, Lop input2, Lop input3, DataType dt, ValueType vt) 
@@ -64,8 +64,8 @@ public class AppendGAlignedSP extends Lop
 	}
 
 	//called when append executes in CP
+	@Override
 	public String getInstructions(String input_index1, String input_index2, String input_index3, String output_index) 
-		throws LopsException
 	{
 		StringBuilder sb = new StringBuilder();
 		sb.append( getExecType() );
@@ -73,16 +73,16 @@ public class AppendGAlignedSP extends Lop
 		sb.append( OPCODE );
 		
 		sb.append( OPERAND_DELIMITOR );
-		sb.append( getInputs().get(0).prepInputOperand(input_index1+""));
+		sb.append( getInputs().get(0).prepInputOperand(input_index1));
 		
 		sb.append( OPERAND_DELIMITOR );
-		sb.append( getInputs().get(1).prepInputOperand(input_index2+""));
+		sb.append( getInputs().get(1).prepInputOperand(input_index2));
 		
 		sb.append( OPERAND_DELIMITOR );
 		sb.append( getInputs().get(2).prepScalarInputOperand(getExecType()));
 		
 		sb.append( OPERAND_DELIMITOR );
-		sb.append( prepOutputOperand(output_index+"") );
+		sb.append( prepOutputOperand(output_index) );
 		
 		sb.append( OPERAND_DELIMITOR );
 		sb.append( _cbind );
@@ -90,4 +90,3 @@ public class AppendGAlignedSP extends Lop
 		return sb.toString();
 	}
 }
-

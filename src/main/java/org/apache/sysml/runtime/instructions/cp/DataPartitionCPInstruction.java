@@ -28,48 +28,31 @@ import org.apache.sysml.runtime.controlprogram.ParForProgramBlock.PDataPartition
 import org.apache.sysml.runtime.controlprogram.caching.MatrixObject;
 import org.apache.sysml.runtime.controlprogram.context.ExecutionContext;
 import org.apache.sysml.runtime.instructions.InstructionUtils;
-import org.apache.sysml.runtime.io.MatrixWriterFactory;
 import org.apache.sysml.runtime.io.WriterBinaryBlock;
 import org.apache.sysml.runtime.matrix.MatrixCharacteristics;
-import org.apache.sysml.runtime.matrix.MatrixFormatMetaData;
+import org.apache.sysml.runtime.matrix.MetaDataFormat;
 import org.apache.sysml.runtime.matrix.data.InputInfo;
 import org.apache.sysml.runtime.matrix.data.MatrixBlock;
 import org.apache.sysml.runtime.matrix.data.OutputInfo;
 import org.apache.sysml.runtime.matrix.operators.Operator;
 
-/**
- * 
- * 
- */
-public class DataPartitionCPInstruction extends UnaryCPInstruction
-{	
-	
-	private PDataPartitionFormat _pformat = null;
-	
-	public DataPartitionCPInstruction(Operator op, CPOperand in1, PDataPartitionFormat pformat, CPOperand out, String opcode, String istr)
-	{
-		super(op, in1, out, opcode, istr);
-		_cptype = CPINSTRUCTION_TYPE.MMTSJ;
+public class DataPartitionCPInstruction extends UnaryCPInstruction {
+
+	private final PDataPartitionFormat _pformat;
+
+	private DataPartitionCPInstruction(Operator op, CPOperand in1, PDataPartitionFormat pformat, CPOperand out,
+			String opcode, String istr) {
+		super(CPType.Partition, op, in1, out, opcode, istr);
 		_pformat = pformat;
 	}
-	
-	/**
-	 * 
-	 * @param str
-	 * @return
-	 * @throws DMLRuntimeException
-	 */
-	public static DataPartitionCPInstruction parseInstruction ( String str ) 
-		throws DMLRuntimeException 
-	{
+
+	public static DataPartitionCPInstruction parseInstruction ( String str ) {
 		String[] parts = InstructionUtils.getInstructionPartsWithValueType(str);
 		InstructionUtils.checkNumFields( parts, 3 );
-		
 		String opcode = parts[0];
 		CPOperand in1 = new CPOperand(parts[1]);
 		CPOperand out = new CPOperand(parts[2]);
 		PDataPartitionFormat pformat = PDataPartitionFormat.valueOf(parts[3]);
-		 
 		if(!opcode.equalsIgnoreCase("partition"))
 			throw new DMLRuntimeException("Unknown opcode while parsing an DataPartitionCPInstruction: " + str);
 		else
@@ -77,28 +60,25 @@ public class DataPartitionCPInstruction extends UnaryCPInstruction
 	}
 	
 	@Override
-	public void processInstruction(ExecutionContext ec)
-		throws DMLRuntimeException 
-	{
+	public void processInstruction(ExecutionContext ec) {
 		//get input
 		MatrixObject moIn = ec.getMatrixObject(input1.getName());
 		MatrixBlock mb = moIn.acquireRead();
 		
 		//execute operations 
-		MatrixObject moOut = (MatrixObject) ec.getVariable(output.getName());		
+		MatrixObject moOut = (MatrixObject) ec.getVariable(output.getName());
 		String fname = moOut.getFileName();
 		moOut.setPartitioned(_pformat, -1); //modify meta data output
 		try
 		{
 			//write matrix partitions to hdfs
-			WriterBinaryBlock writer = (WriterBinaryBlock) MatrixWriterFactory.createMatrixWriter(OutputInfo.BinaryBlockOutputInfo);
-			writer.writePartitionedBinaryBlockMatrixToHDFS(
-					   new Path(fname), new JobConf(ConfigurationManager.getCachedJobConf()), mb, moIn.getNumRows(), moIn.getNumColumns(), 
-					   (int)moIn.getNumRowsPerBlock(), (int)moIn.getNumColumnsPerBlock(), _pformat);
+			WriterBinaryBlock.writePartitionedBinaryBlockMatrixToHDFS(new Path(fname), 
+				new JobConf(ConfigurationManager.getCachedJobConf()), mb, moIn.getNumRows(), moIn.getNumColumns(),
+				(int)moIn.getNumRowsPerBlock(), (int)moIn.getNumColumnsPerBlock(), _pformat);
 			
 			//ensure correctness of output characteristics (required if input unknown during compile and no recompile)
 			MatrixCharacteristics mc = new MatrixCharacteristics(moIn.getNumRows(), moIn.getNumColumns(), (int)moIn.getNumRowsPerBlock(), (int)moIn.getNumColumnsPerBlock(), moIn.getNnz()); 
-			MatrixFormatMetaData meta = new MatrixFormatMetaData(mc, OutputInfo.BinaryBlockOutputInfo, InputInfo.BinaryBlockInputInfo);
+			MetaDataFormat meta = new MetaDataFormat(mc, OutputInfo.BinaryBlockOutputInfo, InputInfo.BinaryBlockInputInfo);
 			moOut.setMetaData(meta);
 		}
 		catch(Exception ex)
@@ -107,6 +87,6 @@ public class DataPartitionCPInstruction extends UnaryCPInstruction
 		}
 		
 		//release input
-		ec.releaseMatrixInput(input1.getName());		
+		ec.releaseMatrixInput(input1.getName(), getExtendedOpcode());
 	}
 }

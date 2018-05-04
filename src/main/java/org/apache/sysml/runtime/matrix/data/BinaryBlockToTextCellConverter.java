@@ -44,7 +44,7 @@ Converter<MatrixIndexes, MatrixBlock, NullWritable, Text>
 	private int bcolumn;
 	
 	private Text value=new Text();
-	private Pair<NullWritable, Text> pair=new Pair<NullWritable, Text>(NullWritable.get(), value);
+	private Pair<NullWritable, Text> pair=new Pair<>(NullWritable.get(), value);
 	
 	private void reset()
 	{
@@ -74,7 +74,7 @@ Converter<MatrixIndexes, MatrixBlock, NullWritable, Text>
 		{
 			if(v1.getDenseBlock()==null)
 				return;
-			denseArray=v1.getDenseBlock();
+			denseArray=v1.getDenseBlockValues();
 			nextInDenseArray=0;
 			denseArraySize=v1.getNumRows()*v1.getNumColumns();
 		}

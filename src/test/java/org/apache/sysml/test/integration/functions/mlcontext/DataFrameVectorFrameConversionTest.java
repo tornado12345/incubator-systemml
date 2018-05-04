@@ -25,23 +25,20 @@ import java.util.List;
 import org.apache.spark.api.java.JavaPairRDD;
 import org.apache.spark.api.java.JavaRDD;
 import org.apache.spark.api.java.JavaSparkContext;
-import org.apache.spark.mllib.linalg.DenseVector;
-import org.apache.spark.mllib.linalg.VectorUDT;
-import org.apache.spark.sql.DataFrame;
+import org.apache.spark.ml.linalg.DenseVector;
+import org.apache.spark.ml.linalg.VectorUDT;
+import org.apache.spark.sql.Dataset;
 import org.apache.spark.sql.Row;
 import org.apache.spark.sql.RowFactory;
-import org.apache.spark.sql.SQLContext;
+import org.apache.spark.sql.SparkSession;
 import org.apache.spark.sql.types.DataType;
 import org.apache.spark.sql.types.DataTypes;
 import org.apache.spark.sql.types.StructField;
 import org.apache.spark.sql.types.StructType;
-import org.junit.Test;
 import org.apache.sysml.api.DMLScript;
 import org.apache.sysml.api.DMLScript.RUNTIME_PLATFORM;
 import org.apache.sysml.conf.ConfigurationManager;
 import org.apache.sysml.parser.Expression.ValueType;
-import org.apache.sysml.runtime.DMLRuntimeException;
-import org.apache.sysml.runtime.controlprogram.context.ExecutionContextFactory;
 import org.apache.sysml.runtime.controlprogram.context.SparkExecutionContext;
 import org.apache.sysml.runtime.instructions.spark.utils.FrameRDDConverterUtils;
 import org.apache.sysml.runtime.instructions.spark.utils.RDDConverterUtils;
@@ -53,6 +50,9 @@ import org.apache.sysml.runtime.util.UtilFunctions;
 import org.apache.sysml.test.integration.AutomatedTestBase;
 import org.apache.sysml.test.integration.TestConfiguration;
 import org.apache.sysml.test.utils.TestUtils;
+import org.junit.AfterClass;
+import org.junit.BeforeClass;
+import org.junit.Test;
 
 
 public class DataFrameVectorFrameConversionTest extends AutomatedTestBase 
@@ -72,6 +72,15 @@ public class DataFrameVectorFrameConversionTest extends AutomatedTestBase
 	private final static double sparsity1 = 0.9;
 	private final static double sparsity2 = 0.1;
 	private final static double eps=0.0000000001;
+
+	private static SparkSession spark;
+	private static JavaSparkContext sc;
+
+	@BeforeClass
+	public static void setUpClass() {
+		spark = createSystemMLSparkSession("DataFrameVectorFrameConversionTest", "local");
+		sc = new JavaSparkContext(spark.sparkContext());
+	}
 
 	@Override
 	public void setUp() {
@@ -237,20 +246,11 @@ public class DataFrameVectorFrameConversionTest extends AutomatedTestBase
 	public void testVectorMixed2ConversionSparse() {
 		testDataFrameConversion(schemaMixed2, false, true, false);
 	}
-	
-	/**
-	 * 
-	 * @param vector
-	 * @param singleColBlock
-	 * @param dense
-	 * @param unknownDims
-	 */
+
 	private void testDataFrameConversion(ValueType[] schema, boolean containsID, boolean dense, boolean unknownDims) {
 		boolean oldConfig = DMLScript.USE_LOCAL_SPARK_CONFIG; 
 		RUNTIME_PLATFORM oldPlatform = DMLScript.rtplatform;
 
-		SparkExecutionContext sec = null;
-		
 		try
 		{
 			DMLScript.USE_LOCAL_SPARK_CONFIG = true;
@@ -264,14 +264,9 @@ public class DataFrameVectorFrameConversionTest extends AutomatedTestBase
 			int blksz = ConfigurationManager.getBlocksize();
 			MatrixCharacteristics mc1 = new MatrixCharacteristics(rows1, cols, blksz, blksz, mbA.getNonZeros());
 			MatrixCharacteristics mc2 = unknownDims ? new MatrixCharacteristics() : new MatrixCharacteristics(mc1);
-			
-			//setup spark context
-			sec = (SparkExecutionContext) ExecutionContextFactory.createContext();		
-			JavaSparkContext sc = sec.getSparkContext();
-			SQLContext sqlctx = new SQLContext(sc);
-			
+
 			//create input data frame
-			DataFrame df = createDataFrame(sqlctx, mbA, containsID, schema);
+			Dataset<Row> df = createDataFrame(spark, mbA, containsID, schema);
 			
 			//dataframe - frame conversion
 			JavaPairRDD<Long,FrameBlock> out = FrameRDDConverterUtils.dataFrameToBinaryBlock(sc, df, mc2, containsID);
@@ -289,24 +284,13 @@ public class DataFrameVectorFrameConversionTest extends AutomatedTestBase
 			throw new RuntimeException(ex);
 		}
 		finally {
-			sec.close();
 			DMLScript.USE_LOCAL_SPARK_CONFIG = oldConfig;
 			DMLScript.rtplatform = oldPlatform;
 		}
 	}
-	
-	/**
-	 * 
-	 * @param sqlctx
-	 * @param mb
-	 * @param schema
-	 * @return
-	 * @throws DMLRuntimeException 
-	 */
+
 	@SuppressWarnings("resource")
-	private DataFrame createDataFrame(SQLContext sqlctx, MatrixBlock mb, boolean containsID, ValueType[] schema) 
-		throws DMLRuntimeException
-	{
+	private static Dataset<Row> createDataFrame(SparkSession sparkSession, MatrixBlock mb, boolean containsID, ValueType[] schema) {
 		//create in-memory list of rows
 		List<Row> list = new ArrayList<Row>();		 
 		int off = (containsID ? 1 : 0);
@@ -315,7 +299,7 @@ public class DataFrameVectorFrameConversionTest extends AutomatedTestBase
 		for( int i=0; i<mb.getNumRows(); i++ ) {
 			Object[] row = new Object[clen];
 			if( containsID )
-				row[0] = i+1;
+				row[0] = (double)i+1;
 			for( int j=0, j2=0; j<mb.getNumColumns(); j++, j2++ ) {
 				if( schema[j2] != ValueType.OBJECT ) {
 					row[j2+off] = UtilFunctions
@@ -323,7 +307,7 @@ public class DataFrameVectorFrameConversionTest extends AutomatedTestBase
 				}
 				else {
 					double[] tmp = DataConverter.convertToDoubleVector(
-							mb.sliceOperations(i, i, j, j+colsVector-1, new MatrixBlock()));
+							mb.slice(i, i, j, j+colsVector-1, new MatrixBlock()), false);
 					row[j2+off] = new DenseVector(tmp);
 					j += colsVector-1;
 				}
@@ -350,8 +334,17 @@ public class DataFrameVectorFrameConversionTest extends AutomatedTestBase
 		StructType dfSchema = DataTypes.createStructType(fields);
 				
 		//create rdd and data frame
-		JavaSparkContext sc = new JavaSparkContext(sqlctx.sparkContext());
+		JavaSparkContext sc = new JavaSparkContext(sparkSession.sparkContext());
 		JavaRDD<Row> rowRDD = sc.parallelize(list);
-		return sqlctx.createDataFrame(rowRDD, dfSchema);
+		return sparkSession.createDataFrame(rowRDD, dfSchema);
+	}
+
+	@AfterClass
+	public static void tearDownClass() {
+		// stop underlying spark context to allow single jvm tests (otherwise the
+		// next test that tries to create a SparkContext would fail)
+		spark.stop();
+		sc = null;
+		spark = null;
 	}
 }

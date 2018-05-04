@@ -37,10 +37,6 @@ import org.apache.sysml.runtime.matrix.data.TaggedMatrixPackedCell;
 import org.apache.sysml.runtime.matrix.data.TaggedMatrixValue;
 import org.apache.sysml.runtime.util.MapReduceTool;
 
-/**
- * 
- * 
- */
 public class GMRMapper extends MapperBase 
 implements Mapper<Writable, Writable, Writable, Writable>
 {
@@ -102,14 +98,7 @@ implements Mapper<Writable, Writable, Writable, Writable>
 		else
 			processMapOutputToReducerForGMR(index, taggedValueBuffer, out);
 	}
-	
-	/**
-	 * 
-	 * @param index
-	 * @param taggedValueBuffer
-	 * @param out
-	 * @throws IOException
-	 */
+
 	protected void processMapOutputToReducerForGMR(int index, TaggedMatrixValue taggedValueBuffer, OutputCollector<Writable, Writable> out) 
 		throws IOException
 	{			
@@ -136,16 +125,7 @@ implements Mapper<Writable, Writable, Writable, Writable>
 			}
 		}	
 	}
-	
-	/**
-	 * 
-	 * @param index
-	 * @param taggedValueBuffer
-	 * @param collectFinalMultipleOutputs
-	 * @param reporter
-	 * @param tagMapping
-	 * @throws IOException
-	 */
+
 	protected void processMapFinalOutput(int index,
 			TaggedMatrixValue taggedValueBuffer, CollectMultipleConvertedOutputs collectFinalMultipleOutputs,
 			Reporter reporter, HashMap<Byte, ArrayList<Integer>> tagMapping) throws IOException
@@ -177,6 +157,7 @@ implements Mapper<Writable, Writable, Writable, Writable>
 		
 	}
 	
+	@Override
 	public void configure(JobConf job)
 	{
 		super.configure(job);
@@ -188,8 +169,6 @@ implements Mapper<Writable, Writable, Writable, Writable>
 		
 		//assign the temporay vairables
 		try {
-		//	System.out.println(valueClass.getName());
-		//	System.out.println(MatrixCell.class.getName());
 			if(job.getMapOutputValueClass().equals(TaggedMatrixPackedCell.class))
 				taggedValueBuffer=TaggedMatrixValue.createObject(MatrixPackedCell.class);
 			else
@@ -212,14 +191,14 @@ implements Mapper<Writable, Writable, Writable, Writable>
 		resultsMaxRowDims=new long[resultIndexes.length];
 		resultsMaxColDims=new long[resultIndexes.length];
 		
-		tagMapping=new HashMap<Byte, ArrayList<Integer>>();
+		tagMapping=new HashMap<>();
 		for(int i=0; i<resultIndexes.length; i++)
 		{
 			byte output=resultIndexes[i];
 			ArrayList<Integer> vec=tagMapping.get(output);
 			if(vec==null)
 			{
-				vec=new ArrayList<Integer>();
+				vec=new ArrayList<>();
 				tagMapping.put(output, vec);
 			}
 			vec.add(i);
@@ -228,6 +207,7 @@ implements Mapper<Writable, Writable, Writable, Writable>
 		collectFinalMultipleOutputs=MRJobConfiguration.getMultipleConvertedOutputs(job);
 	}
 	
+	@Override
 	public void close() throws IOException
 	{
 		if( cachedReporter!=null && mapOnlyJob )
@@ -250,15 +230,8 @@ implements Mapper<Writable, Writable, Writable, Writable>
 			boolean dimsUnknown = false;
 			for(int i=0; i<resultIndexes.length; i++) {
 				cachedReporter.incrCounter(MRJobConfiguration.NUM_NONZERO_CELLS, Integer.toString(i), resultsNonZeros[i]);
-				
 				if ( resultDimsUnknown!=null && resultDimsUnknown[i] != (byte) 0 ) {
 					dimsUnknown = true;
-					// Each counter is of the form: (group, name)
-					// where group = max_rowdim_resultindex; name = taskid
-					//System.out.println("--> before i="+i+", row = " + cachedReporter.getCounter("max_rowdim_"+i, ""+taskid).getCounter() + ", col = " + cachedReporter.getCounter("max_coldim_"+i, ""+taskid).getCounter());
-					//cachedReporter.getCounter(MRJobConfiguration.MAX_ROW_DIMENSION, Integer.toString(i)).increment(resultsMaxRowDims[i]);
-					//cachedReporter.getCounter(MRJobConfiguration.MAX_COL_DIMENSION, Integer.toString(i)).increment(resultsMaxColDims[i]);
-					//System.out.println("--> after i="+i+", row = " + cachedReporter.getCounter("max_rowdim_"+i, ""+taskid).getCounter() + ", col = " + cachedReporter.getCounter("max_coldim_"+i, ""+taskid).getCounter());
 				}
 			}
 			if ( dimsUnknown ) {

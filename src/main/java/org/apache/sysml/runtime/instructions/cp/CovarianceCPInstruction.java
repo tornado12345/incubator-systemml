@@ -29,30 +29,19 @@ import org.apache.sysml.runtime.matrix.data.MatrixBlock;
 import org.apache.sysml.runtime.matrix.operators.COVOperator;
 import org.apache.sysml.runtime.matrix.operators.Operator;
 
-public class CovarianceCPInstruction extends BinaryCPInstruction
-{
-	
-	public CovarianceCPInstruction(Operator op, CPOperand in1, CPOperand in2, CPOperand out, String opcode, String istr )
-	{
-		super(op, in1, in2, out, opcode, istr);
-		_cptype = CPINSTRUCTION_TYPE.AggregateBinary;
-	}
-	
-	public CovarianceCPInstruction(Operator op, CPOperand in1, CPOperand in2, CPOperand in3, CPOperand out,
-								   String opcode, String istr )
-	{
-		super(op, in1, in2, in3, out, opcode, istr);
-		_cptype = CPINSTRUCTION_TYPE.AggregateBinary;
+public class CovarianceCPInstruction extends BinaryCPInstruction {
+
+	private CovarianceCPInstruction(Operator op, CPOperand in1, CPOperand in2, CPOperand out, String opcode,
+			String istr) {
+		super(CPType.AggregateBinary, op, in1, in2, out, opcode, istr);
 	}
 
-	/**
-	 * 
-	 * @param str
-	 * @return
-	 * @throws DMLRuntimeException
-	 */
-	public static CovarianceCPInstruction parseInstruction( String str ) 
-		throws DMLRuntimeException 
+	private CovarianceCPInstruction(Operator op, CPOperand in1, CPOperand in2, CPOperand in3, CPOperand out,
+			String opcode, String istr) {
+		super(CPType.AggregateBinary, op, in1, in2, in3, out, opcode, istr);
+	}
+
+	public static CovarianceCPInstruction parseInstruction( String str )
 	{
 		CPOperand in1 = new CPOperand("", ValueType.UNKNOWN, DataType.UNKNOWN);
 		CPOperand in2 = new CPOperand("", ValueType.UNKNOWN, DataType.UNKNOWN);
@@ -83,39 +72,33 @@ public class CovarianceCPInstruction extends BinaryCPInstruction
 	}
 	
 	@Override
-	public void processInstruction(ExecutionContext ec) 
-		throws DMLRuntimeException
-	{	
-		MatrixBlock matBlock1 = ec.getMatrixInput(input1.getName());
-        MatrixBlock matBlock2 = ec.getMatrixInput(input2.getName());
+	public void processInstruction(ExecutionContext ec)
+	{
+		MatrixBlock matBlock1 = ec.getMatrixInput(input1.getName(), getExtendedOpcode());
+		MatrixBlock matBlock2 = ec.getMatrixInput(input2.getName(), getExtendedOpcode());
 		String output_name = output.getName(); 
-		
 		COVOperator cov_op = (COVOperator)_optr;
 		CM_COV_Object covobj = new CM_COV_Object();
-			
-		if ( input3 == null ) 
-		{
+		
+		if ( input3 == null ) {
 			// Unweighted: cov.mvar0.mvar1.out
 			covobj = matBlock1.covOperations(cov_op, matBlock2);
 			
-			ec.releaseMatrixInput(input1.getName());
-			ec.releaseMatrixInput(input2.getName());
+			ec.releaseMatrixInput(input1.getName(), getExtendedOpcode());
+			ec.releaseMatrixInput(input2.getName(), getExtendedOpcode());
 		}
-		else 
-		{
+		else {
 			// Weighted: cov.mvar0.mvar1.weights.out
-	        MatrixBlock wtBlock = ec.getMatrixInput(input3.getName());
+			MatrixBlock wtBlock = ec.getMatrixInput(input3.getName(), getExtendedOpcode());
 			
 			covobj = matBlock1.covOperations(cov_op, matBlock2, wtBlock);
 			
-			ec.releaseMatrixInput(input1.getName());
-			ec.releaseMatrixInput(input2.getName());
-			ec.releaseMatrixInput(input3.getName());
+			ec.releaseMatrixInput(input1.getName(), getExtendedOpcode());
+			ec.releaseMatrixInput(input2.getName(), getExtendedOpcode());
+			ec.releaseMatrixInput(input3.getName(), getExtendedOpcode());
 		}
 		
 		double val = covobj.getRequiredResult(_optr);
-		DoubleObject ret = new DoubleObject(output_name, val);
-			
-		ec.setScalarOutput(output_name, ret);
+		ec.setScalarOutput(output_name, new DoubleObject(val));
 	}
 }

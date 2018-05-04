@@ -33,7 +33,6 @@ import org.apache.sysml.api.DMLScript;
 import org.apache.sysml.conf.ConfigurationManager;
 import org.apache.sysml.runtime.controlprogram.LocalVariableMap;
 import org.apache.sysml.runtime.controlprogram.ParForProgramBlock;
-import org.apache.sysml.runtime.controlprogram.caching.CacheStatistics;
 import org.apache.sysml.runtime.controlprogram.caching.CacheableData;
 import org.apache.sysml.runtime.controlprogram.caching.MatrixObject;
 import org.apache.sysml.runtime.controlprogram.parfor.stat.InfrastructureAnalyzer;
@@ -64,10 +63,9 @@ public class RemoteParWorkerMapper extends ParWorker  //MapReduceBase not requir
 	protected String  _stringID       = null; 
 	protected HashMap<String, String> _rvarFnames = null; 
 	
-	static
-	{
+	static {
 		//init cache (once per JVM)
-		_sCache = new HashMap<String, RemoteParWorkerMapper>();
+		_sCache = new HashMap<>();
 	}
 	
 	
@@ -75,12 +73,9 @@ public class RemoteParWorkerMapper extends ParWorker  //MapReduceBase not requir
 	{
 		//only used if JVM reuse is enabled in order to ensure consistent output 
 		//filenames across tasks of one reused worker (preaggregation)
-		_rvarFnames = new HashMap<String, String>();
+		_rvarFnames = new HashMap<>();
 	}
-	
-	/**
-	 * 
-	 */
+
 	@Override
 	public void map(LongWritable key, Text value, OutputCollector<Writable, Writable> out, Reporter reporter) 
 		throws IOException
@@ -113,12 +108,9 @@ public class RemoteParWorkerMapper extends ParWorker  //MapReduceBase not requir
 		//print heaver hitter per task
 		JobConf job = ConfigurationManager.getCachedJobConf();
 		if( DMLScript.STATISTICS && !InfrastructureAnalyzer.isLocalMode(job) )
-			LOG.info("\nSystemML Statistics:\nHeavy hitter instructions (name, time, count):\n" + Statistics.getHeavyHitters(10));	
+			LOG.info("\nSystemML Statistics:\nHeavy hitter instructions (name, time, count):\n" + Statistics.getHeavyHitters(DMLScript.STATISTICS_COUNT));
 	}
 
-	/**
-	 * 
-	 */
 	@Override
 	public void configure(JobConf job)
 	{
@@ -172,15 +164,15 @@ public class RemoteParWorkerMapper extends ParWorker  //MapReduceBase not requir
 				String in = MRJobConfiguration.getProgramBlocks(job);
 				ParForBody body = ProgramConverter.parseParForBody(in, (int)_workerID);
 				_childBlocks = body.getChildBlocks();
-				_ec          = body.getEc();				
-				_resultVars  = body.getResultVarNames();
+				_ec          = body.getEc();
+				_resultVars  = body.getResultVariables();
 		
 				//init local cache manager 
 				if( !CacheableData.isCachingActive() ) {
 					String uuid = IDHandler.createDistributedUniqueID();
 					LocalFileUtils.createWorkingDirectoryWithUUID( uuid );
 					CacheableData.initCaching( uuid ); //incl activation, cache dir creation (each map task gets its own dir for simplified cleanup)
-				}				
+				}
 				if( !CacheableData.cacheEvictionLocalFilePrefix.contains("_") ){ //account for local mode
 					CacheableData.cacheEvictionLocalFilePrefix = CacheableData.cacheEvictionLocalFilePrefix +"_" + _workerID; 
 				}
@@ -218,15 +210,9 @@ public class RemoteParWorkerMapper extends ParWorker  //MapReduceBase not requir
 		
 		//always reset stats because counters per map task (for case of JVM reuse)
 		if( DMLScript.STATISTICS && !InfrastructureAnalyzer.isLocalMode(job) )
-		{
-			CacheStatistics.reset();
 			Statistics.reset();
-		}
 	}
 
-	/**
-	 * 
-	 */
 	@Override
 	public void close() 
 		throws IOException 

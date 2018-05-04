@@ -27,20 +27,14 @@ import org.apache.sysml.runtime.matrix.mapred.IndexedMatrixValue;
 import org.apache.sysml.runtime.matrix.operators.AggregateOperator;
 import org.apache.sysml.runtime.matrix.operators.Operator;
 
+public class AggregateInstruction extends UnaryMRInstructionBase {
 
-public class AggregateInstruction extends UnaryMRInstructionBase 
-{
-		
-	public AggregateInstruction(Operator op, byte in, byte out, String istr)
-	{
-		super(op, in, out);
-		mrtype = MRINSTRUCTION_TYPE.Aggregate;
+	public AggregateInstruction(Operator op, byte in, byte out, String istr) {
+		super(MRType.Aggregate, op, in, out);
 		instString = istr;
 	}
-	
-	public static AggregateInstruction parseInstruction ( String str ) 
-		throws DMLRuntimeException 
-	{	
+
+	public static AggregateInstruction parseInstruction ( String str ) {
 		String[] parts = InstructionUtils.getInstructionParts ( str );
 		
 		byte in, out;
@@ -56,7 +50,7 @@ public class AggregateInstruction extends UnaryMRInstructionBase
 		}
 		else {
 			InstructionUtils.checkNumFields ( str, 2 );
-			agg = InstructionUtils.parseAggregateOperator(opcode, null, null);	
+			agg = InstructionUtils.parseAggregateOperator(opcode, null, null);
 		}
 		
 		return new AggregateInstruction(agg, in, out, str);
@@ -65,8 +59,7 @@ public class AggregateInstruction extends UnaryMRInstructionBase
 	@Override
 	public void processInstruction(Class<? extends MatrixValue> valueClass,
 			CachedValueMap cachedValues, IndexedMatrixValue tempValue,
-			IndexedMatrixValue zeroInput, int blockRowFactor, int blockColFactor)
-			throws DMLRuntimeException {
+			IndexedMatrixValue zeroInput, int blockRowFactor, int blockColFactor) {
 		
 		throw new DMLRuntimeException("no processInstruction for AggregateInstruction!");
 		

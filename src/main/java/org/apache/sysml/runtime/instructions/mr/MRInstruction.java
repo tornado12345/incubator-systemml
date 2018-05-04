@@ -19,7 +19,6 @@
 
 package org.apache.sysml.runtime.instructions.mr;
 
-import org.apache.sysml.runtime.DMLRuntimeException;
 import org.apache.sysml.runtime.controlprogram.context.ExecutionContext;
 import org.apache.sysml.runtime.instructions.Instruction;
 import org.apache.sysml.runtime.matrix.data.MatrixValue;
@@ -27,72 +26,48 @@ import org.apache.sysml.runtime.matrix.mapred.CachedValueMap;
 import org.apache.sysml.runtime.matrix.mapred.IndexedMatrixValue;
 import org.apache.sysml.runtime.matrix.operators.Operator;
 
+public abstract class MRInstruction extends Instruction {
 
-public abstract class MRInstruction extends Instruction 
-{
-	
-	public enum MRINSTRUCTION_TYPE { INVALID, Append, Aggregate, ArithmeticBinary, ArithmeticBinary2, AggregateBinary, AggregateUnary, 
-		Rand, Seq, CSVReblock, CSVWrite, Transform,
-		Reblock, Reorg, Replicate, Unary, CombineBinary, CombineUnary, CombineTernary, PickByCount, Partition,
-		Ternary, Quaternary, CM_N_COV, Combine, MapGroupedAggregate, GroupedAggregate, RangeReIndex, ZeroOut, MMTSJ, PMMJ, MatrixReshape, ParameterizedBuiltin, Sort, MapMultChain,
-		CumsumAggregate, CumsumSplit, CumsumOffset, BinUaggChain, UaggOuterChain, RemoveEmpty}; 
-	
-	
-	protected MRINSTRUCTION_TYPE mrtype;
-	protected Operator optr;
+	public enum MRType {
+		Append, Aggregate, Binary, Ternary, AggregateBinary, AggregateUnary, Rand,
+		Seq, CSVReblock, CSVWrite, Reblock, Reorg, Replicate, Unary, CombineBinary, CombineUnary, CombineTernary,
+		PickByCount, Partition, Ctable, Quaternary, CM_N_COV, MapGroupedAggregate, GroupedAggregate, RightIndex,
+		ZeroOut, MMTSJ, PMMJ, MatrixReshape, ParameterizedBuiltin, Sort, MapMultChain, CumsumAggregate, CumsumSplit,
+		CumsumOffset, BinUaggChain, UaggOuterChain, RemoveEmpty
+	}
+
+	protected final MRType mrtype;
+	protected final Operator optr;
 	public byte output;
-	
-	public MRInstruction (Operator op, byte out) {
-		type = INSTRUCTION_TYPE.MAPREDUCE;
+
+	protected MRInstruction(MRType type, Operator op, byte out) {
 		optr = op;
 		output = out;
-		mrtype = MRINSTRUCTION_TYPE.INVALID;
+		mrtype = type;
+	}
+	
+	@Override
+	public IType getType() {
+		return IType.MAPREDUCE;
 	}
 
 	public Operator getOperator() {
 		return optr;
 	}
 	
-	public MRINSTRUCTION_TYPE getMRInstructionType() 
-	{
+	public MRType getMRInstructionType() {
 		return mrtype;
 	}
 
 	@Override
-	public void processInstruction(ExecutionContext ec)
-		throws DMLRuntimeException 
-	{
+	public void processInstruction(ExecutionContext ec) {
 		//do nothing (not applicable for MR instructions)
 	}
 
-	/**
-	 * 
-	 * @param valueClass
-	 * @param cachedValues
-	 * @param tempValue
-	 * @param zeroInput
-	 * @param blockRowFactor
-	 * @param blockColFactor
-	 * @throws DMLRuntimeException
-	 */
 	public abstract void processInstruction(Class<? extends MatrixValue> valueClass, CachedValueMap cachedValues, 
-			IndexedMatrixValue tempValue, IndexedMatrixValue zeroInput, int blockRowFactor, int blockColFactor) 
-		throws DMLRuntimeException;
+			IndexedMatrixValue tempValue, IndexedMatrixValue zeroInput, int blockRowFactor, int blockColFactor);
 
-	
-	/**
-	 * 
-	 * @return
-	 * @throws DMLRuntimeException
-	 */
-	public abstract byte[] getInputIndexes() 
-		throws DMLRuntimeException;
+	public abstract byte[] getInputIndexes();
 
-	/**
-	 * 
-	 * @return
-	 * @throws DMLRuntimeException
-	 */
-	public abstract byte[] getAllIndexes() 
-		throws DMLRuntimeException;
+	public abstract byte[] getAllIndexes();
 }

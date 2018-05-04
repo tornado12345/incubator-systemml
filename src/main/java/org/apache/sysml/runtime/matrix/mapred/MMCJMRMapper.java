@@ -58,6 +58,7 @@ implements Mapper<Writable, Writable, Writable, Writable>
 		commonMap(rawKey, rawValue, out, reporter);
 	}
 
+	@Override
 	public void configure(JobConf job)
 	{
 		super.configure(job);
@@ -101,15 +102,12 @@ implements Mapper<Writable, Writable, Writable, Writable>
 		ArrayList<IndexedMatrixValue> blkList1 = cachedValues.get(aggBinInstruction.input1);
 		if( blkList1 != null )
 			for(IndexedMatrixValue result:blkList1)
-				if(result!=null)
-				{
+				if(result!=null) {
 					taggedIndexes.setTag(tagForLeft);
 					taggedIndexes.setIndexes(result.getIndexes().getColumnIndex(), 
 							result.getIndexes().getRowIndex());
-					
 					if( !((MatrixBlock)result.getValue()).isEmptyBlock() )
 						out.collect(taggedIndexes, result.getValue());
-					//System.out.println("In Mapper: output "+taggedIndexes+" "+ result.getValue().getNumRows()+"x"+result.getValue().getNumColumns());
 				}
 		
 		//output the key value pair for the right matrix
@@ -117,15 +115,12 @@ implements Mapper<Writable, Writable, Writable, Writable>
 		ArrayList<IndexedMatrixValue> blkList2 = cachedValues.get(aggBinInstruction.input2);
 		if( blkList2 != null )
 			for(IndexedMatrixValue result:blkList2)
-				if(result!=null)
-				{
+				if(result!=null) {
 					taggedIndexes.setTag(tagForRight);
 					taggedIndexes.setIndexes(result.getIndexes().getRowIndex(), 
 							result.getIndexes().getColumnIndex());
-					
 					if( !((MatrixBlock)result.getValue()).isEmptyBlock() ) 
 						out.collect(taggedIndexes, result.getValue());
-					//System.out.println("In Mapper: output "+taggedIndexes+" "+ result.getValue().getNumRows()+"x"+result.getValue().getNumColumns());
 				}
 	}
 }

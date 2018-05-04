@@ -24,16 +24,13 @@ import org.apache.hadoop.io.WritableComparator;
 
 public class ResultMergeRemoteSorting extends WritableComparator
 {
-	
-	
-	protected ResultMergeRemoteSorting()
-	{
+	protected ResultMergeRemoteSorting() {
 		super(ResultMergeTaggedMatrixIndexes.class, true);
 	}
 	
-	@SuppressWarnings("rawtypes")
 	@Override
-    public int compare(WritableComparable k1, WritableComparable k2) 
+	@SuppressWarnings("rawtypes")
+	public int compare(WritableComparable k1, WritableComparable k2) 
 	{
 		ResultMergeTaggedMatrixIndexes key1 = (ResultMergeTaggedMatrixIndexes)k1;
 		ResultMergeTaggedMatrixIndexes key2 = (ResultMergeTaggedMatrixIndexes)k2;
@@ -42,10 +39,8 @@ public class ResultMergeRemoteSorting extends WritableComparator
 		if( ret == 0 ) //same indexes, secondary sort
 		{
 			ret = ((key1.getTag() == key2.getTag()) ? 0 : 
-				   (key1.getTag() < key2.getTag())? -1 : 1);
+				(key1.getTag() < key2.getTag())? -1 : 1);
 		}	
-			
-		return ret; 
-		
-    }
+		return ret;
+	}
 }

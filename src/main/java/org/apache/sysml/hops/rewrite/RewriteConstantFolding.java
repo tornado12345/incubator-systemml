@@ -19,7 +19,6 @@
 
 package org.apache.sysml.hops.rewrite;
 
-import java.io.IOException;
 import java.util.ArrayList;
 
 import org.apache.sysml.conf.ConfigurationManager;
@@ -29,22 +28,19 @@ import org.apache.sysml.hops.Hop;
 import org.apache.sysml.hops.Hop.DataOpTypes;
 import org.apache.sysml.hops.Hop.OpOp1;
 import org.apache.sysml.hops.Hop.OpOp2;
-import org.apache.sysml.hops.Hop.VisitStatus;
-import org.apache.sysml.hops.HopsException;
 import org.apache.sysml.hops.LiteralOp;
 import org.apache.sysml.hops.UnaryOp;
 import org.apache.sysml.hops.recompile.Recompiler;
 import org.apache.sysml.lops.Lop;
-import org.apache.sysml.lops.LopsException;
 import org.apache.sysml.lops.compile.Dag;
 import org.apache.sysml.parser.Expression.DataType;
-import org.apache.sysml.runtime.DMLRuntimeException;
 import org.apache.sysml.runtime.controlprogram.Program;
 import org.apache.sysml.runtime.controlprogram.ProgramBlock;
 import org.apache.sysml.runtime.controlprogram.context.ExecutionContext;
 import org.apache.sysml.runtime.controlprogram.context.ExecutionContextFactory;
 import org.apache.sysml.runtime.instructions.Instruction;
 import org.apache.sysml.runtime.instructions.cp.ScalarObject;
+import org.apache.sysml.runtime.instructions.cp.ScalarObjectFactory;
 
 /**
  * Rule: Constant Folding. For all statement blocks, 
@@ -55,56 +51,42 @@ import org.apache.sysml.runtime.instructions.cp.ScalarObject;
  */
 public class RewriteConstantFolding extends HopRewriteRule
 {
-	
 	private static final String TMP_VARNAME = "__cf_tmp";
 	
 	//reuse basic execution runtime
-	private static ProgramBlock     _tmpPB = null;
-	private static ExecutionContext _tmpEC = null;
+	private ProgramBlock     _tmpPB = null;
+	private ExecutionContext _tmpEC = null;
 	
 	
 	@Override
-	public ArrayList<Hop> rewriteHopDAGs(ArrayList<Hop> roots, ProgramRewriteStatus state) 
-		throws HopsException 
-	{
+	public ArrayList<Hop> rewriteHopDAGs(ArrayList<Hop> roots, ProgramRewriteStatus state) {
 		if( roots == null )
 			return null;
-
-		for( int i=0; i<roots.size(); i++ )
-		{
+		for( int i=0; i<roots.size(); i++ ) {
 			Hop h = roots.get(i);
 			roots.set(i, rule_ConstantFolding(h));
 		}
-		
 		return roots;
 	}
 
 	@Override
-	public Hop rewriteHopDAG(Hop root, ProgramRewriteStatus state) 
-		throws HopsException 
-	{
+	public Hop rewriteHopDAG(Hop root, ProgramRewriteStatus state) {
 		if( root == null )
 			return null;
-
 		return rule_ConstantFolding(root);
 	}
 
-	private Hop rule_ConstantFolding( Hop hop ) 
-		throws HopsException 
-	{
+	private Hop rule_ConstantFolding( Hop hop ) {
 		return rConstantFoldingExpression(hop);
 	}
 
-	private Hop rConstantFoldingExpression( Hop root ) 
-		throws HopsException
-	{
-		if( root.getVisited() == VisitStatus.DONE )
+	private Hop rConstantFoldingExpression( Hop root ) {
+		if( root.isVisited() )
 			return root;
 		
 		//recursively process childs (before replacement to allow bottom-recursion)
 		//no iterator in order to prevent concurrent modification
-		for( int i=0; i<root.getInput().size(); i++ )
-		{
+		for( int i=0; i<root.getInput().size(); i++ ) {
 			Hop h = root.getInput().get(i);
 			rConstantFoldingExpression(h);
 		}
@@ -112,15 +94,14 @@ public class RewriteConstantFolding extends HopRewriteRule
 		LiteralOp literal = null;
 		
 		//fold binary op if both are literals / unary op if literal
-		if(    root.getDataType() == DataType.SCALAR //scalar ouput
-			&& ( isApplicableBinaryOp(root) || isApplicableUnaryOp(root) ) )	
+		if( root.getDataType() == DataType.SCALAR //scalar output
+			&& ( isApplicableBinaryOp(root) || isApplicableUnaryOp(root) ) )
 		{ 
 			//core constant folding via runtime instructions
 			try {
 				literal = evalScalarOperation(root); 
 			}
-			catch(Exception ex)
-			{
+			catch(Exception ex) {
 				LOG.error("Failed to execute constant folding instructions. No abort.", ex);
 			}
 			
@@ -135,7 +116,7 @@ public class RewriteConstantFolding extends HopRewriteRule
 		{
 			literal = new LiteralOp(true);
 		}
-									
+		
 		//replace binary operator with folded constant
 		if( literal != null ) 
 		{
@@ -164,11 +145,11 @@ public class RewriteConstantFolding extends HopRewriteRule
 			{
 				root = literal;
 			}
-		}		
-			
+		}
+		
 		
 		//mark processed
-		root.setVisited( VisitStatus.DONE );
+		root.setVisited();
 		return root;
 	}
 	
@@ -180,23 +161,18 @@ public class RewriteConstantFolding extends HopRewriteRule
 	 * 
 	 * @param bop high-level operator
 	 * @return literal op
-	 * @throws LopsException if LopsException occurs
-	 * @throws DMLRuntimeException if DMLRuntimeException occurs
-	 * @throws IOException if IOException occurs
-	 * @throws HopsException if HopsException occurs
 	 */
 	private LiteralOp evalScalarOperation( Hop bop ) 
-		throws LopsException, DMLRuntimeException, IOException, HopsException
 	{
 		//Timing time = new Timing( true );
 		
 		DataOp tmpWrite = new DataOp(TMP_VARNAME, bop.getDataType(), bop.getValueType(), bop, DataOpTypes.TRANSIENTWRITE, TMP_VARNAME);
 		
 		//generate runtime instruction
-		Dag<Lop> dag = new Dag<Lop>();
+		Dag<Lop> dag = new Dag<>();
 		Recompiler.rClearLops(tmpWrite); //prevent lops reuse
 		Lop lops = tmpWrite.constructLops(); //reconstruct lops
-		lops.addToDag( dag );	
+		lops.addToDag( dag );
 		ArrayList<Instruction> inst = dag.getJobs(null, ConfigurationManager.getDMLConfig());
 		
 		//execute instructions
@@ -209,15 +185,7 @@ public class RewriteConstantFolding extends HopRewriteRule
 		//get scalar result (check before invocation) and create literal according
 		//to observed scalar output type (not hop type) for runtime consistency
 		ScalarObject so = (ScalarObject) ec.getVariable(TMP_VARNAME);
-		LiteralOp literal = null;
-		switch( so.getValueType() ){
-			case DOUBLE:  literal = new LiteralOp(so.getDoubleValue()); break;
-			case INT:     literal = new LiteralOp(so.getLongValue()); break;
-			case BOOLEAN: literal = new LiteralOp(so.getBooleanValue()); break;
-			case STRING:  literal = new LiteralOp(so.getStringValue()); break;	
-			default:
-				throw new HopsException("Unsupported literal value type: "+bop.getValueType());
-		}
+		LiteralOp literal = ScalarObjectFactory.createLiteralOp(so);
 		
 		//cleanup
 		tmpWrite.getInput().clear();
@@ -226,32 +194,26 @@ public class RewriteConstantFolding extends HopRewriteRule
 		ec.getVariables().removeAll();
 		
 		//set literal properties (scalar)
- 		literal.setDim1(0);
-		literal.setDim2(0);
-		literal.setRowsInBlock(-1);
-		literal.setColsInBlock(-1);
-		
+		HopRewriteUtils.setOutputParametersForScalar(literal);
+ 		
 		//System.out.println("Constant folded in "+time.stop()+"ms.");
 		
 		return literal;
 	}
 	
-	private static ProgramBlock getProgramBlock() 
-		throws DMLRuntimeException
-	{
+	private ProgramBlock getProgramBlock() {
 		if( _tmpPB == null )
 			_tmpPB = new ProgramBlock( new Program() );
 		return _tmpPB;
 	}
 	
-	private static ExecutionContext getExecutionContext()
-	{
+	private ExecutionContext getExecutionContext() {
 		if( _tmpEC == null )
 			_tmpEC = ExecutionContextFactory.createContext();
 		return _tmpEC;
 	}
 	
-	private boolean isApplicableBinaryOp( Hop hop )
+	private static boolean isApplicableBinaryOp( Hop hop )
 	{
 		ArrayList<Hop> in = hop.getInput();
 		return (   hop instanceof BinaryOp 
@@ -264,33 +226,28 @@ public class RewriteConstantFolding extends HopRewriteRule
 		//messes up the explain runtime output due to introduced \n 
 	}
 	
-	private boolean isApplicableUnaryOp( Hop hop )
-	{
+	private static boolean isApplicableUnaryOp( Hop hop ) {
 		ArrayList<Hop> in = hop.getInput();
 		return (   hop instanceof UnaryOp 
 				&& in.get(0) instanceof LiteralOp 
-				&& ((UnaryOp)hop).getOp() != OpOp1.PRINT 
+				&& ((UnaryOp)hop).getOp() != OpOp1.EXISTS
+				&& ((UnaryOp)hop).getOp() != OpOp1.PRINT
+				&& ((UnaryOp)hop).getOp() != OpOp1.ASSERT
 				&& ((UnaryOp)hop).getOp() != OpOp1.STOP
 				&& hop.getDataType() == DataType.SCALAR);
 	}
 	
-	private boolean isApplicableFalseConjunctivePredicate( Hop hop ) 
-		throws HopsException
-	{
+	private static boolean isApplicableFalseConjunctivePredicate( Hop hop ) {
 		ArrayList<Hop> in = hop.getInput();
-		return (   hop instanceof BinaryOp 
-				&& ((BinaryOp)hop).getOp()==OpOp2.AND
-				&& ( (in.get(0) instanceof LiteralOp && !((LiteralOp)in.get(0)).getBooleanValue())   
-				   ||(in.get(1) instanceof LiteralOp && !((LiteralOp)in.get(1)).getBooleanValue())) );			
+		return (   HopRewriteUtils.isBinary(hop, OpOp2.AND) && hop.getDataType().isScalar()
+				&& ( (in.get(0) instanceof LiteralOp && !((LiteralOp)in.get(0)).getBooleanValue())
+				   ||(in.get(1) instanceof LiteralOp && !((LiteralOp)in.get(1)).getBooleanValue())) );
 	}
 	
-	private boolean isApplicableTrueDisjunctivePredicate( Hop hop ) 
-		throws HopsException
-	{
+	private static boolean isApplicableTrueDisjunctivePredicate( Hop hop ) {
 		ArrayList<Hop> in = hop.getInput();
-		return (   hop instanceof BinaryOp 
-				&& ((BinaryOp)hop).getOp()==OpOp2.OR
-				&& ( (in.get(0) instanceof LiteralOp && ((LiteralOp)in.get(0)).getBooleanValue())   
-				   ||(in.get(1) instanceof LiteralOp && ((LiteralOp)in.get(1)).getBooleanValue())) );			
+		return (   HopRewriteUtils.isBinary(hop, OpOp2.OR) && hop.getDataType().isScalar()
+				&& ( (in.get(0) instanceof LiteralOp && ((LiteralOp)in.get(0)).getBooleanValue())
+				   ||(in.get(1) instanceof LiteralOp && ((LiteralOp)in.get(1)).getBooleanValue())) );
 	}
 }

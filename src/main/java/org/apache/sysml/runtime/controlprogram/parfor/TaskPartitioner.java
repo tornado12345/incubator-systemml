@@ -21,7 +21,6 @@ package org.apache.sysml.runtime.controlprogram.parfor;
 
 import java.util.List;
 
-import org.apache.sysml.runtime.DMLRuntimeException;
 import org.apache.sysml.runtime.instructions.cp.IntObject;
 
 /**
@@ -59,25 +58,20 @@ public abstract class TaskPartitioner
 	/**
 	 * Creates and returns set of all tasks for given problem at once.
 	 * 
-	 * @return
+	 * @return list of tasks
 	 */
-	public abstract List<Task> createTasks()
-		throws DMLRuntimeException;
+	public abstract List<Task> createTasks();
 	
 	/**
 	 * Creates set of all tasks for given problem, but streams them directly
 	 * into task queue. This allows for more tasks than fitting in main memory.
 	 * 
-	 * @return
-	 */
-	public abstract long createTasks( LocalTaskQueue<Task> queue )
-		throws DMLRuntimeException;
-
-	
-	/**
 	 * 
-	 * @return
+	 * @param queue queue of takss
+	 * @return ?
 	 */
+	public abstract long createTasks( LocalTaskQueue<Task> queue );
+
 	public long getNumIterations() {
 		return _numIter;
 	}

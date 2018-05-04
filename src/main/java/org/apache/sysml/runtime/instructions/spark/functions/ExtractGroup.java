@@ -21,6 +21,7 @@ package org.apache.sysml.runtime.instructions.spark.functions;
 
 import java.io.Serializable;
 import java.util.ArrayList;
+import java.util.Iterator;
 
 import org.apache.spark.api.java.function.PairFlatMapFunction;
 
@@ -48,15 +49,7 @@ public abstract class ExtractGroup implements Serializable
 		_ngroups = ngroups;
 		_op = op;
 	}
-	
-	/**
-	 * 
-	 * @param ix
-	 * @param group
-	 * @param target
-	 * @return
-	 * @throws Exception 
-	 */
+
 	protected Iterable<Tuple2<MatrixIndexes, WeightedCell>> execute(MatrixIndexes ix, MatrixBlock group, MatrixBlock target) throws Exception
 	{
 		//sanity check matching block dimensions
@@ -65,7 +58,7 @@ public abstract class ExtractGroup implements Serializable
 		}
 		
 		//output weighted cells
-		ArrayList<Tuple2<MatrixIndexes, WeightedCell>> groupValuePairs = new ArrayList<Tuple2<MatrixIndexes, WeightedCell>>();
+		ArrayList<Tuple2<MatrixIndexes, WeightedCell>> groupValuePairs = new ArrayList<>();
 		long coloff = (ix.getColumnIndex()-1)*_bclen;
 		
 		//local pre-aggregation for sum w/ known output dimensions
@@ -82,7 +75,7 @@ public abstract class ExtractGroup implements Serializable
 						weightedCell.setValue(tmpval);
 						weightedCell.setWeight(1);
 						MatrixIndexes ixout = new MatrixIndexes(i+1,coloff+j+1);
-						groupValuePairs.add(new Tuple2<MatrixIndexes, WeightedCell>(ixout, weightedCell));
+						groupValuePairs.add(new Tuple2<>(ixout, weightedCell));
 					}
 				}
 			}
@@ -100,17 +93,14 @@ public abstract class ExtractGroup implements Serializable
 					weightedCell.setValue(target.quickGetValue(i, j));
 					weightedCell.setWeight(1);
 					MatrixIndexes ixout = new MatrixIndexes(groupVal,coloff+j+1);
-					groupValuePairs.add(new Tuple2<MatrixIndexes, WeightedCell>(ixout, weightedCell));
+					groupValuePairs.add(new Tuple2<>(ixout, weightedCell));
 				}
 			}
 		}
 		
 		return groupValuePairs;	
 	}
-	
-	/**
-	 * 
-	 */
+
 	public static class ExtractGroupJoin extends ExtractGroup implements PairFlatMapFunction<Tuple2<MatrixIndexes,Tuple2<MatrixBlock, MatrixBlock>>, MatrixIndexes, WeightedCell> 
 	{
 		private static final long serialVersionUID = 8890978615936560266L;
@@ -120,7 +110,7 @@ public abstract class ExtractGroup implements Serializable
 		}
 		
 		@Override
-		public Iterable<Tuple2<MatrixIndexes, WeightedCell>> call(
+		public Iterator<Tuple2<MatrixIndexes, WeightedCell>> call(
 				Tuple2<MatrixIndexes, Tuple2<MatrixBlock, MatrixBlock>> arg)
 				throws Exception 
 		{
@@ -128,13 +118,10 @@ public abstract class ExtractGroup implements Serializable
 			MatrixBlock group = arg._2._1;
 			MatrixBlock target = arg._2._2;
 	
-			return execute(ix, group, target);
+			return execute(ix, group, target).iterator();
 		}	
 	}
-	
-	/**
-	 * 
-	 */
+
 	public static class ExtractGroupBroadcast extends ExtractGroup implements PairFlatMapFunction<Tuple2<MatrixIndexes,MatrixBlock>, MatrixIndexes, WeightedCell> 
 	{
 		private static final long serialVersionUID = 5709955602290131093L;
@@ -147,7 +134,7 @@ public abstract class ExtractGroup implements Serializable
 		}
 		
 		@Override
-		public Iterable<Tuple2<MatrixIndexes, WeightedCell>> call(
+		public Iterator<Tuple2<MatrixIndexes, WeightedCell>> call(
 				Tuple2<MatrixIndexes, MatrixBlock> arg)
 				throws Exception 
 		{
@@ -155,7 +142,7 @@ public abstract class ExtractGroup implements Serializable
 			MatrixBlock group = _pbm.getBlock((int)ix.getRowIndex(), 1);
 			MatrixBlock target = arg._2;
 			
-			return execute(ix, group, target);
+			return execute(ix, group, target).iterator();
 		}	
 	}
 }

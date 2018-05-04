@@ -43,6 +43,7 @@ import org.apache.sysml.api.DMLScript;
 import org.apache.sysml.conf.ConfigurationManager;
 import org.apache.sysml.conf.DMLConfig;
 import org.apache.sysml.runtime.DMLScriptException;
+import org.apache.sysml.runtime.io.IOUtilFunctions;
 
 public class DMLAppMaster 
 {
@@ -59,13 +60,7 @@ public class DMLAppMaster
 			Logger.getLogger("org.apache.sysml.yarn").setLevel((Level) Level.DEBUG);
 		}
 	}
-	
-	/**
-	 * 
-	 * @param args
-	 * @throws YarnException 
-	 * @throws IOException 
-	 */
+
 	public void runApplicationMaster( String[] args ) 
 		throws YarnException, IOException
 	{
@@ -132,11 +127,7 @@ public class DMLAppMaster
 			LOG.debug("Unregistered the SystemML application master");
 		}
 	}
-	
-	/**
-	 * 
-	 * @param msg
-	 */
+
 	private void writeMessageToHDFSWorkingDir(String msg)
 	{
 		//construct working directory (consistent with client)
@@ -146,10 +137,10 @@ public class DMLAppMaster
 		
 		//write given message to hdfs
 		try {
-			FileSystem fs = FileSystem.get(_conf);
-			FSDataOutputStream fout = fs.create(msgPath, true);
-			fout.writeBytes( msg );
-			fout.close();
+			FileSystem fs = IOUtilFunctions.getFileSystem(msgPath, _conf);
+			try( FSDataOutputStream fout = fs.create(msgPath, true) ) {
+				fout.writeBytes( msg );
+			}
 			LOG.debug("Stop message written to HDFS file: "+msgPath );
 		}
 		catch(Exception ex) {
@@ -160,8 +151,8 @@ public class DMLAppMaster
 	/**
 	 * Main entrance for starting the SystemML app master.
 	 * 
-	 * @param args
-	 * @throws Exception
+	 * @param args arguments
+	 * @throws Exception if Exception occurs
 	 */
 	public static void main(String[] args) 
 		throws Exception 

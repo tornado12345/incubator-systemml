@@ -36,17 +36,15 @@ import org.apache.sysml.runtime.instructions.spark.data.PartitionedBroadcast;
 import org.apache.sysml.runtime.matrix.data.FrameBlock;
 import org.apache.sysml.runtime.matrix.operators.Operator;
 
-public class FrameAppendMSPInstruction extends AppendMSPInstruction
-{
-	public FrameAppendMSPInstruction(Operator op, CPOperand in1, CPOperand in2, CPOperand offset, CPOperand out, boolean cbind, String opcode, String istr)
-	{
+public class FrameAppendMSPInstruction extends AppendMSPInstruction {
+
+	protected FrameAppendMSPInstruction(Operator op, CPOperand in1, CPOperand in2, CPOperand offset, CPOperand out,
+			boolean cbind, String opcode, String istr) {
 		super(op, in1, in2, offset, out, cbind, opcode, istr);
 	}
-	
+
 	@Override
-	public void processInstruction(ExecutionContext ec)
-		throws DMLRuntimeException 
-	{
+	public void processInstruction(ExecutionContext ec) {
 		// map-only append (rhs must be vector and fit in mapper mem)
 		SparkExecutionContext sec = (SparkExecutionContext)ec;
 		checkBinaryAppendInputCharacteristics(sec, _cbind, false, false);
@@ -74,22 +72,13 @@ public class FrameAppendMSPInstruction extends AppendMSPInstruction
 			sec.getFrameObject(input1.getName()).mergeSchemas(
 			sec.getFrameObject(input2.getName())));
 	}
-	
-	/** 
-	 * 
-	 * @param cbind
-	 * @return
-	 */
-	private boolean preservesPartitioning( boolean cbind )
-	{
+
+	private static boolean preservesPartitioning( boolean cbind ) {
 		//Partitions for input1 will be preserved in case of cbind, 
 		// where as in case of rbind partitions will not be preserved.
 		return cbind;
 	}
-	
-	/**
-	 * 
-	 */
+
 	private static class MapSideAppendPartitionFunction implements  PairFlatMapFunction<Iterator<Tuple2<Long,FrameBlock>>, Long, FrameBlock> 
 	{
 		private static final long serialVersionUID = -3997051891171313830L;
@@ -102,7 +91,7 @@ public class FrameAppendMSPInstruction extends AppendMSPInstruction
 		}
 
 		@Override
-		public Iterable<Tuple2<Long, FrameBlock>> call(Iterator<Tuple2<Long, FrameBlock>> arg0)
+		public LazyIterableIterator<Tuple2<Long, FrameBlock>> call(Iterator<Tuple2<Long, FrameBlock>> arg0)
 			throws Exception 
 		{
 			return new MapAppendPartitionIterator(arg0);
@@ -130,8 +119,8 @@ public class FrameAppendMSPInstruction extends AppendMSPInstruction
 				int colix = 1;
 				
 				FrameBlock in2 = _pm.getBlock(rowix, colix);
-				FrameBlock out = in1.appendOperations(in2, new FrameBlock(), true); //cbind
-				return new Tuple2<Long,FrameBlock>(ix, out);
+				FrameBlock out = in1.append(in2, new FrameBlock(), true); //cbind
+				return new Tuple2<>(ix, out);
 			}			
 		}
 	}

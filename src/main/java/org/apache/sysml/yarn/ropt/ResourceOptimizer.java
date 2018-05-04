@@ -28,11 +28,9 @@ import org.apache.commons.logging.LogFactory;
 import org.apache.sysml.hops.DataOp;
 import org.apache.sysml.hops.Hop;
 import org.apache.sysml.hops.Hop.DataOpTypes;
-import org.apache.sysml.hops.HopsException;
 import org.apache.sysml.hops.OptimizerUtils;
 import org.apache.sysml.hops.cost.CostEstimationWrapper;
 import org.apache.sysml.hops.recompile.Recompiler;
-import org.apache.sysml.lops.LopsException;
 import org.apache.sysml.lops.LopProperties.ExecType;
 import org.apache.sysml.parser.Expression.ValueType;
 import org.apache.sysml.parser.ForStatementBlock;
@@ -57,7 +55,7 @@ import org.apache.sysml.runtime.controlprogram.parfor.stat.Timing;
 import org.apache.sysml.runtime.instructions.Instruction;
 import org.apache.sysml.runtime.instructions.MRJobInstruction;
 import org.apache.sysml.runtime.matrix.MatrixCharacteristics;
-import org.apache.sysml.runtime.matrix.MatrixDimensionsMetaData;
+import org.apache.sysml.runtime.matrix.MetaData;
 import org.apache.sysml.yarn.DMLYarnClient;
 import org.apache.sysml.yarn.ropt.YarnOptimizerUtils.GridEnumType;
 
@@ -81,18 +79,7 @@ public class ResourceOptimizer
 	private static long _cntCompilePB = 0;
 	private static long _cntCostPB = 0;
 	
-	
-	/**
-	 * 
-	 * @param prog
-	 * @param cc
-	 * @param cptype
-	 * @param mrtype
-	 * @return
-	 * @throws DMLRuntimeException
-	 */
 	public synchronized static ResourceConfig optimizeResourceConfig( ArrayList<ProgramBlock> prog, YarnClusterConfig cc, GridEnumType cptype, GridEnumType mrtype ) 
-		throws DMLRuntimeException
 	{
 		ResourceConfig ROpt = null;
 		
@@ -174,49 +161,21 @@ public class ResourceOptimizer
 	
 		return ROpt;
 	}
-	
-	/**
-	 * 
-	 * @param prog
-	 * @param B
-	 * @param rc
-	 * @return
-	 * @throws IOException 
-	 * @throws LopsException 
-	 * @throws HopsException 
-	 * @throws DMLRuntimeException 
-	 */
-	public static ArrayList<ProgramBlock> compileProgram( ArrayList<ProgramBlock> prog, ResourceConfig rc ) 
-		throws DMLRuntimeException, HopsException, LopsException, IOException
-	{
+
+	public static ArrayList<ProgramBlock> compileProgram( ArrayList<ProgramBlock> prog, ResourceConfig rc ) {
 		//recompile program block hierarchy to list of blocks and apply optimized resource configuration
 		ArrayList<ProgramBlock> B = compileProgram(prog, null, rc.getCPResource(), rc.getMaxMRResource());
 		ResourceOptimizer.recompileProgramBlocks(B, rc.getCPResource(), rc.getMRResourcesMemo());
 		
 		return B;
 	}
-	
-	
-	/**
-	 * 
-	 * @param prog
-	 * @param B
-	 * @return
-	 * @throws IOException 
-	 * @throws LopsException 
-	 * @throws HopsException 
-	 * @throws DMLRuntimeException 
-	 */
-	private static ArrayList<ProgramBlock> compileProgram( ArrayList<ProgramBlock> prog, ArrayList<ProgramBlock> B, double cp, double mr ) 
-		throws DMLRuntimeException, HopsException, LopsException, IOException
-	{
-		if( B == null ) //init 
-		{
-			B = new ArrayList<ProgramBlock>();
-			
+
+	private static ArrayList<ProgramBlock> compileProgram( ArrayList<ProgramBlock> prog, ArrayList<ProgramBlock> B, double cp, double mr ) {
+		if( B == null ) { //init 
+			B = new ArrayList<>();
 			InfrastructureAnalyzer.setLocalMaxMemory( (long)cp );
 			InfrastructureAnalyzer.setRemoteMaxMemoryMap( (long)mr );
-			InfrastructureAnalyzer.setRemoteMaxMemoryReduce( (long)mr );	
+			InfrastructureAnalyzer.setRemoteMaxMemoryReduce( (long)mr );
 			OptimizerUtils.resetDefaultSize(); //dependent on cp, mr
 		}
 		
@@ -225,20 +184,8 @@ public class ResourceOptimizer
 		
 		return B;
 	}
-	
-	/**
-	 * 
-	 * @param pb
-	 * @param Bp
-	 * @return
-	 * @throws IOException  
-	 * @throws LopsException 
-	 * @throws HopsException 
-	 * @throws DMLRuntimeException 
-	 */
-	private static ArrayList<ProgramBlock> compileProgram( ProgramBlock pb, ArrayList<ProgramBlock> B, double cp, double mr ) 
-		throws DMLRuntimeException, HopsException, LopsException, IOException
-	{
+
+	private static ArrayList<ProgramBlock> compileProgram( ProgramBlock pb, ArrayList<ProgramBlock> B, double cp, double mr ) {
 		if (pb instanceof FunctionProgramBlock)
 		{
 			FunctionProgramBlock fpb = (FunctionProgramBlock)pb;
@@ -249,7 +196,8 @@ public class ResourceOptimizer
 			WhileProgramBlock wpb = (WhileProgramBlock)pb;
 			WhileStatementBlock sb = (WhileStatementBlock) pb.getStatementBlock();
 			if( INCLUDE_PREDICATES && sb!=null && sb.getPredicateHops()!=null ){
-				ArrayList<Instruction> inst = Recompiler.recompileHopsDag(sb.getPredicateHops(), new LocalVariableMap(), null, false, 0);
+				ArrayList<Instruction> inst = Recompiler.recompileHopsDag(
+					sb.getPredicateHops(), new LocalVariableMap(), null, false, false, 0);
 				wpb.setPredicate( inst );
 				B.add(wpb);
 				_cntCompilePB ++;
@@ -261,7 +209,8 @@ public class ResourceOptimizer
 			IfProgramBlock ipb = (IfProgramBlock)pb;
 			IfStatementBlock sb = (IfStatementBlock) ipb.getStatementBlock();
 			if( INCLUDE_PREDICATES && sb!=null && sb.getPredicateHops()!=null ){
-				ArrayList<Instruction> inst = Recompiler.recompileHopsDag(sb.getPredicateHops(), new LocalVariableMap(), null, false, 0);
+				ArrayList<Instruction> inst = Recompiler.recompileHopsDag(
+					sb.getPredicateHops(), new LocalVariableMap(), null, false, false, 0);
 				ipb.setPredicate( inst );
 				B.add(ipb);
 				_cntCompilePB ++;
@@ -275,15 +224,18 @@ public class ResourceOptimizer
 			ForStatementBlock sb = (ForStatementBlock) fpb.getStatementBlock();
 			if( INCLUDE_PREDICATES && sb!=null ){
 				if( sb.getFromHops()!=null ){
-					ArrayList<Instruction> inst = Recompiler.recompileHopsDag(sb.getFromHops(), new LocalVariableMap(), null, false, 0);
+					ArrayList<Instruction> inst = Recompiler.recompileHopsDag(
+						sb.getFromHops(), new LocalVariableMap(), null, false, false, 0);
 					fpb.setFromInstructions( inst );	
 				}
 				if( sb.getToHops()!=null ){
-					ArrayList<Instruction> inst = Recompiler.recompileHopsDag(sb.getToHops(), new LocalVariableMap(), null, false, 0);
+					ArrayList<Instruction> inst = Recompiler.recompileHopsDag(
+						sb.getToHops(), new LocalVariableMap(), null, false, false, 0);
 					fpb.setToInstructions( inst );	
 				}
 				if( sb.getIncrementHops()!=null ){
-					ArrayList<Instruction> inst = Recompiler.recompileHopsDag(sb.getIncrementHops(), new LocalVariableMap(), null, false, 0);
+					ArrayList<Instruction> inst = Recompiler.recompileHopsDag(
+						sb.getIncrementHops(), new LocalVariableMap(), null, false, false, 0);
 					fpb.setIncrementInstructions( inst );	
 				}
 				B.add(fpb);
@@ -294,8 +246,8 @@ public class ResourceOptimizer
 		else
 		{
 			StatementBlock sb = pb.getStatementBlock();
-			ArrayList<Instruction> inst = Recompiler.recompileHopsDag(sb, sb.get_hops(), 
-					                                   new LocalVariableMap(), null, false, 0);
+			ArrayList<Instruction> inst = Recompiler.recompileHopsDag(
+				sb, sb.getHops(), new LocalVariableMap(), null, false, false, 0);
 			pb.setInstructions( inst );
 			B.add(pb);
 			_cntCompilePB ++;
@@ -303,41 +255,16 @@ public class ResourceOptimizer
 		
 		return B;
 	}
-	
-	
-	/**
-	 * 
-	 * @param pbs
-	 * @param cp
-	 * @param memo
-	 * @throws DMLRuntimeException
-	 * @throws HopsException
-	 * @throws LopsException
-	 * @throws IOException
-	 */
-	private static void recompileProgramBlocks( ArrayList<ProgramBlock> pbs, long cp, double[][] memo ) 
-		throws DMLRuntimeException, HopsException, LopsException, IOException
-	{
-		for( int i=0; i<pbs.size(); i++ )
-		{
+
+	private static void recompileProgramBlocks( ArrayList<ProgramBlock> pbs, long cp, double[][] memo ) {
+		for( int i=0; i<pbs.size(); i++ ) {
 			ProgramBlock pb = pbs.get(i);
 			long mr = (long)memo[i][0];
 			recompileProgramBlock(pb, cp, mr);
 		}
 	}
-	
-	/**
-	 * 
-	 * @param pb
-	 * @param cp
-	 * @param mr
-	 * @throws DMLRuntimeException
-	 * @throws HopsException
-	 * @throws LopsException
-	 * @throws IOException
-	 */
+
 	private static void recompileProgramBlock( ProgramBlock pb, long cp, long mr ) 
-		throws DMLRuntimeException, HopsException, LopsException, IOException
 	{
 		//init compiler memory budget
 		InfrastructureAnalyzer.setLocalMaxMemory( cp );
@@ -346,68 +273,62 @@ public class ResourceOptimizer
 		OptimizerUtils.resetDefaultSize(); //dependent on cp, mr
 		
 		//recompile instructions (incl predicates)
-		if (pb instanceof WhileProgramBlock)
-		{
+		if (pb instanceof WhileProgramBlock) {
 			WhileProgramBlock wpb = (WhileProgramBlock)pb;
 			WhileStatementBlock sb = (WhileStatementBlock) pb.getStatementBlock();
 			if( INCLUDE_PREDICATES && sb!=null && sb.getPredicateHops()!=null ){
-				ArrayList<Instruction> inst = Recompiler.recompileHopsDag(sb.getPredicateHops(), new LocalVariableMap(), null, false, 0);
+				ArrayList<Instruction> inst = Recompiler.recompileHopsDag(
+					sb.getPredicateHops(), new LocalVariableMap(), null, false, false, 0);
 				inst = annotateMRJobInstructions(inst, cp, mr);
 				wpb.setPredicate( inst );
-			}				
-		}	
-		else if (pb instanceof IfProgramBlock)
-		{
+			}
+		}
+		else if (pb instanceof IfProgramBlock) {
 			IfProgramBlock ipb = (IfProgramBlock)pb;
 			IfStatementBlock sb = (IfStatementBlock) ipb.getStatementBlock();
 			if( INCLUDE_PREDICATES && sb!=null && sb.getPredicateHops()!=null ){
-				ArrayList<Instruction> inst = Recompiler.recompileHopsDag(sb.getPredicateHops(), new LocalVariableMap(), null, false, 0);
+				ArrayList<Instruction> inst = Recompiler.recompileHopsDag(
+					sb.getPredicateHops(), new LocalVariableMap(), null, false, false, 0);
 				inst = annotateMRJobInstructions(inst, cp, mr);
 				ipb.setPredicate( inst );
 			}
 		}
-		else if (pb instanceof ForProgramBlock) //incl parfor
-		{
+		else if (pb instanceof ForProgramBlock) { //incl parfor
 			ForProgramBlock fpb = (ForProgramBlock)pb;
 			ForStatementBlock sb = (ForStatementBlock) fpb.getStatementBlock();
 			if( INCLUDE_PREDICATES && sb!=null ){
 				if( sb.getFromHops()!=null ){
-					ArrayList<Instruction> inst = Recompiler.recompileHopsDag(sb.getFromHops(), new LocalVariableMap(), null, false, 0);
+					ArrayList<Instruction> inst = Recompiler.recompileHopsDag(
+						sb.getFromHops(), new LocalVariableMap(), null, false, false, 0);
 					inst = annotateMRJobInstructions(inst, cp, mr);
 					fpb.setFromInstructions( inst );	
 				}
 				if( sb.getToHops()!=null ){
-					ArrayList<Instruction> inst = Recompiler.recompileHopsDag(sb.getToHops(), new LocalVariableMap(), null, false, 0);
+					ArrayList<Instruction> inst = Recompiler.recompileHopsDag(
+						sb.getToHops(), new LocalVariableMap(), null, false, false, 0);
 					inst = annotateMRJobInstructions(inst, cp, mr);
 					fpb.setToInstructions( inst );	
 				}
 				if( sb.getIncrementHops()!=null ){
-					ArrayList<Instruction> inst = Recompiler.recompileHopsDag(sb.getIncrementHops(), new LocalVariableMap(), null, false, 0);
+					ArrayList<Instruction> inst = Recompiler.recompileHopsDag(
+						sb.getIncrementHops(), new LocalVariableMap(), null, false, false, 0);
 					inst = annotateMRJobInstructions(inst, cp, mr);
 					fpb.setIncrementInstructions( inst );	
 				}
 			}
 		}
-		else //last-level program blocks
-		{
+		else { //last-level program blocks
 			StatementBlock sb = pb.getStatementBlock();
-			ArrayList<Instruction> inst = Recompiler.recompileHopsDag(sb, sb.get_hops(), 
-					                                   new LocalVariableMap(), null, false, 0);
+			ArrayList<Instruction> inst = Recompiler.recompileHopsDag(
+				sb, sb.getHops(), new LocalVariableMap(), null, false, false, 0);
 			inst = annotateMRJobInstructions(inst, cp, mr);
 			pb.setInstructions( inst );
 		}
 		
 		_cntCompilePB ++;
 	}
-	
-	/**
-	 * 
-	 * @param inst
-	 * @return 
-	 * @throws DMLRuntimeException 
-	 */
+
 	private static ArrayList<Instruction> annotateMRJobInstructions( ArrayList<Instruction> inst, long cp, long mr ) 
-		throws DMLRuntimeException
 	{
 		//check for empty instruction lists (e.g., predicates)
 		if( inst == null || !COSTS_MAX_PARALLELISM )
@@ -442,22 +363,12 @@ public class ResourceOptimizer
 		
 		return inst;
 	}
-	
-	
-	/**
-	 * 
-	 * @param pb
-	 * @return
-	 * @throws DMLRuntimeException
-	 * @throws HopsException 
-	 */
-	private static double getProgramCosts( ProgramBlock pb ) 
-		throws DMLRuntimeException, HopsException
-	{
+
+	private static double getProgramCosts( ProgramBlock pb ) {
 		double val = 0;
 		if( COST_INDIVIDUAL_BLOCKS ) {
 			LocalVariableMap vars = new LocalVariableMap();
-			collectReadVariables(pb.getStatementBlock().get_hops(), vars);
+			collectReadVariables(pb.getStatementBlock().getHops(), vars);
 			ExecutionContext ec = ExecutionContextFactory.createContext(false, null);
 			ec.setVariables(vars);
 			val = CostEstimationWrapper.getTimeEstimate(pb, ec, false);	
@@ -471,43 +382,23 @@ public class ResourceOptimizer
 		_cntCostPB ++;
 		return val;
 	}
-	
-	
-	/**
-	 * 
-	 * @param prog
-	 * @throws DMLRuntimeException 
-	 */
-	private static double getProgramCosts( Program prog ) 
-		throws DMLRuntimeException
-	{
+
+	private static double getProgramCosts( Program prog ) {
 		//we need to cost the entire program in order to take in-memory status into account
 		ExecutionContext ec = ExecutionContextFactory.createContext();
 		double val = CostEstimationWrapper.getTimeEstimate(prog, ec);
 		_cntCostPB ++;
-		
 		return val;
 	}
-	
-	/**
-	 * 
-	 * @param hops
-	 * @param vars
-	 */
-	private static void collectReadVariables( ArrayList<Hop> hops, LocalVariableMap vars )
-	{
+
+	private static void collectReadVariables( ArrayList<Hop> hops, LocalVariableMap vars ) {
 		if( hops!=null ) {
 			Hop.resetVisitStatus(hops);
 			for( Hop hop : hops )
 				collectReadVariables(hop, vars);
-		}		
+		}
 	}
-	
-	/**
-	 * 
-	 * @param hop
-	 * @param vars
-	 */
+
 	private static void collectReadVariables( Hop hop, LocalVariableMap vars )
 	{
 		if( hop == null )
@@ -525,26 +416,18 @@ public class ResourceOptimizer
 			String varname = hop.getName();
 			MatrixCharacteristics mc = new MatrixCharacteristics(hop.getDim1(), hop.getDim2(), 
 					    (int)hop.getRowsInBlock(), (int)hop.getColsInBlock(), hop.getNnz());
-			MatrixDimensionsMetaData md = new MatrixDimensionsMetaData(mc);
-			MatrixObject mo = new MatrixObject(ValueType.DOUBLE, "/tmp", md);
+			MatrixObject mo = new MatrixObject(ValueType.DOUBLE, "/tmp", new MetaData(mc));
 			vars.put(varname, mo);
 		}
 		
-		hop.setVisited(Hop.VisitStatus.DONE);
+		hop.setVisited();
 	}
-	
-	/**
-	 * 
-	 * @param B
-	 * @return
-	 * @throws HopsException 
-	 */
+
 	private static ArrayList<ProgramBlock> pruneProgramBlocks( ArrayList<ProgramBlock> B ) 
-		throws HopsException
 	{
 		//prune all program blocks w/o mr instructions (mr budget does not matter)
 		if( PRUNING_SMALL ){
-			ArrayList<ProgramBlock> Bp = new ArrayList<ProgramBlock>();
+			ArrayList<ProgramBlock> Bp = new ArrayList<>();
 			for( ProgramBlock pb : B )
 				if( OptTreeConverter.containsMRJobInstruction(pb.getInstructions(), false, true) )
 					Bp.add( pb );
@@ -553,24 +436,17 @@ public class ResourceOptimizer
 		
 		//prune all program blocks, where all mr hops are due to unknowns
 		if( PRUNING_UNKNOWN ){
-			ArrayList<ProgramBlock> Bp = new ArrayList<ProgramBlock>();
+			ArrayList<ProgramBlock> Bp = new ArrayList<>();
 			for( ProgramBlock pb : B )
 				if( !pruneHasOnlyUnknownMR(pb) )
 					Bp.add( pb );
 			B = Bp;
 		}
 		
-		return B;		
+		return B;
 	}
-	
-	/**
-	 * 
-	 * @param pb
-	 * @return
-	 * @throws HopsException
-	 */
+
 	private static boolean pruneHasOnlyUnknownMR( ProgramBlock pb ) 
-		throws HopsException
 	{
 		if (pb instanceof WhileProgramBlock)
 		{
@@ -597,40 +473,24 @@ public class ResourceOptimizer
 		else //last-level program blocks
 		{
 			StatementBlock sb = pb.getStatementBlock();
-			return pruneHasOnlyUnknownMR(sb.get_hops());
+			return pruneHasOnlyUnknownMR(sb.getHops());
 		}
 	}
-	
-	
-	/**
-	 * 
-	 * @param sb
-	 * @return
-	 * @throws HopsException
-	 */
-	private static boolean pruneHasOnlyUnknownMR( ArrayList<Hop> hops ) 
-		throws HopsException
-	{
-		boolean ret = false;
 
+	private static boolean pruneHasOnlyUnknownMR( ArrayList<Hop> hops ) {
+		boolean ret = false;
 		if( hops!=null ){
 			ret = true;
 			Hop.resetVisitStatus(hops);
 			for( Hop hop : hops )
 				ret &= pruneHasOnlyUnknownMR(hop);
 		}
-		
 		return ret;
 	}
-	
-	/**
-	 * 
-	 * @param hop
-	 * @return
-	 */
+
 	private static boolean pruneHasOnlyUnknownMR( Hop hop )
 	{
-		if( hop == null || hop.getVisited() == Hop.VisitStatus.DONE )
+		if( hop == null || hop.isVisited() )
 			return true;
 
 		boolean ret = true;
@@ -654,24 +514,12 @@ public class ResourceOptimizer
 			ret &= lret;
 		}
 		
-		hop.setVisited(Hop.VisitStatus.DONE);
+		hop.setVisited();
 		
 		return ret;
 	}
-	
-	
-	/**
-	 * 
-	 * @param prog
-	 * @param cc
-	 * @param type
-	 * @return
-	 * @throws DMLRuntimeException 
-	 * @throws HopsException 
-	 */
-	private static ArrayList<Long> enumerateGridPoints( ArrayList<ProgramBlock> prog, long min, long max, GridEnumType type ) 
-		throws DMLRuntimeException, HopsException
-	{
+
+	private static ArrayList<Long> enumerateGridPoints( ArrayList<ProgramBlock> prog, long min, long max, GridEnumType type ) {
 		//create enumerator
 		GridEnumeration ge = null;
 		switch( type ){
@@ -693,41 +541,21 @@ public class ResourceOptimizer
 		
 		return ret;
 	}
-	
-	/**
-	 * 
-	 * @param Bp
-	 * @param min
-	 * @return
-	 * @throws DMLRuntimeException
-	 */
-	private static double[][] initLocalMemoTable( ArrayList<ProgramBlock> Bp, double min ) 
-		throws DMLRuntimeException
-	{
+
+	private static double[][] initLocalMemoTable( ArrayList<ProgramBlock> Bp, double min ) {
 		//allocate memo structure
 		int len = Bp.size();
 		double[][] memo = new double[len][2];
-		
 		//init with min resource and current costs
-		for( int i=0; i<len; i++ )
-		{
+		for( int i=0; i<len; i++ ) {
 			ProgramBlock pb = Bp.get(i);
 			ExecutionContext ec = ExecutionContextFactory.createContext();
 			memo[i][0] = min;
 			memo[i][1] = CostEstimationWrapper.getTimeEstimate(pb.getProgram(), ec);
 		}
-		
 		return memo;
 	}
-	
-	/**
-	 * 
-	 * @param B
-	 * @param Bp
-	 * @param lmemo
-	 * @param min
-	 * @return
-	 */
+
 	private static double[][] initGlobalMemoTable( ArrayList<ProgramBlock> B, ArrayList<ProgramBlock> Bp, double[][] lmemo, double min )
 	{
 		//allocate memo structure
@@ -757,10 +585,7 @@ public class ResourceOptimizer
 		
 		return memo;
 	}
-	
-	/**
-	 * 
-	 */
+
 	public static void initStatistics()
 	{
 		_cntCompilePB = 0;

@@ -20,6 +20,7 @@
 package org.apache.sysml.runtime.io;
 
 import java.io.IOException;
+import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.Collection;
 
@@ -32,6 +33,7 @@ import org.apache.sysml.conf.ConfigurationManager;
 import org.apache.sysml.runtime.DMLRuntimeException;
 import org.apache.sysml.runtime.matrix.data.MatrixBlock;
 import org.apache.sysml.runtime.matrix.data.MatrixIndexes;
+import org.apache.sysml.runtime.matrix.data.SparseBlock;
 import org.apache.sysml.runtime.matrix.mapred.IndexedMatrixValue;
 import org.apache.sysml.runtime.matrix.mapred.MRJobConfiguration;
 
@@ -52,13 +54,17 @@ public class ReaderBinaryBlock extends MatrixReader
 	public MatrixBlock readMatrixFromHDFS(String fname, long rlen, long clen, int brlen, int bclen, long estnnz) 
 		throws IOException, DMLRuntimeException 
 	{
+		//early abort for known empty matrices (e.g., remote parfor result vars)
+		if( RETURN_EMPTY_NNZ0 && estnnz == 0 )
+			return new MatrixBlock((int)rlen, (int)clen, true);
+		
 		//allocate output matrix block
 		MatrixBlock ret = createOutputMatrixBlock(rlen, clen, brlen, bclen, estnnz, false, false);
 		
 		//prepare file access
 		JobConf job = new JobConf(ConfigurationManager.getCachedJobConf());	
-		FileSystem fs = _localFS ? FileSystem.getLocal(job) : FileSystem.get(job);
 		Path path = new Path( (_localFS ? "file:///" : "") + fname); 
+		FileSystem fs = IOUtilFunctions.getFileSystem(path, job);
 		
 		//check existence and non-empty file
 		checkValidInputFile(fs, path); 
@@ -74,38 +80,44 @@ public class ReaderBinaryBlock extends MatrixReader
 		return ret;
 	}
 	
-	/**
-	 * 
-	 * @param fname
-	 * @param rlen
-	 * @param clen
-	 * @param brlen
-	 * @param bclen
-	 * @param estnnz
-	 * @return
-	 * @throws IOException
-	 * @throws DMLRuntimeException
-	 */
+	@Override
+	public MatrixBlock readMatrixFromInputStream(InputStream is, long rlen, long clen, int brlen, int bclen, long estnnz) 
+		throws IOException, DMLRuntimeException 
+	{
+		throw new DMLRuntimeException("Not implemented yet.");
+	}
+
 	public ArrayList<IndexedMatrixValue> readIndexedMatrixBlocksFromHDFS(String fname, long rlen, long clen, int brlen, int bclen) 
 		throws IOException, DMLRuntimeException 
 	{
 		//allocate output matrix block collection
-		ArrayList<IndexedMatrixValue> ret = new ArrayList<IndexedMatrixValue>();
+		ArrayList<IndexedMatrixValue> ret = new ArrayList<>();
 		
 		//prepare file access
-		JobConf job = new JobConf(ConfigurationManager.getCachedJobConf());	
-		FileSystem fs = _localFS ? FileSystem.getLocal(job) : FileSystem.get(job);
-		Path path = new Path( (_localFS ? "file:///" : "") + fname); 
+		JobConf job = new JobConf(ConfigurationManager.getCachedJobConf());
+		Path path = new Path( (_localFS ? "file:///" : "") + fname);
+		FileSystem fs = IOUtilFunctions.getFileSystem(path, job);
 		
 		//check existence and non-empty file
-		checkValidInputFile(fs, path); 
+		checkValidInputFile(fs, path);
 	
 		//core read 
 		readBinaryBlockMatrixBlocksFromHDFS(path, job, fs, ret, rlen, clen, brlen, bclen);
 		
 		return ret;
 	}
-
+	
+	protected static MatrixBlock getReuseBlock(int brlen, int bclen, boolean sparse) {
+		//note: we allocate the reuse block in CSR because this avoids unnecessary
+		//reallocations in the presence of a mix of sparse and ultra-sparse blocks,
+		//where ultra-sparse deserialization only reuses CSR blocks
+		MatrixBlock value = new MatrixBlock(brlen, bclen, sparse);
+		if( sparse ) {
+			value.allocateAndResetSparseBlock(true, SparseBlock.Type.CSR);
+			value.getSparseBlock().allocate(0, brlen*bclen);
+		}
+		return value;
+	}
 
 	
 	/**
@@ -118,36 +130,33 @@ public class ReaderBinaryBlock extends MatrixReader
 	 * if the read matrix was create by CP or when jobs directly write to large output files 
 	 * (e.g., parfor matrix partitioning).
 	 * 
-	 * @param path
-	 * @param job
-	 * @param fs 
-	 * @param dest
-	 * @param rlen
-	 * @param clen
-	 * @param brlen
-	 * @param bclen
-	 * @throws IOException
-	 * @throws IllegalAccessException
-	 * @throws InstantiationException
-	 * @throws DMLRuntimeException 
+	 * @param path file path
+	 * @param job job configuration
+	 * @param fs file system
+	 * @param dest matrix block
+	 * @param rlen number of rows
+	 * @param clen number of columns
+	 * @param brlen number of rows in block
+	 * @param bclen number of columns in block
+	 * @throws IOException if IOException occurs
 	 */
-	@SuppressWarnings("deprecation")
 	private static void readBinaryBlockMatrixFromHDFS( Path path, JobConf job, FileSystem fs, MatrixBlock dest, long rlen, long clen, int brlen, int bclen )
-		throws IOException, DMLRuntimeException
+		throws IOException
 	{
 		boolean sparse = dest.isInSparseFormat();
 		MatrixIndexes key = new MatrixIndexes(); 
-		MatrixBlock value = new MatrixBlock();
+		MatrixBlock value = getReuseBlock(brlen, bclen, sparse);
 		long lnnz = 0; //aggregate block nnz
 		
 		//set up preferred custom serialization framework for binary block format
 		if( MRJobConfiguration.USE_BINARYBLOCK_SERIALIZATION )
 			MRJobConfiguration.addBinaryBlockSerializationFramework( job );
 		
-		for( Path lpath : getSequenceFilePaths(fs, path) ) //1..N files 
+		for( Path lpath : IOUtilFunctions.getSequenceFilePaths(fs, path) ) //1..N files 
 		{
 			//directly read from sequence files (individual partfiles)
-			SequenceFile.Reader reader = new SequenceFile.Reader(fs,lpath,job);
+			SequenceFile.Reader reader = new SequenceFile
+				.Reader(job, SequenceFile.Reader.file(lpath));
 			
 			try
 			{
@@ -202,22 +211,7 @@ public class ReaderBinaryBlock extends MatrixReader
 		}
 	}
 	
-	/**
-	 * 
-	 * @param path
-	 * @param job
-	 * @param fs
-	 * @param dest
-	 * @param rlen
-	 * @param clen
-	 * @param brlen
-	 * @param bclen
-	 * @throws IOException
-	 * @throws IllegalAccessException
-	 * @throws InstantiationException
-	 */
-	@SuppressWarnings("deprecation")
-	private void readBinaryBlockMatrixBlocksFromHDFS( Path path, JobConf job, FileSystem fs, Collection<IndexedMatrixValue> dest, long rlen, long clen, int brlen, int bclen )
+	private static void readBinaryBlockMatrixBlocksFromHDFS( Path path, JobConf job, FileSystem fs, Collection<IndexedMatrixValue> dest, long rlen, long clen, int brlen, int bclen )
 		throws IOException
 	{
 		MatrixIndexes key = new MatrixIndexes(); 
@@ -227,10 +221,11 @@ public class ReaderBinaryBlock extends MatrixReader
 		if( MRJobConfiguration.USE_BINARYBLOCK_SERIALIZATION )
 			MRJobConfiguration.addBinaryBlockSerializationFramework( job );
 		
-		for( Path lpath : getSequenceFilePaths(fs, path) ) //1..N files 
+		for( Path lpath : IOUtilFunctions.getSequenceFilePaths(fs, path) ) //1..N files 
 		{
 			//directly read from sequence files (individual partfiles)
-			SequenceFile.Reader reader = new SequenceFile.Reader(fs,lpath,job);
+			SequenceFile.Reader reader = new SequenceFile
+				.Reader(job, SequenceFile.Reader.file(lpath));
 			
 			try
 			{

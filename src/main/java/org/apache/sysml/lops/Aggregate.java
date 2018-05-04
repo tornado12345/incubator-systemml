@@ -44,17 +44,6 @@ public class Aggregate extends Lop
  
 	private boolean isCorrectionUsed = false;
 	private CorrectionLocationType correctionLocation = CorrectionLocationType.INVALID;
-
-	/**
-	 * @param input input lop
-	 * @param op operation type
-	 * @param dt data type
-	 * @param vt value type
-	 */
-	public Aggregate(Lop input, Aggregate.OperationTypes op, DataType dt, ValueType vt ) {
-		super(Lop.Type.Aggregate, dt, vt);
-		init ( input, op, dt, vt, ExecType.MR );
-	}
 	
 	public Aggregate(Lop input, Aggregate.OperationTypes op, DataType dt, ValueType vt, ExecType et ) {
 		super(Lop.Type.Aggregate, dt, vt);
@@ -92,9 +81,9 @@ public class Aggregate extends Lop
 		}
 	}
 	
-	public String toString()
-	{
-		return "Operation: " + operation;		
+	@Override
+	public String toString() {
+		return "Operation: " + operation;
 	}
 
 	/**
@@ -138,48 +127,30 @@ public class Aggregate extends Lop
 	}
 	
 	@Override
-	public String getInstructions(String input1, String output) throws LopsException {
-		String opcode = getOpcode(); 
-		
+	public String getInstructions(int input_index, int output_index) {
+		return getInstructions(String.valueOf(input_index), String.valueOf(output_index));
+	}
+
+	@Override
+	public String getInstructions(String input1, String output) 
+	{
+		boolean isCorrectionApplicable = (getExecType() == ExecType.MR &&
+				(operation == OperationTypes.Mean || operation == OperationTypes.Var
+				|| operation == OperationTypes.KahanSum || operation == OperationTypes.KahanSumSq
+				|| operation == OperationTypes.KahanTrace));
+			
 		StringBuilder sb = new StringBuilder();
 		sb.append( getExecType() );
 		sb.append( OPERAND_DELIMITOR );
-		sb.append( opcode );
+		sb.append( getOpcode() );
 		sb.append( OPERAND_DELIMITOR );
 		
 		sb.append( getInputs().get(0).prepInputOperand(input1));
 		sb.append( OPERAND_DELIMITOR );
-		
+
 		sb.append( this.prepOutputOperand(output));
 		
-		return sb.toString();
-	}
-	
-	@Override
-	public String getInstructions(int input_index, int output_index) throws LopsException
-	{
-		boolean isCorrectionApplicable = false;
-		
-		String opcode = getOpcode(); 
-		if (operation == OperationTypes.Mean || operation == OperationTypes.Var
-				|| operation == OperationTypes.KahanSum || operation == OperationTypes.KahanSumSq
-				|| operation == OperationTypes.KahanTrace)
-			isCorrectionApplicable = true;
-		
-		StringBuilder sb = new StringBuilder();
-		sb.append( getExecType() );
-		sb.append( OPERAND_DELIMITOR );
-		sb.append( opcode );
-		sb.append( OPERAND_DELIMITOR );
-		
-		sb.append( getInputs().get(0).prepInputOperand(input_index));
-		sb.append( OPERAND_DELIMITOR );
-
-		sb.append( this.prepOutputOperand(output_index));
-		
-		if ( isCorrectionApplicable )
-		{
-			// add correction information to the instruction
+		if ( isCorrectionApplicable ) {
 			sb.append( OPERAND_DELIMITOR );
 			sb.append( isCorrectionUsed );
 			sb.append( OPERAND_DELIMITOR );
@@ -188,7 +159,4 @@ public class Aggregate extends Lop
 		
 		return sb.toString();
 	}
-
- 
- 
 }

@@ -86,9 +86,8 @@ public class AppendG extends Lop
 	}
 
 	//called when append executes in MR
-	public String getInstructions(int input_index1, int input_index2, int input_index3, int input_index4, int output_index) 
-		throws LopsException
-	{
+	@Override
+	public String getInstructions(int input_index1, int input_index2, int input_index3, int input_index4, int output_index) {
 		return getInstructions(
 				String.valueOf(input_index1),
 				String.valueOf(input_index2),
@@ -98,9 +97,8 @@ public class AppendG extends Lop
 	}
 	
 	//called when append executes in SP
-	public String getInstructions(String input_index1, String input_index2, String input_index3, String input_index4, String output_index) 
-		throws LopsException
-	{
+	@Override
+	public String getInstructions(String input_index1, String input_index2, String input_index3, String input_index4, String output_index) {
 		StringBuilder sb = new StringBuilder();
 		sb.append( getExecType() );
 		
@@ -108,10 +106,10 @@ public class AppendG extends Lop
 		sb.append( OPCODE );
 		
 		sb.append( OPERAND_DELIMITOR );
-		sb.append( getInputs().get(0).prepInputOperand(input_index1+""));
+		sb.append( getInputs().get(0).prepInputOperand(input_index1));
 		
 		sb.append( OPERAND_DELIMITOR );
-		sb.append( getInputs().get(1).prepInputOperand(input_index2+""));
+		sb.append( getInputs().get(1).prepInputOperand(input_index2));
 		
 		sb.append( OPERAND_DELIMITOR );
 		sb.append( getInputs().get(2).prepScalarInputOperand(getExecType()));
@@ -120,7 +118,7 @@ public class AppendG extends Lop
 		sb.append( getInputs().get(3).prepScalarInputOperand(getExecType()));
 		
 		sb.append( OPERAND_DELIMITOR );
-		sb.append( prepOutputOperand(output_index+"") );
+		sb.append( prepOutputOperand(output_index) );
 		
 		sb.append( OPERAND_DELIMITOR );
 		sb.append( _cbind );

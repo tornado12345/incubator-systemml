@@ -26,8 +26,8 @@ import org.apache.commons.math3.linear.EigenDecomposition;
 import org.apache.commons.math3.linear.LUDecomposition;
 import org.apache.commons.math3.linear.QRDecomposition;
 import org.apache.commons.math3.linear.RealMatrix;
+import org.apache.commons.math3.linear.SingularValueDecomposition;
 import org.apache.sysml.runtime.DMLRuntimeException;
-import org.apache.sysml.runtime.controlprogram.caching.MatrixObject;
 import org.apache.sysml.runtime.util.DataConverter;
 
 /**
@@ -48,55 +48,51 @@ public class LibCommonsMath
 	}
 	
 	public static boolean isSupportedMultiReturnOperation( String opcode ) {
-		return ( opcode.equals("qr") || opcode.equals("lu") || opcode.equals("eigen") );
+		return ( opcode.equals("qr") || opcode.equals("lu") || opcode.equals("eigen") || opcode.equals("svd") );
 	}
 	
 	public static boolean isSupportedMatrixMatrixOperation( String opcode ) {
 		return ( opcode.equals("solve") );
 	}
 		
-	public static MatrixBlock unaryOperations(MatrixObject inj, String opcode) 
-		throws DMLRuntimeException 
-	{
+	public static MatrixBlock unaryOperations(MatrixBlock inj, String opcode) {
 		Array2DRowRealMatrix matrixInput = DataConverter.convertToArray2DRowRealMatrix(inj);
 		if(opcode.equals("inverse"))
 			return computeMatrixInverse(matrixInput);
 		else if (opcode.equals("cholesky"))
-			return computeCholesky(matrixInput);		
+			return computeCholesky(matrixInput);
 		return null;
 	}
 	
-	public static MatrixBlock[] multiReturnOperations(MatrixObject in, String opcode) 
-		throws DMLRuntimeException 
-	{
+	public static MatrixBlock[] multiReturnOperations(MatrixBlock in, String opcode) {
 		if(opcode.equals("qr"))
 			return computeQR(in);
 		else if (opcode.equals("lu"))
 			return computeLU(in);
 		else if (opcode.equals("eigen"))
 			return computeEigen(in);
+		else if ( opcode.equals("svd"))
+			return computeSvd(in);
 		return null;
 	}
 	
-	public static MatrixBlock matrixMatrixOperations(MatrixObject in1, MatrixObject in2, String opcode) 
-		throws DMLRuntimeException 
-	{
-		if(opcode.equals("solve"))
+	public static MatrixBlock matrixMatrixOperations(MatrixBlock in1, MatrixBlock in2, String opcode) {
+		if(opcode.equals("solve")) {
+			if (in1.getNumRows() != in1.getNumColumns())
+				throw new DMLRuntimeException("The A matrix, in solve(A,b) should have squared dimensions.");
 			return computeSolve(in1, in2);
+		}
 		return null;
 	}
 	
 	/**
 	 * Function to solve a given system of equations.
 	 * 
-	 * @param in1
-	 * @param in2
-	 * @return
-	 * @throws DMLRuntimeException
+	 * @param in1 matrix object 1
+	 * @param in2 matrix object 2
+	 * @return matrix block
 	 */
-	private static MatrixBlock computeSolve(MatrixObject in1, MatrixObject in2) 
-		throws DMLRuntimeException 
-	{
+	private static MatrixBlock computeSolve(MatrixBlock in1, MatrixBlock in2) {
 		Array2DRowRealMatrix matrixInput = DataConverter.convertToArray2DRowRealMatrix(in1);
 		Array2DRowRealMatrix vectorInput = DataConverter.convertToArray2DRowRealMatrix(in2);
 		
@@ -116,13 +112,10 @@ public class LibCommonsMath
 	/**
 	 * Function to perform QR decomposition on a given matrix.
 	 * 
-	 * @param in
-	 * @return
-	 * @throws DMLRuntimeException
+	 * @param in matrix object
+	 * @return array of matrix blocks
 	 */
-	private static MatrixBlock[] computeQR(MatrixObject in) 
-		throws DMLRuntimeException 
-	{
+	private static MatrixBlock[] computeQR(MatrixBlock in) {
 		Array2DRowRealMatrix matrixInput = DataConverter.convertToArray2DRowRealMatrix(in);
 		
 		// Perform QR decomposition
@@ -140,13 +133,10 @@ public class LibCommonsMath
 	/**
 	 * Function to perform LU decomposition on a given matrix.
 	 * 
-	 * @param in
-	 * @return
-	 * @throws DMLRuntimeException
+	 * @param in matrix object
+	 * @return array of matrix blocks
 	 */
-	private static MatrixBlock[] computeLU(MatrixObject in) 
-		throws DMLRuntimeException 
-	{
+	private static MatrixBlock[] computeLU(MatrixBlock in) {
 		if ( in.getNumRows() != in.getNumColumns() ) {
 			throw new DMLRuntimeException("LU Decomposition can only be done on a square matrix. Input matrix is rectangular (rows=" + in.getNumRows() + ", cols="+ in.getNumColumns() +")");
 		}
@@ -171,13 +161,10 @@ public class LibCommonsMath
 	 * Function to perform Eigen decomposition on a given matrix.
 	 * Input must be a symmetric matrix.
 	 * 
-	 * @param in
-	 * @return
-	 * @throws DMLRuntimeException
+	 * @param in matrix object
+	 * @return array of matrix blocks
 	 */
-	private static MatrixBlock[] computeEigen(MatrixObject in)
-		throws DMLRuntimeException 
-	{
+	private static MatrixBlock[] computeEigen(MatrixBlock in) {
 		if ( in.getNumRows() != in.getNumColumns() ) {
 			throw new DMLRuntimeException("Eigen Decomposition can only be done on a square matrix. Input matrix is rectangular (rows=" + in.getNumRows() + ", cols="+ in.getNumColumns() +")");
 		}
@@ -192,23 +179,23 @@ public class LibCommonsMath
 		//Sort the eigen values (and vectors) in increasing order (to be compatible w/ LAPACK.DSYEVR())
 		int n = eValues.length;
 		for (int i = 0; i < n; i++) {
-		    int k = i;
-		    double p = eValues[i];
-		    for (int j = i + 1; j < n; j++) {
-		        if (eValues[j] < p) {
-		            k = j;
-		            p = eValues[j];
-		        }
-		    }
-		    if (k != i) {
-		        eValues[k] = eValues[i];
-		        eValues[i] = p;
-		        for (int j = 0; j < n; j++) {
-		            p = eVectors[j][i];
-		            eVectors[j][i] = eVectors[j][k];
-		            eVectors[j][k] = p;
-		        }
-		    }
+			int k = i;
+			double p = eValues[i];
+			for (int j = i + 1; j < n; j++) {
+				if (eValues[j] < p) {
+					k = j;
+					p = eValues[j];
+				}
+			}
+			if (k != i) {
+				eValues[k] = eValues[i];
+				eValues[i] = p;
+				for (int j = 0; j < n; j++) {
+					p = eVectors[j][i];
+					eVectors[j][i] = eVectors[j][k];
+					eVectors[j][k] = p;
+				}
+			}
 		}
 
 		MatrixBlock mbValues = DataConverter.convertToMatrixBlock(eValues, true);
@@ -216,17 +203,40 @@ public class LibCommonsMath
 
 		return new MatrixBlock[] { mbValues, mbVectors };
 	}
+
+
+	/**
+	 * Performs Singular Value Decomposition. Calls Apache Commons Math SVD.
+	 * X = U * Sigma * Vt, where X is the input matrix,
+	 * U is the left singular matrix, Sigma is the singular values matrix returned as a
+	 * column matrix and Vt is the transpose of the right singular matrix V.
+	 * However, the returned array has  { U, Sigma, V}
+	 * 
+	 * @param in Input matrix
+	 * @return An array containing U, Sigma & V
+	 */
+	private static MatrixBlock[] computeSvd(MatrixBlock in) {
+		Array2DRowRealMatrix matrixInput = DataConverter.convertToArray2DRowRealMatrix(in);
+
+		SingularValueDecomposition svd = new SingularValueDecomposition(matrixInput);
+		double[] sigma = svd.getSingularValues();
+		RealMatrix u = svd.getU();
+		RealMatrix v = svd.getV();
+		MatrixBlock U = DataConverter.convertToMatrixBlock(u.getData());
+		MatrixBlock Sigma = DataConverter.convertToMatrixBlock(sigma, true);
+		Sigma = LibMatrixReorg.diag(Sigma, new MatrixBlock(Sigma.rlen, Sigma.rlen, true));
+		MatrixBlock V = DataConverter.convertToMatrixBlock(v.getData());
+
+		return new MatrixBlock[] { U, Sigma, V };
+	}
 	
 	/**
 	 * Function to compute matrix inverse via matrix decomposition.
 	 * 
-	 * @param in
-	 * @return
-	 * @throws DMLRuntimeException
+	 * @param in commons-math3 Array2DRowRealMatrix
+	 * @return matrix block
 	 */
-	private static MatrixBlock computeMatrixInverse(Array2DRowRealMatrix in) 
-		throws DMLRuntimeException 
-	{	
+	private static MatrixBlock computeMatrixInverse(Array2DRowRealMatrix in) {
 		if ( !in.isSquare() )
 			throw new DMLRuntimeException("Input to inv() must be square matrix -- given: a " + in.getRowDimension() + "x" + in.getColumnDimension() + " matrix.");
 		
@@ -241,19 +251,15 @@ public class LibCommonsMath
 	 * Function to compute Cholesky decomposition of the given input matrix. 
 	 * The input must be a real symmetric positive-definite matrix.
 	 * 
-	 * @param in
-	 * @return
-	 * @throws DMLRuntimeException
+	 * @param in commons-math3 Array2DRowRealMatrix
+	 * @return matrix block
 	 */
-	private static MatrixBlock computeCholesky(Array2DRowRealMatrix in) 
-		throws DMLRuntimeException 
-	{	
+	private static MatrixBlock computeCholesky(Array2DRowRealMatrix in) {
 		if ( !in.isSquare() )
 			throw new DMLRuntimeException("Input to cholesky() must be square matrix -- given: a " + in.getRowDimension() + "x" + in.getColumnDimension() + " matrix.");
-
-		CholeskyDecomposition cholesky = new CholeskyDecomposition(in);
+		CholeskyDecomposition cholesky = new CholeskyDecomposition(in, 1e-14,
+			CholeskyDecomposition.DEFAULT_ABSOLUTE_POSITIVITY_THRESHOLD);
 		RealMatrix rmL = cholesky.getL();
-		
 		return DataConverter.convertToMatrixBlock(rmL.getData());
 	}
 }

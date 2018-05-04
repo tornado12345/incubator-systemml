@@ -73,8 +73,8 @@ public class CombineMR
 		protected MRInstruction[] comb_instructions=null;
 		private MatrixIndexes keyBuff=new MatrixIndexes();
 		private WeightedPair valueBuff=new WeightedPair();
-		private HashMap<Byte, Pair<Integer, Integer>> outputBlockSizes=new HashMap<Byte, Pair<Integer, Integer>>();
-		private HashMap<Byte, ArrayList<Integer>> outputIndexesMapping=new HashMap<Byte, ArrayList<Integer>>();
+		private HashMap<Byte, Pair<Integer, Integer>> outputBlockSizes=new HashMap<>();
+		private HashMap<Byte, ArrayList<Integer>> outputIndexesMapping=new HashMap<>();
 		@Override
 		public void reduce(MatrixIndexes indexes,
 				Iterator<TaggedMatrixValue> values,
@@ -111,6 +111,7 @@ public class CombineMR
 			
 		}
 		
+		@Override
 		public void configure(JobConf job)
 		{	
 			super.configure(job);
@@ -123,7 +124,7 @@ public class CombineMR
 			for(int i=0; i<resultIndexes.length; i++)
 			{
 				MatrixCharacteristics stat=MRJobConfiguration.getMatrixCharacteristicsForOutput(job, resultIndexes[i]);
-				outputBlockSizes.put(resultIndexes[i], new Pair<Integer, Integer>(stat.getRowsPerBlock(), stat.getColsPerBlock()));
+				outputBlockSizes.put(resultIndexes[i], new Pair<>(stat.getRowsPerBlock(), stat.getColsPerBlock()));
 			}
 			for(MRInstruction ins: comb_instructions)
 			{
@@ -203,22 +204,17 @@ public class CombineMR
 						valueBuff.setOtherValue(in2.getValue().getValue(r, c));
 						valueBuff.setWeight(in3.getValue().getValue(r, c));
 						for(int i: outputIndexes)
-						{
 							collectFinalMultipleOutputs.collectOutput(keyBuff, valueBuff, i, reporter);
-							//System.out.println("output: "+keyBuff+" -- "+valueBuff);
-						}
 					}
 				
 			} catch (Exception e) {
 				throw new RuntimeException(e);
 			} 
-			
 		}
 
 		private void processBinaryCombineInstruction(CombineBinaryInstruction ins, Reporter reporter) 
-		throws IOException 
+			throws IOException 
 		{
-			
 			IndexedMatrixValue in1=cachedValues.getFirst(ins.input1);
 			IndexedMatrixValue in2=cachedValues.getFirst(ins.input2);
 			if(in1==null && in2==null)
@@ -238,21 +234,14 @@ public class CombineMR
 						in2.getValue().getNumColumns());
 			}
 			
-			if(in2==null)
-			{
+			if(in2==null) {
 				in2=zeroInput;
 				in2.getValue().reset(in1.getValue().getNumRows(), 
 						in1.getValue().getNumColumns());
 			}
 			
-			//System.out.println("in1:"+in1);
-			//System.out.println("in2:"+in2);
-			
 			//process instruction
 			try {
-				/*in1.getValue().combineOperations(in2.getValue(), collectFinalMultipleOutputs, 
-						reporter, keyBuff, valueBuff, getOutputIndexes(ins.output));*/
-				
 				ArrayList<Integer> outputIndexes = outputIndexesMapping.get(ins.output);
 				for(int r=0; r<in1.getValue().getNumRows(); r++)
 					for(int c=0; c<in1.getValue().getNumColumns(); c++)

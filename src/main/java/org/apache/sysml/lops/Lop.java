@@ -23,7 +23,6 @@ import java.util.ArrayList;
 
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
-
 import org.apache.sysml.lops.LopProperties.ExecLocation;
 import org.apache.sysml.lops.LopProperties.ExecType;
 import org.apache.sysml.lops.compile.Dag;
@@ -39,38 +38,38 @@ public abstract class Lop
 {
 	
 	public enum Type {
-		Data, DataGen, 										//CP/MR read/write/datagen 
-		ReBlock, CSVReBlock,								//MR reblock operations
+		Data, DataGen,                                      //CP/MR read/write/datagen 
+		ReBlock, CSVReBlock,                                //MR reblock operations
 		MMCJ, MMRJ, MMTSJ, PMMJ, MapMult, MapMultChain,     //MR matrix multiplications
-		UnaryCP, UNARY, BinaryCP, Binary, Ternary,          //CP/MR unary/binary/ternary
-		RangeReIndex, LeftIndex, ZeroOut,                   //CP/MR indexing 
-		Aggregate, PartialAggregate,   	   				    //CP/MR aggregation
-		BinUaggChain, UaggOuterChain,  	                    //CP/MR aggregation
+		UnaryCP, UNARY, BinaryCP, Binary, Ternary, Nary,    //CP/MR unary/binary/ternary
+		RightIndex, LeftIndex, ZeroOut,                     //CP/MR indexing 
+		Aggregate, PartialAggregate,                        //CP/MR aggregation
+		BinUaggChain, UaggOuterChain,                       //CP/MR aggregation
 		TernaryAggregate,                                   //CP ternary-binary aggregates
-		Grouping, 											//MR grouping
+		Grouping,                                           //MR grouping
 		Append,                                             //CP/MR append (column append)
 		CombineUnary, CombineBinary, CombineTernary,        //MR combine (stitch together)
 		CentralMoment, CoVariance, GroupedAgg, GroupedAggM,
-		ConvolutionTransform,
 		Transform, DataPartition, RepMat,                   //CP/MR reorganization, partitioning, replication
 		ParameterizedBuiltin,                               //CP/MR parameterized ops (name/value)
-		FunctionCallCP, 									//CP function calls 
+		FunctionCallCP, FunctionCallCPSingle,               //CP function calls 
 		CumulativePartialAggregate, CumulativeSplitAggregate, CumulativeOffsetBinary, //MR cumsum/cumprod/cummin/cummax
 		WeightedSquaredLoss, WeightedSigmoid, WeightedDivMM, WeightedCeMM, WeightedUMM,
-		SortKeys, PickValues,
-		Checkpoint, 										//Spark persist into storage level
-		PlusMult, MinusMult,								//CP
-	};
+		SortKeys, PickValues, Ctable,
+		Checkpoint,                                         //Spark persist into storage level
+		PlusMult, MinusMult,                                //CP
+		SpoofFused,                                         //CP/SP generated fused operator
+	}
 
 	/**
 	 * Lop types
 	 */
 	public enum SimpleInstType {
-		Scalar, Variable, File
-	};
+		Scalar
+	}
 
 	public enum VisitStatus {
-		DONE, VISITING, NOTVISITED
+		DONE, NOTVISITED
 	}
 	
 
@@ -101,11 +100,6 @@ public abstract class Lop
 	private VisitStatus _visited = VisitStatus.NOTVISITED;
 
 	protected Lop.Type type;
-	
-	/**
-	 * transient indicator
-	 */
-	protected boolean hasTransientParameters = false;
 
 	/**
 	 * handle to all inputs and outputs.
@@ -142,8 +136,8 @@ public abstract class Lop
 		type = t;
 		_dataType = dt; // data type of the output produced from this LOP
 		_valueType = vt; // value type of the output produced from this LOP
-		inputs = new ArrayList<Lop>();
-		outputs = new ArrayList<Lop>();
+		inputs = new ArrayList<>();
+		outputs = new ArrayList<>();
 		outParams = new OutputParameters();
 		lps = new LopProperties();
 	}
@@ -281,7 +275,7 @@ public abstract class Lop
 	/**
 	 * Method to have Lops print their state. This is for debugging purposes.
 	 */
-
+	@Override
 	public abstract String toString();
 
 	public void resetVisitStatus() {
@@ -345,7 +339,7 @@ public abstract class Lop
 		return lps.getLevel();
 	}
 	
-	public void setLevel() {
+	protected void setLevel() {
 		lps.setLevel(inputs);
 	}
 	
@@ -359,7 +353,7 @@ public abstract class Lop
 	}
  
 	/**
-	 * Method to get the execution type (CP or MR) of LOP
+	 * Method to get the execution type (CP, CP_FILE, MR, SPARK, GPU, INVALID) of LOP
 	 * 
 	 * @return execution type
 	 */
@@ -422,6 +416,37 @@ public abstract class Lop
 		return outParams;
 	}
 	
+
+	/** Method should be overridden if needed
+	 * 
+	 * @param output output
+	 * @return instructions as string
+	 */
+	public String getInstructions(String output) {
+		throw new LopsException(this.printErrorLocation() + "Should never be invoked in Baseclass");
+	}
+	
+	/** Method should be overridden if needed
+	 * 
+	 * @param input1 input 1
+	 * @param output output
+	 * @return instructions as string
+	 */
+	public String getInstructions(String input1, String output) {
+		throw new LopsException(this.printErrorLocation() + "Should never be invoked in Baseclass");
+	}
+
+	/** Method should be overridden if needed
+	 * 
+	 * @param input1 input 1
+	 * @param input2 input 2
+	 * @param output output
+	 * @return instructions as string
+	 */
+	public String getInstructions(String input1, String input2, String output) {
+		throw new LopsException(this.printErrorLocation() + "Should never be invoked in Baseclass");
+	}
+	
 	/**
 	 * Method should be overridden if needed
 	 * 
@@ -430,9 +455,8 @@ public abstract class Lop
 	 * @param input3 input 3
 	 * @param output output
 	 * @return instructions as string
-	 * @throws LopsException if LopsException occurs
 	 */
-	public String getInstructions(String input1, String input2, String input3, String output) throws LopsException {
+	public String getInstructions(String input1, String input2, String input3, String output) {
 		throw new LopsException(this.printErrorLocation() + "Should never be invoked in Baseclass");
 	}
 	
@@ -445,9 +469,8 @@ public abstract class Lop
 	 * @param input4 input 4
 	 * @param output output
 	 * @return instructions as string
-	 * @throws LopsException if LopsException occurs
 	 */
-	public String getInstructions(String input1, String input2, String input3, String input4, String output) throws LopsException {
+	public String getInstructions(String input1, String input2, String input3, String input4, String output) {
 		throw new LopsException(this.printErrorLocation() + "Should never be invoked in Baseclass");
 	}
 
@@ -461,9 +484,8 @@ public abstract class Lop
 	 * @param input5 input 5
 	 * @param output output
 	 * @return instructions as string
-	 * @throws LopsException if LopsException occurs
 	 */
-	public String getInstructions(String input1, String input2, String input3, String input4, String input5, String output) throws LopsException {
+	public String getInstructions(String input1, String input2, String input3, String input4, String input5, String output) {
 		throw new LopsException(this.printErrorLocation() + "Should never be invoked in Baseclass");
 	}
 
@@ -477,17 +499,25 @@ public abstract class Lop
 	 * @param input6 input 6
 	 * @param output output
 	 * @return instructions as string
-	 * @throws LopsException if LopsException occurs
 	 */
-	public String getInstructions(String input1, String input2, String input3, String input4, String input5, String input6, String output) throws LopsException {
+	public String getInstructions(String input1, String input2, String input3, String input4, String input5, String input6, String output) {
+		throw new LopsException(this.printErrorLocation() + "Should never be invoked in Baseclass");
+	}
+
+	public String getInstructions(String input1, String input2, String input3, String input4, String input5, String input6, String input7, String output) {
 		throw new LopsException(this.printErrorLocation() + "Should never be invoked in Baseclass");
 	}
 	
-	public String getInstructions(int output_index) throws LopsException {
+	public String getInstructions(String[] inputs, String outputs) {
+		throw new LopsException(this.printErrorLocation() + "Should never be invoked in Baseclass");
+	}
+	
+	
+	public String getInstructions(int output_index) {
 		throw new LopsException(this.printErrorLocation() + "Should never be invoked in Baseclass. Lop Type: " + this.getType());
 	}
 
-	public String getInstructions(int input_index, int output_index) throws LopsException {
+	public String getInstructions(int input_index, int output_index) {
 		throw new LopsException(this.printErrorLocation() + "Should never be invoked in Baseclass. Lop Type: " + this.getType());
 	}
 
@@ -497,9 +527,8 @@ public abstract class Lop
 	 * @param input_index2 input index 2
 	 * @param output_index output index
 	 * @return instructions as string
-	 * @throws LopsException if LopsException occurs
 	 */
-	public String getInstructions(int input_index1, int input_index2, int output_index) throws LopsException {
+	public String getInstructions(int input_index1, int input_index2, int output_index) {
 		throw new LopsException(this.printErrorLocation() + "Should never be invoked in Baseclass");
 	}
 
@@ -510,9 +539,8 @@ public abstract class Lop
 	 * @param input_index3 input index 3
 	 * @param output_index output index
 	 * @return instructions as string
-	 * @throws LopsException if LopsException occurs
 	 */
-	public String getInstructions(int input_index1, int input_index2, int input_index3, int output_index) throws LopsException {
+	public String getInstructions(int input_index1, int input_index2, int input_index3, int output_index) {
 		throw new LopsException(this.printErrorLocation() + "Should never be invoked in Baseclass");
 	}
 	
@@ -524,9 +552,8 @@ public abstract class Lop
 	 * @param input_index4 input index 4
 	 * @param output_index output index
 	 * @return instructions as string
-	 * @throws LopsException if LopsException occurs
 	 */
-	public String getInstructions(int input_index1, int input_index2, int input_index3, int input_index4, int output_index) throws LopsException {
+	public String getInstructions(int input_index1, int input_index2, int input_index3, int input_index4, int output_index) {
 		throw new LopsException(this.printErrorLocation() + "Should never be invoked in Baseclass");
 	}
 
@@ -539,71 +566,35 @@ public abstract class Lop
 	 * @param input_index5 input index 5
 	 * @param output_index output index
 	 * @return instructions as string
-	 * @throws LopsException if LopsException occurs
 	 */
-	public String getInstructions(int input_index1, int input_index2, int input_index3, int input_index4, int input_index5, int output_index) throws LopsException {
+	public String getInstructions(int input_index1, int input_index2, int input_index3, int input_index4, int input_index5, int output_index) {
 		throw new LopsException(this.printErrorLocation() + "Should never be invoked in Baseclass");
 	}
 
-	/** Method should be overridden if needed
-	 * 
-	 * @param input1 input 1
-	 * @param input2 input 2
-	 * @param output output
-	 * @return instructions as string
-	 * @throws LopsException if LopsException occurs
-	 */
-	public String getInstructions(String input1, String input2, String output) throws LopsException {
-		throw new LopsException(this.printErrorLocation() + "Should never be invoked in Baseclass");
-	}
-
-	/** Method should be overridden if needed
-	 * 
-	 * @param input1 input 1
-	 * @param output output
-	 * @return instructions as string
-	 * @throws LopsException if LopsException occurs
-	 */
-	public String getInstructions(String input1, String output) throws LopsException {
-		throw new LopsException(this.printErrorLocation() + "Should never be invoked in Baseclass");
-	}
-
-	/** Method should be overridden if needed
-	 * 
-	 * @param output output
-	 * @return instructions as string
-	 * @throws LopsException if LopsException occurs
-	 */
-	public String getInstructions(String output) throws LopsException {
-		throw new LopsException(this.printErrorLocation() + "Should never be invoked in Baseclass");
-	}
 
 	/** Method should be overridden if needed
 	 * 
 	 * @param inputs array of inputs
 	 * @param outputs array of outputs
 	 * @return instructions as string
-	 * @throws LopsException if LopsException occurs
 	 */
-	public String getInstructions(String[] inputs, String[] outputs) throws LopsException {
+	public String getInstructions(String[] inputs, String[] outputs) {
 		throw new LopsException(this.printErrorLocation() + "Should never be invoked in Baseclass");
 	}
 	
 	/** Method should be overridden if needed
 	 * 
 	 * @return instructions as string
-	 * @throws LopsException if LopsException occurs
 	 */
-	public String getInstructions() throws LopsException {
+	public String getInstructions() {
 		throw new LopsException(this.printErrorLocation() + "Should never be invoked in Baseclass");
 	}
 
 	/** Method should be overridden if needed
 	 * 
 	 * @return simple instruction type
-	 * @throws LopsException if LopsException occurs
 	 */
-	public SimpleInstType getSimpleInstructionType() throws LopsException {
+	public SimpleInstType getSimpleInstructionType() {
 		throw new LopsException(this.printErrorLocation() + "Should never be invoked in Baseclass");
 	}
 
@@ -612,13 +603,16 @@ public abstract class Lop
 	///////////////////////////////////////////////////////////////////////////
 	public int _beginLine, _beginColumn;
 	public int _endLine, _endColumn;
+	public String _filename;
 	
 	public void setBeginLine(int passed)    { _beginLine = passed;   }
 	public void setBeginColumn(int passed) 	{ _beginColumn = passed; }
 	public void setEndLine(int passed) 		{ _endLine = passed;   }
 	public void setEndColumn(int passed)	{ _endColumn = passed; }
+	public void setFilename(String passed) { _filename = passed; }
 	
-	public void setAllPositions(int blp, int bcp, int elp, int ecp){
+	public void setAllPositions(String filename, int blp, int bcp, int elp, int ecp){
+		_filename = filename;
 		_beginLine	 = blp; 
 		_beginColumn = bcp; 
 		_endLine 	 = elp;
@@ -629,43 +623,15 @@ public abstract class Lop
 	public int getBeginColumn() { return _beginColumn; }
 	public int getEndLine() 	{ return _endLine;   }
 	public int getEndColumn()	{ return _endColumn; }
+	public String getFilename()	{ return _filename; }
 	
 	public String printErrorLocation(){
 		return "ERROR: line " + _beginLine + ", column " + _beginColumn + " -- ";
 	}
-	
-	public String printWarningLocation(){
-		return "WARNING: line " + _beginLine + ", column " + _beginColumn + " -- ";
-	}
 
-	//TODO: Leo This might get confused with Rand.getInstructions
-	public String getInstructions(String input, String rowl, String rowu,
-			String coll, String colu, String leftRowDim,
-			String leftColDim, String output) throws LopsException {
-		throw new LopsException(this.printErrorLocation() + "Should never be invoked in Baseclass");
-	}
-	
-	// stride1, stride2, padding1, padding2  
-	// input_shape1, input_shape2, input_shape3, input_shape4, 
-	// filter_shape1, filter_shape2, filter_shape3, filter_shape4,
-	public String getInstructions(String input, String stride1, String stride2, String padding1, String padding2, 
-			String input_shape1, String input_shape2, String input_shape3, String input_shape4,
-			String filter_shape1, String filter_shape2, String filter_shape3, String filter_shape4,
-			String output) throws LopsException {
-		throw new LopsException(this.printErrorLocation() + "Should never be invoked in Baseclass");
-	}
-	
-	// For pooling backward
-	public String getInstructions(String input, String dout, String stride1, String stride2, String padding1, String padding2, 
-			String input_shape1, String input_shape2, String input_shape3, String input_shape4,
-			String filter_shape1, String filter_shape2, String filter_shape3, String filter_shape4,
-			String output) throws LopsException {
-		throw new LopsException(this.printErrorLocation() + "Should never be invoked in Baseclass");
-	}
-	
 	public String getInstructions(int input, int rowl, int rowu,
 			int coll, int colu, int leftRowDim,
-			int leftColDim, int output) throws LopsException {
+			int leftColDim, int output) {
 		throw new LopsException(this.printErrorLocation() + "Should never be invoked in Baseclass");
 	}
 
@@ -742,7 +708,7 @@ public abstract class Lop
 	}
 	
 	public String prepOutputOperand(int index) {
-		return prepOperand(index+"");
+		return prepOperand(String.valueOf(index));
 	}
 	public String prepOutputOperand(String label) {
 		return prepOperand(label);
@@ -825,7 +791,7 @@ public abstract class Lop
 	}
 
 	public String prepInputOperand(int index) {
-		return prepInputOperand(index+"");
+		return prepInputOperand(String.valueOf(index));
 	}
 
 	public String prepInputOperand(String label) {

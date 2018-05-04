@@ -54,15 +54,13 @@ public class CombineUnary extends Lop
 		this.lps.setProperties( inputs, ExecType.MR, ExecLocation.Map, breaksAlignment, aligner, definesMRJob );
 	}
 	
-	public String toString()
-	{
-		return "combineunary";		
+	@Override
+	public String toString() {
+		return "combineunary";
 	}
 
 	@Override
-	public String getInstructions(int input_index1, int output_index) 
-		throws LopsException
-	{
+	public String getInstructions(int input_index1, int output_index) {
 		StringBuilder sb = new StringBuilder();
 		sb.append( getExecType() );
 		sb.append( Lop.OPERAND_DELIMITOR );
@@ -80,7 +78,7 @@ public class CombineUnary extends Lop
 	public static CombineUnary constructCombineLop(Lop input1, 
 			DataType dt, ValueType vt) {
 		
-		HashSet<Lop> set1 = new HashSet<Lop>();
+		HashSet<Lop> set1 = new HashSet<>();
 		set1.addAll(input1.getOutputs());
 			
 		for (Lop lop  : set1) {
@@ -90,7 +88,7 @@ public class CombineUnary extends Lop
 		}
 		
 		CombineUnary comn = new CombineUnary(input1, dt, vt);
-		comn.setAllPositions(input1.getBeginLine(), input1.getBeginColumn(), input1.getEndLine(), input1.getEndLine());
+		comn.setAllPositions(input1.getFilename(), input1.getBeginLine(), input1.getBeginColumn(), input1.getEndLine(), input1.getEndLine());
 		return comn;
 	}
 	

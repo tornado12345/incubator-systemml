@@ -47,42 +47,29 @@ import org.apache.sysml.runtime.matrix.operators.Operator;
 import org.apache.sysml.runtime.matrix.operators.QuaternaryOperator;
 import org.apache.sysml.runtime.matrix.operators.ReorgOperator;
 
-/**
- * 
- */
-public class QuaternaryInstruction extends MRInstruction implements IDistributedCacheConsumer
-{	
+public class QuaternaryInstruction extends MRInstruction implements IDistributedCacheConsumer {
 	private byte _input1 = -1;
 	private byte _input2 = -1;
-	private byte _input3 = -1;	
+	private byte _input3 = -1;
 	private byte _input4 = -1;
-	
+
 	private boolean _cacheU = false;
 	private boolean _cacheV = false;
-	
-	/**
-	 * 
-	 * @param type
-	 * @param in1
-	 * @param in2
-	 * @param out
-	 * @param istr
-	 */
-	public QuaternaryInstruction(Operator op, byte in1, byte in2, byte in3, byte in4, byte out, boolean cacheU, boolean cacheV, String istr)
-	{
-		super(op, out);
-		mrtype = MRINSTRUCTION_TYPE.Quaternary;
+
+	private QuaternaryInstruction(Operator op, byte in1, byte in2, byte in3, byte in4, byte out, boolean cacheU,
+			boolean cacheV, String istr) {
+		super(MRType.Quaternary, op, out);
 		instString = istr;
-		
+
 		_input1 = in1;
 		_input2 = in2;
 		_input3 = in3;
 		_input4 = in4;
-		
+
 		_cacheU = cacheU;
 		_cacheV = cacheV;
 	}
-	
+
 	public byte getInput1() {
 		return _input1;
 	}
@@ -99,13 +86,6 @@ public class QuaternaryInstruction extends MRInstruction implements IDistributed
 		return _input4;
 	}
 
-	/**
-	 * 
-	 * @param mc1
-	 * @param mc2
-	 * @param mc3
-	 * @param dimOut
-	 */
 	public void computeMatrixCharacteristics(MatrixCharacteristics mc1, MatrixCharacteristics mc2, 
 			MatrixCharacteristics mc3, MatrixCharacteristics dimOut) 
 	{
@@ -128,16 +108,8 @@ public class QuaternaryInstruction extends MRInstruction implements IDistributed
 			dimOut.set(mcTmp.getRows(), mcTmp.getCols(), mc1.getRowsPerBlock(), mc1.getColsPerBlock());	
 		}
 	}
-	
-	/**
-	 * 
-	 * @param str
-	 * @return
-	 * @throws DMLRuntimeException
-	 */
-	public static QuaternaryInstruction parseInstruction( String str ) 
-		throws DMLRuntimeException 
-	{		
+
+	public static QuaternaryInstruction parseInstruction( String str ) {
 		String opcode = InstructionUtils.getOpCode(str);
 		
 		//validity check
@@ -307,7 +279,6 @@ public class QuaternaryInstruction extends MRInstruction implements IDistributed
 	@Override
 	public void processInstruction(Class<? extends MatrixValue> valueClass, CachedValueMap cachedValues, 
 			           IndexedMatrixValue tempValue, IndexedMatrixValue zeroInput, int blockRowFactor, int blockColFactor)
-		throws DMLRuntimeException 
 	{
 		QuaternaryOperator qop = (QuaternaryOperator)optr; 
 		
@@ -319,7 +290,7 @@ public class QuaternaryInstruction extends MRInstruction implements IDistributed
 				if( imv==null )
 					continue;
 				MatrixIndexes inIx = imv.getIndexes();
-				MatrixValue inVal = imv.getValue();
+				MatrixBlock inVal = (MatrixBlock) imv.getValue();
 				
 				//allocate space for the output value
 				IndexedMatrixValue iout = null;
@@ -331,8 +302,8 @@ public class QuaternaryInstruction extends MRInstruction implements IDistributed
 				MatrixIndexes outIx = iout.getIndexes();
 				MatrixValue outVal = iout.getValue();
 				
-				//Step 2: get remaining inputs: Wij, Ui, Vj		
-				MatrixValue Xij = inVal;
+				//Step 2: get remaining inputs: Wij, Ui, Vj
+				MatrixBlock Xij = inVal;
 				
 				//get Wij if existing (null of WeightsType.NONE or WSigmoid any type)
 				IndexedMatrixValue iWij = (_input4 != -1) ? cachedValues.getFirst(_input4) : null; 
@@ -357,7 +328,7 @@ public class QuaternaryInstruction extends MRInstruction implements IDistributed
 				}
 				
 				//Step 3: process instruction
-				Xij.quaternaryOperations(qop, Ui, Vj, Wij, outVal);
+				Xij.quaternaryOperations(qop, (MatrixBlock)Ui, (MatrixBlock)Vj, (MatrixBlock)Wij, (MatrixBlock)outVal);
 				
 				//set output indexes
 				

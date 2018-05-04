@@ -22,9 +22,10 @@ package org.apache.sysml.hops;
 import java.util.ArrayList;
 
 import org.apache.sysml.lops.FunctionCallCP;
+import org.apache.sysml.lops.FunctionCallCPSingle;
 import org.apache.sysml.lops.Lop;
-import org.apache.sysml.lops.LopsException;
 import org.apache.sysml.lops.LopProperties.ExecType;
+import org.apache.sysml.parser.DMLProgram;
 import org.apache.sysml.parser.Expression.DataType;
 import org.apache.sysml.parser.Expression.ValueType;
 import org.apache.sysml.runtime.controlprogram.Program;
@@ -33,14 +34,11 @@ import org.apache.sysml.runtime.controlprogram.parfor.opt.CostEstimatorHops;
 /**
  * This FunctionOp represents the call to a DML-bodied or external function.
  * 
- * Note: Currently, we support expressions in function arguments but no function calls
- * in expressions.
+ * Note: Currently, we support expressions in function arguments along with function calls
+ * in expressions with single outputs, leaving multiple outputs handling as it is.
  */
 public class FunctionOp extends Hop
 {
-	
-	public static String OPSTRING = "extfunct";
-	
 	public enum FunctionType{
 		DML,
 		EXTERNAL_MEM,
@@ -49,22 +47,25 @@ public class FunctionOp extends Hop
 		UNKNOWN
 	}
 	
+	public static final String OPSTRING = "extfunct";
+	
 	private FunctionType _type = null;
 	private String _fnamespace = null;
 	private String _fname = null; 
 	private String[] _outputs = null; 
 	private ArrayList<Hop> _outputHops = null;
+	private boolean _singleOutFun = false;
 	
 	private FunctionOp() {
 		//default constructor for clone
 	}
 
 	public FunctionOp(FunctionType type, String fnamespace, String fname, ArrayList<Hop> finputs, String[] outputs, ArrayList<Hop> outputHops) {
-		this(type, fnamespace, fname, finputs, outputs);
+		this(type, fnamespace, fname, finputs, outputs, false);
 		_outputHops = outputHops;
 	}
 
-	public FunctionOp(FunctionType type, String fnamespace, String fname, ArrayList<Hop> finputs, String[] outputs) 
+	public FunctionOp(FunctionType type, String fnamespace, String fname, ArrayList<Hop> finputs, String[] outputs, boolean singleOut) 
 	{
 		super(fnamespace + Program.KEY_DELIM + fname, DataType.UNKNOWN, ValueType.UNKNOWN );
 		
@@ -72,26 +73,32 @@ public class FunctionOp extends Hop
 		_fnamespace = fnamespace;
 		_fname = fname;
 		_outputs = outputs;
+		_singleOutFun = singleOut;
 		
-		for( Hop in : finputs )
-		{			
+		for( Hop in : finputs ) {
 			getInput().add(in);
 			in.getParent().add(this);
 		}
 	}
+
+	/** FunctionOps may have any number of inputs. */
+	@Override
+	public void checkArity() {}
 	
-	public String getFunctionNamespace()
-	{
+	public String getFunctionKey() {
+		return DMLProgram.constructFunctionKey(
+			getFunctionNamespace(), getFunctionName());
+	}
+	
+	public String getFunctionNamespace() {
 		return _fnamespace;
 	}
 	
-	public String getFunctionName()
-	{
+	public String getFunctionName() {
 		return _fname;
 	}
 	
-	public void setFunctionName( String fname )
-	{
+	public void setFunctionName( String fname ) {
 		_fname = fname;
 	}
 	
@@ -99,13 +106,11 @@ public class FunctionOp extends Hop
 		return _outputHops;
 	}
 	
-	public String[] getOutputVariableNames()
-	{
+	public String[] getOutputVariableNames() {
 		return _outputs;
 	}
 	
-	public FunctionType getFunctionType()
-	{
+	public FunctionType getFunctionType() {
 		return _type;
 	}
 
@@ -163,6 +168,12 @@ public class FunctionOp extends Hop
 				long outputValues = OptimizerUtils.estimateSizeExactSparsity(getOutputs().get(1).getDim1(), 1, 1.0);
 				return outputVectors+outputValues; 
 			}
+			else if ( getFunctionName().equalsIgnoreCase("svd") ) {
+				long outputU = OptimizerUtils.estimateSizeExactSparsity(getOutputs().get(0).getDim1(), getOutputs().get(0).getDim2(), 1.0);
+				long outputSigma = OptimizerUtils.estimateSizeExactSparsity(getOutputs().get(1).getDim1(), getOutputs().get(1).getDim2(), 1.0);
+				long outputV = OptimizerUtils.estimateSizeExactSparsity(getOutputs().get(2).getDim1(), getOutputs().get(2).getDim2(), 1.0);
+				return outputU+outputSigma+outputV;
+			}
 			else
 				throw new RuntimeException("Invalid call of computeOutputMemEstimate in FunctionOp.");
 		}
@@ -176,21 +187,19 @@ public class FunctionOp extends Hop
 		else {
 			if ( getFunctionName().equalsIgnoreCase("qr") ) {
 				// matrix of size same as the input
-				double interOutput = OptimizerUtils.estimateSizeExactSparsity(getInput().get(0).getDim1(), getInput().get(0).getDim2(), 1.0); 
-				//System.out.println("QRInter " + interOutput/1024/1024);
-				return interOutput;
+				return OptimizerUtils.estimateSizeExactSparsity(getInput().get(0).getDim1(), getInput().get(0).getDim2(), 1.0); 
 			}
 			else if ( getFunctionName().equalsIgnoreCase("lu")) {
 				// 1D vector 
-				double interOutput = OptimizerUtils.estimateSizeExactSparsity(getInput().get(0).getDim1(), 1, 1.0); 
-				//System.out.println("LUInter " + interOutput/1024/1024);
-				return interOutput;
+				return OptimizerUtils.estimateSizeExactSparsity(getInput().get(0).getDim1(), 1, 1.0); 
 			}
 			else if ( getFunctionName().equalsIgnoreCase("eigen")) {
 				// One matrix of size original input and three 1D vectors (used to represent tridiagonal matrix)
-				double interOutput = OptimizerUtils.estimateSizeExactSparsity(getInput().get(0).getDim1(), getInput().get(0).getDim2(), 1.0) 
+				return OptimizerUtils.estimateSizeExactSparsity(getInput().get(0).getDim1(), getInput().get(0).getDim2(), 1.0) 
 						+ 3*OptimizerUtils.estimateSizeExactSparsity(getInput().get(0).getDim1(), 1, 1.0); 
-				//System.out.println("EigenInter " + interOutput/1024/1024);
+			}
+			else if ( getFunctionName().equalsIgnoreCase("svd")) {
+				double interOutput = OptimizerUtils.estimateSizeExactSparsity(1, getInput().get(0).getDim2(), 1.0);
 				return interOutput;
 			}
 			else
@@ -205,25 +214,30 @@ public class FunctionOp extends Hop
 	}
 	
 	@Override
+	public boolean isGPUEnabled() {
+		return false;
+	}
+	
+	@Override
 	public Lop constructLops() 
-		throws HopsException, LopsException 
 	{
 		//return already created lops
 		if( getLops() != null )
 			return getLops();
-
+		
 		ExecType et = optFindExecType();
 		
 		//construct input lops (recursive)
-		ArrayList<Lop> tmp = new ArrayList<Lop>();
+		ArrayList<Lop> tmp = new ArrayList<>();
 		for( Hop in : getInput() )
 			tmp.add( in.constructLops() );
-		
+		 
 		//construct function call
-		FunctionCallCP fcall = new FunctionCallCP( tmp, _fnamespace, _fname, _outputs, _outputHops, et );
-		setLineNumbers( fcall );
-		setLops( fcall );
-	
+		Lop fcall = _singleOutFun ? new FunctionCallCPSingle( tmp, _fnamespace, _fname, et ) :
+			new FunctionCallCP(tmp, _fnamespace, _fname, _outputs, _outputHops, et);
+		setLineNumbers(fcall);
+		setLops(fcall);
+		
 		//note: no reblock lop because outputs directly bound
 		
 		return getLops();
@@ -237,7 +251,6 @@ public class FunctionOp extends Hop
 
 	@Override
 	protected ExecType optFindExecType() 
-		throws HopsException 
 	{
 		checkAndSetForcedPlatform();
 		

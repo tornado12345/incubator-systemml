@@ -26,33 +26,13 @@ import org.apache.sysml.runtime.matrix.data.CSVFileFormatProperties;
 import org.apache.sysml.runtime.matrix.data.FileFormatProperties;
 import org.apache.sysml.runtime.matrix.data.OutputInfo;
 
-/**
- * 
- * 
- */
 public class FrameWriterFactory 
 {
-	/**
-	 * 
-	 * @param oinfo
-	 * @return
-	 * @throws DMLRuntimeException
-	 */
-	public static FrameWriter createFrameWriter( OutputInfo oinfo ) 
-			throws DMLRuntimeException
-	{
+	public static FrameWriter createFrameWriter( OutputInfo oinfo ) {
 		return createFrameWriter(oinfo, null);
 	}
-	
-	/**
-	 * 
-	 * @param oinfo
-	 * @param props 
-	 * @return
-	 * @throws DMLRuntimeException
-	 */
+
 	public static FrameWriter createFrameWriter( OutputInfo oinfo, FileFormatProperties props ) 
-		throws DMLRuntimeException
 	{
 		FrameWriter writer = null;
 		

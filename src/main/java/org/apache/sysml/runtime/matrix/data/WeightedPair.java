@@ -32,8 +32,9 @@ public class WeightedPair extends WeightedCell
 	private static final long serialVersionUID = 8772815876289553196L;
 
 	private double other=0;
-	public String toString()
-	{
+	
+	@Override
+	public String toString() {
 		return value+", "+other+": "+weight;
 	}
 	
@@ -51,12 +52,13 @@ public class WeightedPair extends WeightedCell
 		out.writeDouble(weight);
 	}
 
-	private static WeightedPair checkType(MatrixValue cell) throws DMLRuntimeException
-	{
+	private static WeightedPair checkType(MatrixValue cell) {
 		if( cell!=null && !(cell instanceof WeightedPair))
 			throw new DMLRuntimeException("the Matrix Value is not WeightedPair!");
 		return (WeightedPair) cell;
 	}
+	
+	@Override
 	public void copy(MatrixValue that){
 		WeightedPair c2;
 		try {

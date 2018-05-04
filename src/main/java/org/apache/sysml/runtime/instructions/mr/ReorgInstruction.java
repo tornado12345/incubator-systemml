@@ -35,42 +35,32 @@ import org.apache.sysml.runtime.matrix.mapred.CachedValueMap;
 import org.apache.sysml.runtime.matrix.mapred.IndexedMatrixValue;
 import org.apache.sysml.runtime.matrix.operators.ReorgOperator;
 
-
-public class ReorgInstruction extends UnaryMRInstructionBase 
-{
-	
-	//required for diag (size-based type, load-balance-aware output of empty blocks)
+public class ReorgInstruction extends UnaryMRInstructionBase {
+	// required for diag (size-based type, load-balance-aware output of empty
+	// blocks)
 	private MatrixCharacteristics _mcIn = null;
 	private boolean _outputEmptyBlocks = true;
-	
-	public ReorgInstruction(ReorgOperator op, byte in, byte out, String istr)
-	{
-		super(op, in, out);
-		mrtype = MRINSTRUCTION_TYPE.Reorg;
+
+	private ReorgInstruction(ReorgOperator op, byte in, byte out, String istr) {
+		super(MRType.Reorg, op, in, out);
 		instString = istr;
 	}
-	
-	public void setInputMatrixCharacteristics( MatrixCharacteristics in )
-	{
+
+	public void setInputMatrixCharacteristics( MatrixCharacteristics in ) {
 		_mcIn = in; 
 	}
 	
-	public void setOutputEmptyBlocks( boolean flag )
-	{
+	public void setOutputEmptyBlocks( boolean flag ) {
 		_outputEmptyBlocks = flag; 
 	}
 	
-	public static ReorgInstruction parseInstruction ( String str ) throws DMLRuntimeException {
-		
+	public static ReorgInstruction parseInstruction ( String str ) {
 		InstructionUtils.checkNumFields ( str, 2 );
-		
 		String[] parts = InstructionUtils.getInstructionParts ( str );
-		
 		byte in, out;
 		String opcode = parts[0];
 		in = Byte.parseByte(parts[1]);
 		out = Byte.parseByte(parts[2]);
-		
 		if ( opcode.equalsIgnoreCase("r'") ) {
 			return new ReorgInstruction(new ReorgOperator(SwapIndex.getSwapIndexFnObject()), in, out, str);
 		} 
@@ -83,15 +73,12 @@ public class ReorgInstruction extends UnaryMRInstructionBase
 		else {
 			throw new DMLRuntimeException("Unknown opcode while parsing a ReorgInstruction: " + str);
 		}
-		
 	}
 
 	@Override
 	public void processInstruction(Class<? extends MatrixValue> valueClass,
 			CachedValueMap cachedValues, IndexedMatrixValue tempValue, IndexedMatrixValue zeroInput, 
-			int blockRowFactor, int blockColFactor)
-			throws DMLRuntimeException {
-		
+			int blockRowFactor, int blockColFactor) {
 		ArrayList<IndexedMatrixValue> blkList = cachedValues.get(input);
 		
 		if( blkList != null )
@@ -153,7 +140,7 @@ public class ReorgInstruction extends UnaryMRInstructionBase
 				else if( ((ReorgOperator)optr).fn instanceof RevIndex ) 
 				{
 					//execute reverse operation
-					ArrayList<IndexedMatrixValue> out = new ArrayList<IndexedMatrixValue>();
+					ArrayList<IndexedMatrixValue> out = new ArrayList<>();
 					LibMatrixReorg.rev(in, _mcIn.getRows(), _mcIn.getRowsPerBlock(), out);
 					
 					//output indexed matrix values

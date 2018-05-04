@@ -45,7 +45,6 @@ public class Checkpoint extends Lop
 	public static final StorageLevel DEFAULT_STORAGE_LEVEL = StorageLevel.MEMORY_AND_DISK();
 	public static final StorageLevel SER_STORAGE_LEVEL = StorageLevel.MEMORY_AND_DISK_SER();
 	public static final boolean CHECKPOINT_SPARSE_CSR = true; 
-	public static final String STORAGE_LEVEL = "storage.level"; 
 
 	private StorageLevel _storageLevel;
 	
@@ -58,12 +57,9 @@ public class Checkpoint extends Lop
 	 * @param dt data type
 	 * @param vt value type
 	 * @param level storage level
-	 * @throws LopsException if LopsException occurs
 	 */
-	public Checkpoint(Lop input, DataType dt, ValueType vt, String level) 
-		throws LopsException
-	{
-		super(Lop.Type.Checkpoint, dt, vt);		
+	public Checkpoint(Lop input, DataType dt, ValueType vt, String level)  {
+		super(Lop.Type.Checkpoint, dt, vt);
 		this.addInput(input);
 		input.addOutput(this);
 		
@@ -93,9 +89,7 @@ public class Checkpoint extends Lop
 	}
 	
 	@Override
-	public String getInstructions(String input1, String output) 
-		throws LopsException 
-	{
+	public String getInstructions(String input1, String output) {
 		//valid execution type
 		if(getExecType() != ExecType.SPARK) {
 			throw new LopsException("Wrong execution type for Checkpoint.getInstructions (expected: SPARK, found: "+getExecType()+").");

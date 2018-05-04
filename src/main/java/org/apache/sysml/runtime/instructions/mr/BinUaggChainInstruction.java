@@ -21,7 +21,6 @@ package org.apache.sysml.runtime.instructions.mr;
 
 import java.util.ArrayList;
 
-import org.apache.sysml.runtime.DMLRuntimeException;
 import org.apache.sysml.runtime.instructions.InstructionUtils;
 import org.apache.sysml.runtime.matrix.data.MatrixBlock;
 import org.apache.sysml.runtime.matrix.data.MatrixIndexes;
@@ -32,70 +31,39 @@ import org.apache.sysml.runtime.matrix.mapred.IndexedMatrixValue;
 import org.apache.sysml.runtime.matrix.operators.AggregateUnaryOperator;
 import org.apache.sysml.runtime.matrix.operators.BinaryOperator;
 
-
-/**
- * 
- */
-public class BinUaggChainInstruction extends UnaryInstruction 
-{
-	
-	//operators
+public class BinUaggChainInstruction extends UnaryInstruction {
+	// operators
 	private BinaryOperator _bOp = null;
 	private AggregateUnaryOperator _uaggOp = null;
-	
-	//reused intermediates  
+
+	// reused intermediates
 	private MatrixIndexes _tmpIx = null;
 	private MatrixValue _tmpVal = null;
-	
-	/**
-	 * 
-	 * @param bop
-	 * @param uaggop
-	 * @param in1
-	 * @param out
-	 * @param istr
-	 */
-	public BinUaggChainInstruction(BinaryOperator bop, AggregateUnaryOperator uaggop, byte in1, byte out, String istr)
-	{
-		super(null, in1, out, istr);
-		
+
+	private BinUaggChainInstruction(BinaryOperator bop, AggregateUnaryOperator uaggop, byte in1, byte out, String istr) {
+		super(MRType.BinUaggChain, null, in1, out, istr);
 		_bOp = bop;
 		_uaggOp = uaggop;
-		
 		_tmpIx = new MatrixIndexes();
 		_tmpVal = new MatrixBlock();
-		
-		mrtype = MRINSTRUCTION_TYPE.BinUaggChain;
 		instString = istr;
 	}
-	
-	/**
-	 * 
-	 * @param str
-	 * @return
-	 * @throws DMLRuntimeException
-	 */
-	public static BinUaggChainInstruction parseInstruction( String str ) 
-		throws DMLRuntimeException 
-	{		
+
+	public static BinUaggChainInstruction parseInstruction( String str ) {
 		//check number of fields (2/3 inputs, output, type)
 		InstructionUtils.checkNumFields ( str, 4 );
-		
 		//parse instruction parts (without exec type)
-		String[] parts = InstructionUtils.getInstructionParts( str );		
-		
+		String[] parts = InstructionUtils.getInstructionParts( str );
 		BinaryOperator bop = InstructionUtils.parseBinaryOperator(parts[1]);
 		AggregateUnaryOperator uaggop = InstructionUtils.parseBasicAggregateUnaryOperator(parts[2]);
 		byte in1 = Byte.parseByte(parts[3]);
 		byte out = Byte.parseByte(parts[4]);
-		
 		return new BinUaggChainInstruction(bop, uaggop, in1, out, str);
 	}
 	
 	@Override
 	public void processInstruction(Class<? extends MatrixValue> valueClass, CachedValueMap cachedValues, 
-			           IndexedMatrixValue tempValue, IndexedMatrixValue zeroInput, int blockRowFactor, int blockColFactor)
-		throws DMLRuntimeException 
+		IndexedMatrixValue tempValue, IndexedMatrixValue zeroInput, int blockRowFactor, int blockColFactor)
 	{
 		ArrayList<IndexedMatrixValue> blkList = cachedValues.get( input );
 		if( blkList == null )
@@ -116,7 +84,7 @@ public class BinUaggChainInstruction extends UnaryInstruction
 			
 			//process instruction
 			OperationsOnMatrixValues.performAggregateUnary( inIx, inVal, _tmpIx, _tmpVal, _uaggOp, blockRowFactor, blockColFactor);
-			((MatrixBlock)_tmpVal).dropLastRowsOrColums(_uaggOp.aggOp.correctionLocation);
+			((MatrixBlock)_tmpVal).dropLastRowsOrColumns(_uaggOp.aggOp.correctionLocation);
 			OperationsOnMatrixValues.performBinaryIgnoreIndexes(inVal, _tmpVal, outVal, _bOp);
 			outIx.setIndexes(inIx);
 		}

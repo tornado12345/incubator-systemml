@@ -36,18 +36,13 @@ public class SortKeys extends Lop
 		WithWeights, 
 		WithoutWeights,
 		Indexes,
-	};
+	}
 	
 	private OperationTypes operation;
 	private boolean descending = false;
 	
 	public OperationTypes getOpType() {
 		return operation;
-	}
-	
-	public SortKeys(Lop input, OperationTypes op, DataType dt, ValueType vt) {
-		super(Lop.Type.SortKeys, dt, vt);		
-		init(input, null, op, ExecType.MR);
 	}
 
 	public SortKeys(Lop input, OperationTypes op, DataType dt, ValueType vt, ExecType et) {
@@ -157,7 +152,7 @@ public class SortKeys extends Lop
 		}
 		
 		SortKeys retVal = new SortKeys(input1, op, dt, vt, et);
-		retVal.setAllPositions(input1.getBeginLine(), input1.getBeginColumn(), input1.getEndLine(), input1.getEndColumn());
+		retVal.setAllPositions(input1.getFilename(), input1.getBeginLine(), input1.getBeginColumn(), input1.getEndLine(), input1.getEndColumn());
 		return retVal;
 	}
 
@@ -165,7 +160,7 @@ public class SortKeys extends Lop
 	public static SortKeys constructSortByValueLop(Lop input1, Lop input2, OperationTypes op, 
 			DataType dt, ValueType vt, ExecType et) {
 		
-		HashSet<Lop> set1 = new HashSet<Lop>();
+		HashSet<Lop> set1 = new HashSet<>();
 		set1.addAll(input1.getOutputs());
 		// find intersection of input1.getOutputs() and input2.getOutputs();
 		set1.retainAll(input2.getOutputs());
@@ -177,7 +172,7 @@ public class SortKeys extends Lop
 		}
 		
 		SortKeys retVal = new SortKeys(input1, input2, op, dt, vt, et);
-		retVal.setAllPositions(input1.getBeginLine(), input1.getBeginColumn(), input1.getEndLine(), input1.getEndColumn());
+		retVal.setAllPositions(input1.getFilename(), input1.getBeginLine(), input1.getBeginColumn(), input1.getEndLine(), input1.getEndColumn());
 		return retVal;
 	}
 

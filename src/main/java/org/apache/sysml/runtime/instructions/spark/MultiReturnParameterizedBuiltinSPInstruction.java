@@ -20,20 +20,19 @@
 package org.apache.sysml.runtime.instructions.spark;
 
 import java.io.IOException;
-import java.io.Serializable;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
 import java.util.Map.Entry;
 
-import org.apache.spark.Accumulator;
-import org.apache.spark.AccumulatorParam;
 import org.apache.spark.api.java.JavaPairRDD;
 import org.apache.spark.api.java.JavaRDD;
+import org.apache.spark.api.java.JavaSparkContext;
 import org.apache.spark.api.java.function.FlatMapFunction;
 import org.apache.spark.api.java.function.PairFlatMapFunction;
 import org.apache.spark.broadcast.Broadcast;
+import org.apache.spark.util.AccumulatorV2;
 import org.apache.sysml.parser.Expression.DataType;
 import org.apache.sysml.parser.Expression.ValueType;
 import org.apache.sysml.runtime.DMLRuntimeException;
@@ -57,43 +56,29 @@ import org.apache.sysml.runtime.matrix.data.InputInfo;
 import org.apache.sysml.runtime.matrix.data.MatrixBlock;
 import org.apache.sysml.runtime.matrix.data.MatrixIndexes;
 import org.apache.sysml.runtime.matrix.operators.Operator;
-import org.apache.sysml.runtime.transform.MVImputeAgent;
-import org.apache.sysml.runtime.transform.MVImputeAgent.MVMethod;
-import org.apache.sysml.runtime.transform.RecodeAgent;
 import org.apache.sysml.runtime.transform.encode.Encoder;
 import org.apache.sysml.runtime.transform.encode.EncoderComposite;
 import org.apache.sysml.runtime.transform.encode.EncoderFactory;
+import org.apache.sysml.runtime.transform.encode.EncoderMVImpute;
+import org.apache.sysml.runtime.transform.encode.EncoderRecode;
+import org.apache.sysml.runtime.transform.encode.EncoderMVImpute.MVMethod;
 import org.apache.sysml.runtime.transform.meta.TfMetaUtils;
 import org.apache.sysml.runtime.transform.meta.TfOffsetMap;
 
 import scala.Tuple2;
 
-
-public class MultiReturnParameterizedBuiltinSPInstruction extends ComputationSPInstruction 
-{
+public class MultiReturnParameterizedBuiltinSPInstruction extends ComputationSPInstruction {
 	protected ArrayList<CPOperand> _outputs;
-	
-	public MultiReturnParameterizedBuiltinSPInstruction(Operator op, CPOperand input1, CPOperand input2, ArrayList<CPOperand> outputs, String opcode, String istr ) {
-		super(op, input1, input2, outputs.get(0), opcode, istr);
-		_sptype = SPINSTRUCTION_TYPE.MultiReturnBuiltin;
+
+	private MultiReturnParameterizedBuiltinSPInstruction(Operator op, CPOperand input1, CPOperand input2,
+			ArrayList<CPOperand> outputs, String opcode, String istr) {
+		super(SPType.MultiReturnBuiltin, op, input1, input2, outputs.get(0), opcode, istr);
 		_outputs = outputs;
 	}
-	
-	public CPOperand getOutput(int i) {
-		return _outputs.get(i);
-	}
-	
-	/**
-	 * 
-	 * @param str
-	 * @return
-	 * @throws DMLRuntimeException
-	 */
-	public static MultiReturnParameterizedBuiltinSPInstruction parseInstruction( String str ) 
-		throws DMLRuntimeException 
-	{
+
+	public static MultiReturnParameterizedBuiltinSPInstruction parseInstruction( String str ) {
 		String[] parts = InstructionUtils.getInstructionPartsWithValueType(str);
-		ArrayList<CPOperand> outputs = new ArrayList<CPOperand>();
+		ArrayList<CPOperand> outputs = new ArrayList<>();
 		String opcode = parts[0];
 		
 		if ( opcode.equalsIgnoreCase("transformencode") ) {
@@ -112,9 +97,7 @@ public class MultiReturnParameterizedBuiltinSPInstruction extends ComputationSPI
 
 	@Override 
 	@SuppressWarnings("unchecked")
-	public void processInstruction(ExecutionContext ec) 
-		throws DMLRuntimeException 
-	{
+	public void processInstruction(ExecutionContext ec) {
 		SparkExecutionContext sec = (SparkExecutionContext) ec;
 		
 		try
@@ -127,20 +110,20 @@ public class MultiReturnParameterizedBuiltinSPInstruction extends ComputationSPI
 			String spec = ec.getScalarInput(input2.getName(), input2.getValueType(), input2.isLiteral()).getStringValue();
 			MatrixCharacteristics mcIn = sec.getMatrixCharacteristics(input1.getName());
 			MatrixCharacteristics mcOut = sec.getMatrixCharacteristics(output.getName());
-			String[] colnames = !TfMetaUtils.isIDSpecification(spec) ?
+			String[] colnames = !TfMetaUtils.isIDSpec(spec) ?
 					in.lookup(1L).get(0).getColumnNames() : null; 
 					
 			//step 1: build transform meta data
 			Encoder encoderBuild = EncoderFactory.createEncoder(spec, colnames,
 					fo.getSchema(), (int)fo.getNumColumns(), null);
 			
-			Accumulator<Long> accMax = sec.getSparkContext().accumulator(0L, new MaxAcc()); 
+			MaxLongAccumulator accMax = registerMaxLongAccumulator(sec.getSparkContext()); 
 			JavaRDD<String> rcMaps = in
 					.mapPartitionsToPair(new TransformEncodeBuildFunction(encoderBuild))
 					.distinct().groupByKey()
 					.flatMap(new TransformEncodeGroupFunction(accMax));
 			if( containsMVImputeEncoder(encoderBuild) ) {
-				MVImputeAgent mva = getMVImputeEncoder(encoderBuild);
+				EncoderMVImpute mva = getMVImputeEncoder(encoderBuild);
 				rcMaps = rcMaps.union(
 						in.mapPartitionsToPair(new TransformEncodeBuild2Function(mva))
 						  .groupByKey().flatMap(new TransformEncodeGroup2Function(mva)) );
@@ -160,7 +143,7 @@ public class MultiReturnParameterizedBuiltinSPInstruction extends ComputationSPI
 				omap = new TfOffsetMap(SparkUtils.toIndexedLong(in.mapToPair(
 					new RDDTransformApplyOffsetFunction(spec, colnames)).collect()));
 			}
-				
+			
 			//create encoder broadcast (avoiding replication per task) 
 			Encoder encoder = EncoderFactory.createEncoder(spec, colnames,
 					fo.getSchema(), (int)fo.getNumColumns(), meta);
@@ -183,31 +166,69 @@ public class MultiReturnParameterizedBuiltinSPInstruction extends ComputationSPI
 			throw new RuntimeException(ex);
 		}
 	}
-	
-	/**
-	 * 
-	 * @param encoder
-	 * @return
-	 */
-	private boolean containsMVImputeEncoder(Encoder encoder) {
+
+	private static boolean containsMVImputeEncoder(Encoder encoder) {
 		if( encoder instanceof EncoderComposite )
 			for( Encoder cencoder : ((EncoderComposite)encoder).getEncoders() )
-				if( cencoder instanceof MVImputeAgent )
+				if( cencoder instanceof EncoderMVImpute )
 					return true;
 		return false;	
 	}
-	
-	/**
-	 * 
-	 * @param encoder
-	 * @return
-	 */
-	private MVImputeAgent getMVImputeEncoder(Encoder encoder) {
+
+	private static EncoderMVImpute getMVImputeEncoder(Encoder encoder) {
 		if( encoder instanceof EncoderComposite )
 			for( Encoder cencoder : ((EncoderComposite)encoder).getEncoders() )
-				if( cencoder instanceof MVImputeAgent )
-					return (MVImputeAgent) cencoder;
+				if( cencoder instanceof EncoderMVImpute )
+					return (EncoderMVImpute) cencoder;
 		return null;	
+	}
+	
+	private static MaxLongAccumulator registerMaxLongAccumulator(JavaSparkContext sc) {
+		MaxLongAccumulator acc = new MaxLongAccumulator(Long.MIN_VALUE);
+		sc.sc().register(acc, "max");
+		return acc;
+	}
+	
+
+	private static class MaxLongAccumulator extends AccumulatorV2<Long,Long>
+	{
+		private static final long serialVersionUID = -3739727823287550826L;
+
+		private long _value = Long.MIN_VALUE;
+		
+		public MaxLongAccumulator(long value) {
+			_value = value;
+		}
+
+		@Override
+		public void add(Long arg0) {
+			_value = Math.max(_value, arg0);
+		}
+
+		@Override
+		public AccumulatorV2<Long, Long> copy() {
+			return new MaxLongAccumulator(_value);
+		}
+
+		@Override
+		public boolean isZero() {
+			return _value == Long.MIN_VALUE;
+		}
+
+		@Override
+		public void merge(AccumulatorV2<Long, Long> arg0) {
+			_value = Math.max(_value, arg0.value());
+		}
+
+		@Override
+		public void reset() {
+			_value = Long.MIN_VALUE;
+		}
+
+		@Override
+		public Long value() {
+			return _value;
+		}
 	}
 	
 	/**
@@ -221,16 +242,16 @@ public class MultiReturnParameterizedBuiltinSPInstruction extends ComputationSPI
 	{
 		private static final long serialVersionUID = 6336375833412029279L;
 
-		private RecodeAgent _raEncoder = null;
+		private EncoderRecode _raEncoder = null;
 		
 		public TransformEncodeBuildFunction(Encoder encoder) {
 			for( Encoder cEncoder : ((EncoderComposite)encoder).getEncoders() )
-				if( cEncoder instanceof RecodeAgent )
-					_raEncoder = (RecodeAgent)cEncoder;
+				if( cEncoder instanceof EncoderRecode )
+					_raEncoder = (EncoderRecode)cEncoder;
 		}
 		
 		@Override
-		public Iterable<Tuple2<Integer, Object>> call(Iterator<Tuple2<Long, FrameBlock>> iter)
+		public Iterator<Tuple2<Integer, Object>> call(Iterator<Tuple2<Long, FrameBlock>> iter)
 			throws Exception 
 		{
 			//build meta data (e.g., recode maps)
@@ -239,14 +260,14 @@ public class MultiReturnParameterizedBuiltinSPInstruction extends ComputationSPI
 			}
 			
 			//output recode maps as columnID - token pairs
-			ArrayList<Tuple2<Integer,Object>> ret = new ArrayList<Tuple2<Integer,Object>>();
+			ArrayList<Tuple2<Integer,Object>> ret = new ArrayList<>();
 			HashMap<Integer,HashSet<Object>> tmp = _raEncoder.getCPRecodeMapsPartial();
 			for( Entry<Integer,HashSet<Object>> e1 : tmp.entrySet() )
 				for( Object token : e1.getValue() )
-					ret.add(new Tuple2<Integer,Object>(e1.getKey(), token));
+					ret.add(new Tuple2<>(e1.getKey(), token));
 			_raEncoder.getCPRecodeMapsPartial().clear();
 		
-			return ret;
+			return ret.iterator();
 		}
 	}
 	
@@ -262,20 +283,20 @@ public class MultiReturnParameterizedBuiltinSPInstruction extends ComputationSPI
 	{
 		private static final long serialVersionUID = -1034187226023517119L;
 
-		private Accumulator<Long> _accMax = null;
+		private MaxLongAccumulator _accMax = null;
 		
-		public TransformEncodeGroupFunction( Accumulator<Long> accMax ) {
+		public TransformEncodeGroupFunction( MaxLongAccumulator accMax ) {
 			_accMax = accMax;
 		}
 		
 		@Override
-		public Iterable<String> call(Tuple2<Integer, Iterable<Object>> arg0)
+		public Iterator<String> call(Tuple2<Integer, Iterable<Object>> arg0)
 			throws Exception 
 		{
 			String colID = String.valueOf(arg0._1());
 			Iterator<Object> iter = arg0._2().iterator();
 			
-			ArrayList<String> ret = new ArrayList<String>();
+			ArrayList<String> ret = new ArrayList<>();
 			StringBuilder sb = new StringBuilder();
 			long rowID = 1;
 			while( iter.hasNext() ) {
@@ -283,7 +304,7 @@ public class MultiReturnParameterizedBuiltinSPInstruction extends ComputationSPI
 				sb.append(' ');
 				sb.append(colID);
 				sb.append(' ');
-				sb.append(RecodeAgent.constructRecodeMapEntry(
+				sb.append(EncoderRecode.constructRecodeMapEntry(
 						iter.next().toString(), rowID));
 				ret.add(sb.toString());
 				sb.setLength(0); 
@@ -291,48 +312,22 @@ public class MultiReturnParameterizedBuiltinSPInstruction extends ComputationSPI
 			}
 			_accMax.add(rowID-1);
 			
-			return ret;
+			return ret.iterator();
 		}
 	}
-	
-	/**
-	 * 
-	 */
-	private static class MaxAcc implements AccumulatorParam<Long>, Serializable 
-	{
-		private static final long serialVersionUID = -3739727823287550826L;
 
-		@Override
-		public Long addInPlace(Long arg0, Long arg1) {
-			return Math.max(arg0, arg1);
-		}
-
-		@Override
-		public Long zero(Long arg0) {
-			return arg0;
-		}
-
-		@Override
-		public Long addAccumulator(Long arg0, Long arg1) {
-			return Math.max(arg0, arg1);	
-		}
-	}
-	
-	/**
-	 * 
-	 */
 	public static class TransformEncodeBuild2Function implements PairFlatMapFunction<Iterator<Tuple2<Long, FrameBlock>>, Integer, ColumnMetadata>
 	{
 		private static final long serialVersionUID = 6336375833412029279L;
 
-		private MVImputeAgent _encoder = null;
+		private EncoderMVImpute _encoder = null;
 		
-		public TransformEncodeBuild2Function(MVImputeAgent encoder) {
+		public TransformEncodeBuild2Function(EncoderMVImpute encoder) {
 			_encoder = encoder;
 		}
 		
 		@Override
-		public Iterable<Tuple2<Integer, ColumnMetadata>> call(Iterator<Tuple2<Long, FrameBlock>> iter)
+		public Iterator<Tuple2<Integer, ColumnMetadata>> call(Iterator<Tuple2<Long, FrameBlock>> iter)
 			throws Exception 
 		{
 			//build meta data (e.g., histograms and means)
@@ -342,53 +337,50 @@ public class MultiReturnParameterizedBuiltinSPInstruction extends ComputationSPI
 			}
 			
 			//extract meta data
-			ArrayList<Tuple2<Integer,ColumnMetadata>> ret = new ArrayList<Tuple2<Integer,ColumnMetadata>>();
+			ArrayList<Tuple2<Integer,ColumnMetadata>> ret = new ArrayList<>();
 			int[] collist = _encoder.getColList();
 			for( int j=0; j<collist.length; j++ ) {
 				if( _encoder.getMethod(collist[j]) == MVMethod.GLOBAL_MODE ) {
 					HashMap<String,Long> hist = _encoder.getHistogram(collist[j]);
 					for( Entry<String,Long> e : hist.entrySet() )
-						ret.add(new Tuple2<Integer,ColumnMetadata>(collist[j], 
+						ret.add(new Tuple2<>(collist[j], 
 								new ColumnMetadata(e.getValue(), e.getKey())));
 				}
 				else if( _encoder.getMethod(collist[j]) == MVMethod.GLOBAL_MEAN ) {
-					ret.add(new Tuple2<Integer,ColumnMetadata>(collist[j], 
+					ret.add(new Tuple2<>(collist[j], 
 							new ColumnMetadata(_encoder.getNonMVCount(collist[j]), String.valueOf(_encoder.getMeans()[j]._sum))));
 				}
 				else if( _encoder.getMethod(collist[j]) == MVMethod.CONSTANT ) {
-					ret.add(new Tuple2<Integer,ColumnMetadata>(collist[j],
+					ret.add(new Tuple2<>(collist[j],
 							new ColumnMetadata(0, _encoder.getReplacement(collist[j]))));
 				}
 			}
 			
-			return ret;
+			return ret.iterator();
 		}
 	}
-	
-	/**
-	 * 
-	 */
+
 	public static class TransformEncodeGroup2Function implements FlatMapFunction<Tuple2<Integer, Iterable<ColumnMetadata>>, String>
 	{
 		private static final long serialVersionUID = 702100641492347459L;
 		
-		private MVImputeAgent _encoder = null;
+		private EncoderMVImpute _encoder = null;
 		
-		public TransformEncodeGroup2Function(MVImputeAgent encoder) {	
+		public TransformEncodeGroup2Function(EncoderMVImpute encoder) {	
 			_encoder = encoder;
 		}
 
 		@Override
-		public Iterable<String> call(Tuple2<Integer, Iterable<ColumnMetadata>> arg0)
+		public Iterator<String> call(Tuple2<Integer, Iterable<ColumnMetadata>> arg0)
 				throws Exception 
 		{
 			int colix = arg0._1();
 			Iterator<ColumnMetadata> iter = arg0._2().iterator();
-			ArrayList<String> ret = new ArrayList<String>();
+			ArrayList<String> ret = new ArrayList<>();
 			
 			//compute global mode of categorical feature, i.e., value with highest frequency
 			if( _encoder.getMethod(colix) == MVMethod.GLOBAL_MODE ) {
-				HashMap<String, Long> hist = new HashMap<String,Long>();
+				HashMap<String, Long> hist = new HashMap<>();
 				while( iter.hasNext() ) {
 					ColumnMetadata cmeta = iter.next(); 
 					Long tmp = hist.get(cmeta.getMvValue());
@@ -421,7 +413,7 @@ public class MultiReturnParameterizedBuiltinSPInstruction extends ComputationSPI
 					ret.add("-2 " + colix + " " + iter.next().getMvValue());
 			}
 			
-			return ret;
+			return ret.iterator();
 		}
 	}
 }

@@ -36,7 +36,7 @@ public class CombineBinary extends Lop
 {
 
 	
-	public enum OperationTypes {PreSort, PreCentralMoment, PreCovUnweighted, PreGroupedAggUnweighted}; // (PreCovWeighted,PreGroupedAggWeighted) will be CombineTertiary	
+	public enum OperationTypes {PreSort, PreCentralMoment, PreCovUnweighted, PreGroupedAggUnweighted}
 	OperationTypes operation;
 
 	/**
@@ -66,15 +66,13 @@ public class CombineBinary extends Lop
 		this.lps.setProducesIntermediateOutput(true);
 	}
 	
-	public String toString()
-	{
-		return "combinebinary";		
+	@Override
+	public String toString() {
+		return "combinebinary";
 	}
 
 	@Override
-	public String getInstructions(int input_index1, int input_index2, int output_index) 
-		throws LopsException
-	{
+	public String getInstructions(int input_index1, int input_index2, int output_index) {
 		// Determine whether or not the second input denotes weights vector.
 		// CombineBinary can be used to combine (data,weights) vectors or (data1,data2) vectors  
 		boolean isSecondInputIsWeight = true;
@@ -109,7 +107,7 @@ public class CombineBinary extends Lop
 	public static CombineBinary constructCombineLop(OperationTypes op, Lop input1, 
 			Lop input2, DataType dt, ValueType vt) {
 		
-		HashSet<Lop> set1 = new HashSet<Lop>();
+		HashSet<Lop> set1 = new HashSet<>();
 		set1.addAll(input1.getOutputs());
 		
 		// find intersection of input1.getOutputs() and input2.getOutputs();
@@ -124,7 +122,7 @@ public class CombineBinary extends Lop
 		}
 		
 		CombineBinary comn = new CombineBinary(op, input1, input2, dt, vt);
-		comn.setAllPositions(input1.getBeginLine(), input1.getBeginColumn(), input1.getEndLine(), input1.getEndColumn());
+		comn.setAllPositions(input1.getFilename(), input1.getBeginLine(), input1.getBeginColumn(), input1.getEndLine(), input1.getEndColumn());
 		return comn;
 	}
  

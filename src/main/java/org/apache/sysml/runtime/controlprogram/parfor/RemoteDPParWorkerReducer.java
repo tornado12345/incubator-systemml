@@ -20,7 +20,6 @@
 package org.apache.sysml.runtime.controlprogram.parfor;
 
 import java.io.IOException;
-import java.util.HashMap;
 import java.util.Iterator;
 
 import org.apache.hadoop.io.LongWritable;
@@ -33,7 +32,7 @@ import org.apache.sysml.api.DMLScript;
 import org.apache.sysml.conf.ConfigurationManager;
 import org.apache.sysml.runtime.DMLRuntimeException;
 import org.apache.sysml.runtime.controlprogram.ParForProgramBlock.PDataPartitionFormat;
-import org.apache.sysml.runtime.controlprogram.caching.CacheStatistics;
+import org.apache.sysml.runtime.controlprogram.ParForProgramBlock.PartitionFormat;
 import org.apache.sysml.runtime.controlprogram.caching.CacheableData;
 import org.apache.sysml.runtime.controlprogram.caching.MatrixObject;
 import org.apache.sysml.runtime.controlprogram.parfor.Task.TaskType;
@@ -43,6 +42,7 @@ import org.apache.sysml.runtime.controlprogram.parfor.util.IDHandler;
 import org.apache.sysml.runtime.controlprogram.parfor.util.PairWritableBlock;
 import org.apache.sysml.runtime.controlprogram.parfor.util.PairWritableCell;
 import org.apache.sysml.runtime.instructions.cp.IntObject;
+import org.apache.sysml.runtime.matrix.MatrixCharacteristics;
 import org.apache.sysml.runtime.matrix.data.MatrixBlock;
 import org.apache.sysml.runtime.matrix.data.OutputInfo;
 import org.apache.sysml.runtime.matrix.mapred.MRConfigurationNames;
@@ -50,9 +50,6 @@ import org.apache.sysml.runtime.matrix.mapred.MRJobConfiguration;
 import org.apache.sysml.runtime.util.LocalFileUtils;
 import org.apache.sysml.utils.Statistics;
 
-/**
- *
- */
 public class RemoteDPParWorkerReducer extends ParWorker
 	implements Reducer<LongWritable, Writable, Writable, Writable>
 {
@@ -70,22 +67,15 @@ public class RemoteDPParWorkerReducer extends ParWorker
 	//reuse matrix partition
 	private MatrixBlock _partition = null; 
 	private boolean _tSparseCol = false;
-		
-	//MR ParWorker attributes  
-	protected String  _stringID       = null; 
-	protected HashMap<String, String> _rvarFnames = null; 
+	
+	//MR ParWorker attributes 
+	protected String _stringID = null;
 
 	//cached collector/reporter
 	protected OutputCollector<Writable, Writable> _out = null;
 	protected Reporter _report = null;
-	
-	/**
-	 * 
-	 */
-	public RemoteDPParWorkerReducer() 
-	{
-		
-	}
+
+	public RemoteDPParWorkerReducer() { }
 	
 	@Override
 	public void reduce(LongWritable key, Iterator<Writable> valueList, OutputCollector<Writable, Writable> out, Reporter reporter)
@@ -109,14 +99,13 @@ public class RemoteDPParWorkerReducer extends ParWorker
 			mo.setInMemoryPartition( _partition );
 			
 			//create tasks for input data
-			Task lTask = new Task(TaskType.SET);
-			lTask.addIteration( new IntObject(_iterVar,key.get()) );
+			Task lTask = new Task(_iterVar, TaskType.SET);
+			lTask.addIteration( new IntObject(key.get()) );
 			
 			//execute program
 			executeTask( lTask );
 		}
-		catch(Exception ex)
-		{
+		catch(Exception ex) {
 			throw new IOException("ParFOR: Failed to execute task.",ex);
 		}
 		
@@ -124,25 +113,19 @@ public class RemoteDPParWorkerReducer extends ParWorker
 		RemoteParForUtils.incrementParForMRCounters(_report, 1, 1);
 	}
 
-	/**
-	 * 
-	 */
 	@Override
 	public void configure(JobConf job)
 	{
 		//Step 1: configure data partitioning information
-		_rlen = (int)MRJobConfiguration.getPartitioningNumRows( job );
-		_clen = (int)MRJobConfiguration.getPartitioningNumCols( job );
-		_brlen = MRJobConfiguration.getPartitioningBlockNumRows( job );
-		_bclen = MRJobConfiguration.getPartitioningBlockNumCols( job );
+		_dpf = MRJobConfiguration.getPartitioningFormat( job );
+		MatrixCharacteristics mc = MRJobConfiguration.getPartitionedMatrixSize(job);
+		PartitionFormat pf = new PartitionFormat(_dpf, MRJobConfiguration.getPartitioningSizeN(job));
+		_rlen = (int)pf.getNumRows(mc);
+		_clen = (int)pf.getNumColumns(mc);
+		_brlen = mc.getRowsPerBlock();
+		_bclen = mc.getColsPerBlock();
 		_iterVar = MRJobConfiguration.getPartitioningItervar( job );
 		_inputVar = MRJobConfiguration.getPartitioningMatrixvar( job );
-		_dpf = MRJobConfiguration.getPartitioningFormat( job );		
-		switch( _dpf ) { //create matrix partition for reuse
-			case ROW_WISE:    _rlen = 1; break;
-			case COLUMN_WISE: _clen = 1; break;
-			default:  throw new RuntimeException("Partition format not yet supported in fused partition-execute: "+_dpf);
-		}
 		_info = MRJobConfiguration.getPartitioningOutputInfo( job );
 		_tSparseCol = MRJobConfiguration.getPartitioningTransposedCol( job ); 
 		if( _tSparseCol )
@@ -171,8 +154,8 @@ public class RemoteDPParWorkerReducer extends ParWorker
 			String in = MRJobConfiguration.getProgramBlocks(job);
 			ParForBody body = ProgramConverter.parseParForBody(in, (int)_workerID);
 			_childBlocks = body.getChildBlocks();
-			_ec          = body.getEc();				
-			_resultVars  = body.getResultVarNames();
+			_ec          = body.getEc();
+			_resultVars  = body.getResultVariables();
 	
 			//init local cache manager 
 			if( !CacheableData.isCachingActive() ) {
@@ -193,7 +176,7 @@ public class RemoteDPParWorkerReducer extends ParWorker
 				CacheableData.disableCaching();
 
 			_numTasks    = 0;
-			_numIters    = 0;			
+			_numIters    = 0;
 		}
 		catch(Exception ex)
 		{
@@ -205,18 +188,12 @@ public class RemoteDPParWorkerReducer extends ParWorker
 		
 		//always reset stats because counters per map task (for case of JVM reuse)
 		if( DMLScript.STATISTICS && !InfrastructureAnalyzer.isLocalMode(job) )
-		{
-			CacheStatistics.reset();
 			Statistics.reset();
-		}
 	}
-	
-	/**
-	 * 
-	 */
+
 	@Override
-	public void close() 
-	    throws IOException 
+	public void close()
+	    throws IOException
 	{
 		try
 		{
@@ -229,7 +206,7 @@ public class RemoteDPParWorkerReducer extends ParWorker
 			//print heaver hitter per task
 			JobConf job = ConfigurationManager.getCachedJobConf();
 			if( DMLScript.STATISTICS && !InfrastructureAnalyzer.isLocalMode(job) )
-				LOG.info("\nSystemML Statistics:\nHeavy hitter instructions (name, time, count):\n" + Statistics.getHeavyHitters(10));		
+				LOG.info("\nSystemML Statistics:\nHeavy hitter instructions (name, time, count):\n" + Statistics.getHeavyHitters(DMLScript.STATISTICS_COUNT));
 		}
 		catch(Exception ex)
 		{
@@ -250,9 +227,9 @@ public class RemoteDPParWorkerReducer extends ParWorker
 	 * Note it reuses the instance attribute _partition - multiple calls
 	 * will overwrite the result.
 	 * 
-	 * @param valueList
-	 * @return
-	 * @throws IOException 
+	 * @param valueList iterable writables
+	 * @return matrix block
+	 * @throws IOException if IOException occurs
 	 */
 	private MatrixBlock collectBinaryBlock( Iterator<Writable> valueList ) 
 		throws IOException 
@@ -299,9 +276,9 @@ public class RemoteDPParWorkerReducer extends ParWorker
 	 * Note it reuses the instance attribute _partition - multiple calls
 	 * will overwrite the result.
 	 * 
-	 * @param valueList
-	 * @return
-	 * @throws IOException 
+	 * @param valueList iterable writables
+	 * @return matrix block
+	 * @throws IOException if IOException occurs
 	 */
 	private MatrixBlock collectBinaryCellInput( Iterator<Writable> valueList ) 
 		throws IOException 
@@ -344,12 +321,7 @@ public class RemoteDPParWorkerReducer extends ParWorker
 		
 		return _partition;
 	}
-	
-	/**
-	 * 
-	 * @param sort
-	 * @throws IOException
-	 */
+
 	private void cleanupCollectedMatrixPartition(boolean sort) 
 		throws IOException
 	{

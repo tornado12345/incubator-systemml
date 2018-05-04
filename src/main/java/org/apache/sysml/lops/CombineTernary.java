@@ -36,8 +36,8 @@ public class CombineTernary extends Lop
 {
 	
 	public enum OperationTypes {
-		PreCovWeighted, PreGroupedAggWeighted
-	}; // PreCovUnweighted,PreGroupedAggWeighted will be CombineBinary
+		PreCovWeighted
+	}
 
 	OperationTypes operation;
 
@@ -62,14 +62,14 @@ public class CombineTernary extends Lop
 		this.lps.setProducesIntermediateOutput(true);
 	}
 
+	@Override
 	public String toString() {
 		return "combineternary";
 	}
 
 	@Override
 	public String getInstructions(int input_index1, int input_index2,
-			int input_index3, int output_index) 
-		throws LopsException 
+			int input_index3, int output_index)
 	{
 		StringBuilder sb = new StringBuilder();
 		sb.append( getExecType() );
@@ -97,7 +97,7 @@ public class CombineTernary extends Lop
 
 	public static CombineTernary constructCombineLop( OperationTypes op, Lop input1, Lop input2, Lop input3, DataType dt, ValueType vt) {
 
-		HashSet<Lop> set1 = new HashSet<Lop>();
+		HashSet<Lop> set1 = new HashSet<>();
 		set1.addAll(input1.getOutputs());
 
 		// find intersection of input1.getOutputs() and input2.getOutputs()
@@ -115,7 +115,7 @@ public class CombineTernary extends Lop
 		}
 
 		CombineTernary comn = new CombineTernary(op, input1, input2, input3, dt, vt);
-		comn.setAllPositions(input1.getBeginLine(), input1.getBeginColumn(), input1.getEndLine(), input1.getEndColumn());
+		comn.setAllPositions(input1.getFilename(), input1.getBeginLine(), input1.getBeginColumn(), input1.getEndLine(), input1.getEndColumn());
 		return comn;
 	}
 

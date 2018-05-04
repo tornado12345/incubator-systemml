@@ -20,6 +20,7 @@
 package org.apache.sysml.runtime.instructions.spark.functions;
 
 import java.util.ArrayList;
+import java.util.Iterator;
 
 import org.apache.spark.api.java.function.PairFlatMapFunction;
 
@@ -35,7 +36,7 @@ public class ExtractGroupNWeights implements PairFlatMapFunction<Tuple2<MatrixIn
 	private static final long serialVersionUID = -188180042997588072L;
 
 	@Override
-	public Iterable<Tuple2<MatrixIndexes, WeightedCell>> call(
+	public Iterator<Tuple2<MatrixIndexes, WeightedCell>> call(
 			Tuple2<MatrixIndexes, Tuple2<Tuple2<MatrixBlock, MatrixBlock>, MatrixBlock>> arg)
 		throws Exception 
 	{
@@ -49,7 +50,7 @@ public class ExtractGroupNWeights implements PairFlatMapFunction<Tuple2<MatrixIn
 		}
 		
 		//output weighted cells		
-		ArrayList<Tuple2<MatrixIndexes, WeightedCell>> groupValuePairs = new ArrayList<Tuple2<MatrixIndexes, WeightedCell>>();
+		ArrayList<Tuple2<MatrixIndexes, WeightedCell>> groupValuePairs = new ArrayList<>();
 		for(int i = 0; i < group.getNumRows(); i++) {
 			WeightedCell weightedCell = new WeightedCell();
 			weightedCell.setValue(target.quickGetValue(i, 0));
@@ -59,9 +60,9 @@ public class ExtractGroupNWeights implements PairFlatMapFunction<Tuple2<MatrixIn
 				throw new Exception("Expected group values to be greater than equal to 1 but found " + groupVal);
 			}
 			MatrixIndexes ix = new MatrixIndexes(groupVal, 1);
-			groupValuePairs.add(new Tuple2<MatrixIndexes, WeightedCell>(ix, weightedCell));
+			groupValuePairs.add(new Tuple2<>(ix, weightedCell));
 		}
 		
-		return groupValuePairs;
+		return groupValuePairs.iterator();
 	}
 }

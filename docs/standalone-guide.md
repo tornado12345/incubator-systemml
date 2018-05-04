@@ -50,10 +50,10 @@ algorithms can be found in the [Algorithms Reference](algorithms-reference.html)
 
 # Download SystemML
 
-Apache incubator releases of SystemML are available from the [Downloads](http://systemml.apache.org/download.html) page.
+Apache SystemML releases are available from the [Downloads](http://systemml.apache.org/download.html) page.
 
 SystemML can also be downloaded from GitHub and built with Maven.
-The SystemML project is available on GitHub at [https://github.com/apache/incubator-systemml](https://github.com/apache/incubator-systemml).
+The SystemML project is available on GitHub at [https://github.com/apache/systemml](https://github.com/apache/systemml).
 Instructions to build SystemML can be found in the <a href="engine-dev-guide.html">Engine Developer Guide</a>.
 
 # Standalone vs Distributed Execution Mode
@@ -324,18 +324,18 @@ The `l2-svm-predict.dml` algorithm is used on our test data sample to predict th
 The console output should show the accuracy of the trained model in percent, i.e.:
 
     15/09/01 01:32:51 INFO api.DMLScript: BEGIN DML run 09/01/2015 01:32:51
-    15/09/01 01:32:51 INFO conf.DMLConfig: Updating localtmpdir with value /tmp/systemml
-    15/09/01 01:32:51 INFO conf.DMLConfig: Updating scratch with value scratch_space
-    15/09/01 01:32:51 INFO conf.DMLConfig: Updating optlevel with value 2
-    15/09/01 01:32:51 INFO conf.DMLConfig: Updating numreducers with value 10
-    15/09/01 01:32:51 INFO conf.DMLConfig: Updating jvmreuse with value false
-    15/09/01 01:32:51 INFO conf.DMLConfig: Updating defaultblocksize with value 1000
-    15/09/01 01:32:51 INFO conf.DMLConfig: Updating dml.yarn.appmaster with value false
-    15/09/01 01:32:51 INFO conf.DMLConfig: Updating dml.yarn.appmaster.mem with value 2048
-    15/09/01 01:32:51 INFO conf.DMLConfig: Updating dml.yarn.mapreduce.mem with value 2048
-    15/09/01 01:32:51 INFO conf.DMLConfig: Updating dml.yarn.app.queue with value default
-    15/09/01 01:32:51 INFO conf.DMLConfig: Updating cp.parallel.matrixmult with value true
-    15/09/01 01:32:51 INFO conf.DMLConfig: Updating cp.parallel.textio with value true
+    15/09/01 01:32:51 INFO conf.DMLConfig: Updating sysml.localtmpdir with value /tmp/systemml
+    15/09/01 01:32:51 INFO conf.DMLConfig: Updating sysml.scratch with value scratch_space
+    15/09/01 01:32:51 INFO conf.DMLConfig: Updating sysml.optlevel with value 2
+    15/09/01 01:32:51 INFO conf.DMLConfig: Updating sysml.numreducers with value 10
+    15/09/01 01:32:51 INFO conf.DMLConfig: Updating sysml.jvmreuse with value false
+    15/09/01 01:32:51 INFO conf.DMLConfig: Updating sysml.defaultblocksize with value 1000
+    15/09/01 01:32:51 INFO conf.DMLConfig: Updating sysml.yarn.appmaster with value false
+    15/09/01 01:32:51 INFO conf.DMLConfig: Updating sysml.yarn.appmaster.mem with value 2048
+    15/09/01 01:32:51 INFO conf.DMLConfig: Updating sysml.yarn.mapreduce.mem with value 2048
+    15/09/01 01:32:51 INFO conf.DMLConfig: Updating sysml.yarn.app.queue with value default
+    15/09/01 01:32:51 INFO conf.DMLConfig: Updating sysml.parallel.ops with value true
+    15/09/01 01:32:51 INFO conf.DMLConfig: Updating sysml.parallel.io with value true
     Accuracy (%): 74.14965986394557
     15/09/01 01:32:52 INFO api.DMLScript: SystemML Statistics:
     Total execution time:		0.130 sec.
@@ -527,11 +527,11 @@ The LinearRegDS.dml script generates statistics to standard output similar to th
 	AVG_RES_Y,-3.3127468704080085E-10
 	STDEV_RES_Y,1.7231785003947183E-8
 	DISPERSION,2.963950542926297E-16
-	PLAIN_R2,1.0
+	R2,1.0
 	ADJUSTED_R2,1.0
-	PLAIN_R2_NOBIAS,1.0
+	R2_NOBIAS,1.0
 	ADJUSTED_R2_NOBIAS,1.0
-	PLAIN_R2_VS_0,1.0
+	R2_VS_0,1.0
 	ADJUSTED_R2_VS_0,1.0
 	Writing the output matrix...
 	END LINEAR REGRESSION SCRIPT
@@ -572,9 +572,9 @@ This generates statistics similar to the following to standard output.
 	AVG_RES_Y,1,,-4.1450397073455047E-10
 	STDEV_RES_Y,1,,2.0519206226041048E-8
 	PRED_STDEV_RES,1,TRUE,1.0
-	PLAIN_R2,1,,1.0
+	R2,1,,1.0
 	ADJUSTED_R2,1,,1.0
-	PLAIN_R2_NOBIAS,1,,1.0
+	R2_NOBIAS,1,,1.0
 	ADJUSTED_R2_NOBIAS,1,,1.0
 
 
@@ -605,5 +605,5 @@ script (`runStandaloneSystemML.sh` or `runStandaloneSystemML.bat`) to increase
 the memory available to the JVM, i.e:
 
     java -Xmx16g -Xms4g -Xmn1g -cp ${CLASSPATH} org.apache.sysml.api.DMLScript \
-         -f ${SCRIPT_FILE} -exec singlenode -config=SystemML-config.xml \
+         -f ${SCRIPT_FILE} -exec singlenode -config SystemML-config.xml \
          $@

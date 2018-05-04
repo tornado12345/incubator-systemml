@@ -19,21 +19,12 @@
 
 package org.apache.sysml.runtime.transform.encode;
 
-import java.io.IOException;
 import java.util.Arrays;
-import java.util.Iterator;
 import java.util.List;
 
-import org.apache.hadoop.fs.FileSystem;
-import org.apache.hadoop.fs.Path;
-import org.apache.hadoop.io.IntWritable;
-import org.apache.hadoop.mapred.JobConf;
-import org.apache.hadoop.mapred.OutputCollector;
 import org.apache.sysml.parser.Expression.ValueType;
 import org.apache.sysml.runtime.matrix.data.FrameBlock;
 import org.apache.sysml.runtime.matrix.data.MatrixBlock;
-import org.apache.sysml.runtime.transform.DistinctValue;
-import org.apache.sysml.runtime.transform.TfUtils;
 
 /**
  * Simple composite encoder that applies a list of encoders 
@@ -52,12 +43,7 @@ public class EncoderComposite extends Encoder
 		super(null, -1);
 		_encoders = encoders;
 	}
-	
-	protected EncoderComposite(Encoder[] encoders) {
-		super(null, -1);
-		_encoders = Arrays.asList(encoders);
-	}
-	
+
 	@Override
 	public int getNumCols() {
 		int clen = 0;
@@ -72,21 +58,27 @@ public class EncoderComposite extends Encoder
 	
 	@Override
 	public MatrixBlock encode(FrameBlock in, MatrixBlock out) {
-		//build meta data first (for all encoders)
-		for( Encoder encoder : _encoders )
-			encoder.build(in);
-		
-		//propagate meta data 
-		_meta = new FrameBlock(in.getNumColumns(), ValueType.STRING);
-		for( Encoder encoder : _encoders )
-			_meta = encoder.getMetaData(_meta);
-		for( Encoder encoder : _encoders )
-			encoder.initMetaData(_meta);
-		
-		//apply meta data
-		for( Encoder encoder : _encoders )
-			out = encoder.apply(in, out);
+		try {
+			//build meta data first (for all encoders)
+			for( Encoder encoder : _encoders )
+				encoder.build(in);
 			
+			//propagate meta data 
+			_meta = new FrameBlock(in.getNumColumns(), ValueType.STRING);
+			for( Encoder encoder : _encoders )
+				_meta = encoder.getMetaData(_meta);
+			for( Encoder encoder : _encoders )
+				encoder.initMetaData(_meta);
+			
+			//apply meta data
+			for( Encoder encoder : _encoders )
+				out = encoder.apply(in, out);
+		}
+		catch(Exception ex) {
+			LOG.error("Failed transform-encode frame with \n" + this);
+			throw ex;
+		}
+		
 		return out;
 	}
 
@@ -95,19 +87,17 @@ public class EncoderComposite extends Encoder
 		for( Encoder encoder : _encoders )
 			encoder.build(in);
 	}
-
-
-	@Override
-	public String[] apply(String[] in) {
-		for( Encoder encoder : _encoders )
-			encoder.apply(in);
-		return in;
-	}
 	
 	@Override 
 	public MatrixBlock apply(FrameBlock in, MatrixBlock out) {
-		for( Encoder encoder : _encoders )
-			out = encoder.apply(in, out);
+		try {
+			for( Encoder encoder : _encoders )
+				out = encoder.apply(in, out);
+		}
+		catch(Exception ex) {
+			LOG.error("Failed to transform-apply frame with \n" + this);
+			throw ex;
+		}
 		return out;
 	}
 	
@@ -125,19 +115,42 @@ public class EncoderComposite extends Encoder
 		for( Encoder encoder : _encoders )
 			encoder.initMetaData(out);
 	}
-
+	
 	@Override
-	public void mapOutputTransformationMetadata(OutputCollector<IntWritable, DistinctValue> out, int taskID, TfUtils agents) throws IOException {
-		throw new RuntimeException("File-based api not supported.");
+	public MatrixBlock getColMapping(FrameBlock meta, MatrixBlock out) {
+		//determine if dummycode encoder exists
+		EncoderDummycode dummy = null;
+		for( Encoder encoder : _encoders )
+			if( encoder instanceof EncoderDummycode )
+				dummy = (EncoderDummycode) encoder;
+		//computed shifted start positions
+		if( dummy != null ) {
+			//delete to dummycode encoder
+			out = dummy.getColMapping(meta, out);
+		}
+		//use simple 1-1 mapping
+		else {
+			for(int i=0; i<out.getNumRows(); i++) {
+				out.quickSetValue(i, 0, i+1);
+				out.quickSetValue(i, 1, i+1);
+				out.quickSetValue(i, 2, i+1);
+			}
+		}
+		
+		return out;
 	}
-
+	
 	@Override
-	public void mergeAndOutputTransformationMetadata(Iterator<DistinctValue> values, String outputDir, int colID, FileSystem fs, TfUtils agents) throws IOException {
-		throw new RuntimeException("File-based api not supported.");	
-	}
-
-	@Override
-	public void loadTxMtd(JobConf job, FileSystem fs, Path txMtdDir, TfUtils agents) throws IOException {
-		throw new RuntimeException("File-based api not supported.");
+	public String toString() {
+		StringBuilder sb = new StringBuilder();
+		sb.append("CompositeEncoder("+_encoders.size()+"):\n");
+		for( Encoder encoder : _encoders ) {
+			sb.append("-- ");
+			sb.append(encoder.getClass().getSimpleName());
+			sb.append(": ");
+			sb.append(Arrays.toString(encoder.getColList()));
+			sb.append("\n");
+		}
+		return sb.toString();
 	}
 }

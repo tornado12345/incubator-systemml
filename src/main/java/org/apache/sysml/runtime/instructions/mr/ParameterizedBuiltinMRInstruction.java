@@ -37,32 +37,31 @@ import org.apache.sysml.runtime.util.UtilFunctions;
  * Supported opcodes: replace.
  * 
  */
-public class ParameterizedBuiltinMRInstruction extends UnaryInstruction
-{	
+public class ParameterizedBuiltinMRInstruction extends UnaryInstruction {
 	String _opcode = null;
-	
-	//replace-specific attributes
+
+	// replace-specific attributes
 	private double _pattern;
 	private double _replace;
-	
-	//rexpand-specific attributes
+
+	// rexpand-specific attributes
 	private double _max;
 	private boolean _dirRows;
 	private boolean _cast;
 	private boolean _ignore;
-	
-	public ParameterizedBuiltinMRInstruction(Operator op, byte in, double pattern, double replace, byte out, String opcode, String istr)
-	{
-		super(op, in, out, istr);
+
+	private ParameterizedBuiltinMRInstruction(Operator op, byte in, double pattern, double replace, byte out,
+			String opcode, String istr) {
+		super(MRType.ParameterizedBuiltin, op, in, out, istr);
 		instString = istr;
 		_opcode = opcode;
 		_pattern = pattern;
 		_replace = replace;
 	}
-	
-	public ParameterizedBuiltinMRInstruction(Operator op, byte in, double max, boolean dirRows, boolean cast, boolean ignore, byte out, String opcode, String istr)
-	{
-		super(op, in, out, istr);
+
+	private ParameterizedBuiltinMRInstruction(Operator op, byte in, double max, boolean dirRows, boolean cast,
+			boolean ignore, byte out, String opcode, String istr) {
+		super(MRType.ParameterizedBuiltin, op, in, out, istr);
 		instString = istr;
 		_opcode = opcode;
 		_max = max;
@@ -70,12 +69,7 @@ public class ParameterizedBuiltinMRInstruction extends UnaryInstruction
 		_cast = cast;
 		_ignore = ignore;
 	}
-	
-	/**
-	 * 
-	 * @param mcIn
-	 * @param mcOut
-	 */
+
 	public void computeOutputCharacteristics(MatrixCharacteristics mcIn, MatrixCharacteristics mcOut)
 	{
 		if( _opcode.equalsIgnoreCase("replace") ) {
@@ -90,16 +84,8 @@ public class ParameterizedBuiltinMRInstruction extends UnaryInstruction
 				mcOut.set(mcIn.getRows(), lmax, mcIn.getRowsPerBlock(), mcIn.getColsPerBlock());	
 		}
 	}
-	
-	/**
-	 * 
-	 * @param str
-	 * @return
-	 * @throws DMLRuntimeException
-	 */
-	public static ParameterizedBuiltinMRInstruction parseInstruction ( String str ) 
-		throws DMLRuntimeException 
-	{
+
+	public static ParameterizedBuiltinMRInstruction parseInstruction ( String str ) {
 		String[] parts = InstructionUtils.getInstructionParts(str);
 		String opcode = parts[0];
 		
@@ -136,8 +122,7 @@ public class ParameterizedBuiltinMRInstruction extends UnaryInstruction
 	public void processInstruction(Class<? extends MatrixValue> valueClass,
 			CachedValueMap cachedValues, IndexedMatrixValue tempValue,
 			IndexedMatrixValue zeroInput, int blockRowFactor, int blockColFactor)
-		throws DMLRuntimeException 
-	{		
+	{
 		ArrayList<IndexedMatrixValue> blkList = cachedValues.get(input);
 		if( blkList !=null )
 			for(IndexedMatrixValue imv : blkList)
@@ -169,7 +154,7 @@ public class ParameterizedBuiltinMRInstruction extends UnaryInstruction
 				else if( _opcode.equalsIgnoreCase("rexpand") )
 				{
 					//process instruction
-					ArrayList<IndexedMatrixValue> out = new ArrayList<IndexedMatrixValue>();
+					ArrayList<IndexedMatrixValue> out = new ArrayList<>();
 					LibMatrixReorg.rexpand(imv, _max, _dirRows, _cast, _ignore, blockRowFactor, blockColFactor, out);
 					
 					//put the output values in the cache

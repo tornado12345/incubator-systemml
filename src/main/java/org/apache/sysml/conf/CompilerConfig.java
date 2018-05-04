@@ -70,8 +70,12 @@ public class CompilerConfig
 		//Data expression configuration (modified by mlcontext, jmlc apis); no read of meta 
 		//data on mlcontext (local) /jmlc (global); ignore unknowns on jmlc
 		IGNORE_READ_WRITE_METADATA, // global skip meta data reads
+		IGNORE_TEMPORARY_FILENAMES, // global skip temporary filename modifications
 		REJECT_READ_WRITE_UNKNOWNS, // ignore missing meta data	
-		MLCONTEXT // execution via new MLContext
+		MLCONTEXT, // execution via new MLContext
+		
+		//code generation enabled 
+		CODEGEN_ENABLED;
 	}
 	
 	//default flags (exposed for testing purposes only)
@@ -83,7 +87,7 @@ public class CompilerConfig
 	private HashMap<ConfigType, Integer> _imap = null;
 	
 	public CompilerConfig() {
-		_bmap = new HashMap<ConfigType, Boolean>();
+		_bmap = new HashMap<>();
 		_bmap.put(ConfigType.PARALLEL_CP_READ_TEXTFORMATS, FLAG_PARREADWRITE_TEXT);
 		_bmap.put(ConfigType.PARALLEL_CP_WRITE_TEXTFORMATS, FLAG_PARREADWRITE_TEXT);
 		_bmap.put(ConfigType.PARALLEL_CP_READ_BINARYFORMATS, FLAG_PARREADWRITE_BINARY);
@@ -96,10 +100,12 @@ public class CompilerConfig
 		_bmap.put(ConfigType.ALLOW_CSE_PERSISTENT_READS, true);
 		_bmap.put(ConfigType.IGNORE_UNSPECIFIED_ARGS, false);
 		_bmap.put(ConfigType.IGNORE_READ_WRITE_METADATA, false);
+		_bmap.put(ConfigType.IGNORE_TEMPORARY_FILENAMES, false);
 		_bmap.put(ConfigType.REJECT_READ_WRITE_UNKNOWNS, true);
 		_bmap.put(ConfigType.MLCONTEXT, false);
+		_bmap.put(ConfigType.CODEGEN_ENABLED, false);
 		
-		_imap = new HashMap<CompilerConfig.ConfigType, Integer>();
+		_imap = new HashMap<>();
 		_imap.put(ConfigType.BLOCK_SIZE, OptimizerUtils.DEFAULT_BLOCKSIZE);
 		_imap.put(ConfigType.OPT_LEVEL, OptimizerUtils.DEFAULT_OPTLEVEL.ordinal());
 	}
@@ -130,6 +136,7 @@ public class CompilerConfig
 		return -1;
 	}
 	
+	@Override
 	public CompilerConfig clone() {
 		return new CompilerConfig(this);
 	}

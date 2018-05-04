@@ -51,7 +51,7 @@ public class CopyBlockPairFunction implements PairFlatMapFunction<Iterator<Tuple
 	}
 
 	@Override
-	public Iterable<Tuple2<MatrixIndexes, MatrixBlock>> call(Iterator<Tuple2<MatrixIndexes, MatrixBlock>> arg0) 
+	public LazyIterableIterator<Tuple2<MatrixIndexes, MatrixBlock>> call(Iterator<Tuple2<MatrixIndexes, MatrixBlock>> arg0) 
 		throws Exception 
 	{	
 		return new CopyBlockPairIterator(arg0);
@@ -71,12 +71,12 @@ public class CopyBlockPairFunction implements PairFlatMapFunction<Iterator<Tuple
 				MatrixIndexes ix = new MatrixIndexes(arg._1());
 				MatrixBlock block = null;
 				//always create deep copies in more memory-efficient CSR representation 
-				//if block is already in sparse format			
+				//if block is already in sparse format
 				if( Checkpoint.CHECKPOINT_SPARSE_CSR && arg._2.isInSparseFormat() )
 					block = new MatrixBlock(arg._2, SparseBlock.Type.CSR, true);
 				else
 					block = new MatrixBlock(arg._2());
-				return new Tuple2<MatrixIndexes,MatrixBlock>(ix,block);
+				return new Tuple2<>(ix,block);
 			}
 			else {
 				return arg;

@@ -63,24 +63,19 @@ public class ReaderColumnSelectionSparse extends ReaderColumnSelection
 		if( data.getSparseBlock()!=null )
 		for( int i=0; i<colIndexes.length; i++ )
 			sparseCols[i] = data.getSparseBlock().get(colIndexes[i]);
-		Arrays.fill(sparsePos, 0);
 	}
 
 	@Override
 	public DblArray nextRow() {
 		if(_skipZeros) {
 			while ((nonZeroReturn = getNextRow()) != null
-				&& nonZeroReturn == ZERO_DBL_ARRAY);
+				&& nonZeroReturn == ZERO_DBL_ARRAY){}
 			return nonZeroReturn;
 		} else {
 			return getNextRow();
 		}
 	}
 
-	/**
-	 * 
-	 * @return
-	 */
 	private DblArray getNextRow() 
 	{
 		if(_lastRow == _numRows-1)

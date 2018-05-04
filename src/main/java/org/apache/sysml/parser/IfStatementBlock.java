@@ -19,14 +19,12 @@
 
 package org.apache.sysml.parser;
 
-import java.io.IOException;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Map.Entry;
 
 import org.apache.sysml.conf.ConfigurationManager;
 import org.apache.sysml.hops.Hop;
-import org.apache.sysml.hops.HopsException;
 import org.apache.sysml.hops.recompile.Recompiler;
 import org.apache.sysml.lops.Lop;
 import org.apache.sysml.parser.Expression.DataType;
@@ -34,15 +32,13 @@ import org.apache.sysml.parser.Expression.DataType;
 
 public class IfStatementBlock extends StatementBlock 
 {
-		
 	private Hop _predicateHops;
 	private Lop _predicateLops = null;
 	private boolean _requiresPredicateRecompile = false;
 	
 	@Override
 	public VariableSet validate(DMLProgram dmlProg, VariableSet ids, HashMap<String,ConstIdentifier> constVars, boolean conditional) 
-		throws LanguageException, ParseException, IOException 
-	{		
+	{
 		if (_statements.size() > 1){
 			raiseValidateError("IfStatementBlock should only have 1 statement (IfStatement)", conditional);
 		}
@@ -56,8 +52,8 @@ public class IfStatementBlock extends StatementBlock
 			ifstmt.getConditionalPredicate().setPredicate(constVars.get(((DataIdentifier)pred).getName()));
 		}
 		
-		HashMap<String,ConstIdentifier> constVarsIfCopy = new HashMap<String,ConstIdentifier>(constVars);
-		HashMap<String,ConstIdentifier> constVarsElseCopy = new HashMap<String,ConstIdentifier> (constVars);
+		HashMap<String,ConstIdentifier> constVarsIfCopy = new HashMap<>(constVars);
+		HashMap<String,ConstIdentifier> constVarsElseCopy = new HashMap<> (constVars);
 		
 		VariableSet idsIfCopy 	= new VariableSet(ids);
 		VariableSet idsElseCopy = new VariableSet(ids);
@@ -119,7 +115,7 @@ public class IfStatementBlock extends StatementBlock
 		//		b) ELSE leave out of reconciled set
 		/////////////////////////////////////////////////////////////////////////////////
 		
-		HashMap<String,ConstIdentifier> recConstVars = new HashMap<String,ConstIdentifier>();
+		HashMap<String,ConstIdentifier> recConstVars = new HashMap<>();
 		
 		// STEP 1:  (IF UNION ELSE) MINUS updated vars
 		for (Entry<String,ConstIdentifier> e : constVarsIfCopy.entrySet() ){
@@ -288,8 +284,7 @@ public class IfStatementBlock extends StatementBlock
 	
 	@Override
 	public VariableSet initializeforwardLV(VariableSet activeInPassed) 
-		throws LanguageException 
-	{	
+	{
 		IfStatement ifstmt = (IfStatement)_statements.get(0);
 		if (_statements.size() > 1){
 			LOG.error(ifstmt.printErrorLocation() + "IfStatementBlock should have only 1 statement (if statement)");
@@ -422,8 +417,7 @@ public class IfStatementBlock extends StatementBlock
 
 	@Override
 	public VariableSet initializebackwardLV(VariableSet loPassed) 
-		throws LanguageException
-	{	
+	{
 		IfStatement ifstmt = (IfStatement)_statements.get(0);
 		if (_statements.size() > 1){
 			LOG.error(ifstmt.printErrorLocation() + "IfStatementBlock should have only 1 statement (if statement)");
@@ -456,16 +450,6 @@ public class IfStatementBlock extends StatementBlock
 		_predicateHops = hops;
 	}
 	
-	public ArrayList<Hop> get_hops() throws HopsException{
-	
-		if (_hops != null && _hops.size() > 0){
-			LOG.error(this.printBlockErrorLocation() + "error there should be no HOPs in IfStatementBlock");
-			throw new HopsException(this.printBlockErrorLocation() + "error there should be no HOPs in IfStatementBlock");
-		}
-			
-		return _hops;
-	}
-	
 	public Hop getPredicateHops(){
 		return _predicateHops;
 	}
@@ -478,7 +462,8 @@ public class IfStatementBlock extends StatementBlock
 		_predicateLops = predicateLops;
 	}
 
-	public VariableSet analyze(VariableSet loPassed) throws LanguageException{
+	@Override
+	public VariableSet analyze(VariableSet loPassed) {
 	 	
 		VariableSet predVars = ((IfStatement)_statements.get(0)).getConditionalPredicate().variablesRead();
 		predVars.addVariables(((IfStatement)_statements.get(0)).getConditionalPredicate().variablesUpdated());
@@ -525,15 +510,13 @@ public class IfStatementBlock extends StatementBlock
 	// materialized hops recompilation flags
 	////
 	
-	public void updatePredicateRecompilationFlag() 
-		throws HopsException
-	{
-		_requiresPredicateRecompile =  ConfigurationManager.isDynamicRecompilation() 	
-			                           && Recompiler.requiresRecompilation(getPredicateHops());
+	public boolean updatePredicateRecompilationFlag() {
+		return (_requiresPredicateRecompile =
+			ConfigurationManager.isDynamicRecompilation()
+			&& Recompiler.requiresRecompilation(getPredicateHops()));
 	}
 	
-	public boolean requiresPredicateRecompilation()
-	{
+	public boolean requiresPredicateRecompilation() {
 		return _requiresPredicateRecompile;
 	}
 }

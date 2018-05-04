@@ -27,7 +27,6 @@ import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.mapred.InputFormat;
 import org.apache.hadoop.mapred.JobConf;
 import org.apache.hadoop.mapred.Mapper;
-import org.apache.hadoop.mapred.lib.DelegatingMapper;
 import org.apache.hadoop.util.ReflectionUtils;
 import org.apache.sysml.runtime.matrix.mapred.MRConfigurationNames;
 
@@ -59,29 +58,6 @@ public class MultipleInputs {
   }
 
   /**
-   * Add a {@link Path} with a custom {@link InputFormat} and
-   * {@link Mapper} to the list of inputs for the map-reduce job.
-   * 
-   * @param conf The configuration of the job
-   * @param path {@link Path} to be added to the list of inputs for the job
-   * @param inputFormatClass {@link InputFormat} class to use for this path
-   * @param mapperClass {@link Mapper} class to use for this path
-   */
-  public static void addInputPath(JobConf conf, Path path,
-      Class<? extends InputFormat> inputFormatClass,
-      Class<? extends Mapper> mapperClass) {
-
-    addInputPath(conf, path, inputFormatClass);
-
-    String mapperMapping = path.toString() + ";" + mapperClass.getName();
-    String mappers = conf.get(MRConfigurationNames.MR_INPUT_MULTIPLEINPUTS_DIR_MAPPERS);
-    conf.set(MRConfigurationNames.MR_INPUT_MULTIPLEINPUTS_DIR_MAPPERS, mappers == null ? mapperMapping
-       : mappers + "," + mapperMapping);
-
-    conf.setMapperClass(DelegatingMapper.class);
-  }
-
-  /**
    * Retrieves a map of {@link Path}s to the {@link InputFormat} class
    * that should be used for them.
    * 
@@ -90,7 +66,7 @@ public class MultipleInputs {
    * @return A map of paths to inputformats for the job
    */
   static Map<Path, InputFormat> getInputFormatMap(JobConf conf) {
-    Map<Path, InputFormat> m = new HashMap<Path, InputFormat>();
+    Map<Path, InputFormat> m = new HashMap<>();
     String[] pathMappings = conf.get(MRConfigurationNames.MR_INPUT_MULTIPLEINPUTS_DIR_FORMATS).split(",");
     for (String pathMapping : pathMappings) {
       String[] split = pathMapping.split(";");
@@ -119,7 +95,7 @@ public class MultipleInputs {
     if (conf.get(MRConfigurationNames.MR_INPUT_MULTIPLEINPUTS_DIR_MAPPERS) == null) {
       return Collections.emptyMap();
     }
-    Map<Path, Class<? extends Mapper>> m = new HashMap<Path, Class<? extends Mapper>>();
+    Map<Path, Class<? extends Mapper>> m = new HashMap<>();
     String[] pathMappings = conf.get(MRConfigurationNames.MR_INPUT_MULTIPLEINPUTS_DIR_MAPPERS).split(",");
     for (String pathMapping : pathMappings) {
       String[] split = pathMapping.split(";");

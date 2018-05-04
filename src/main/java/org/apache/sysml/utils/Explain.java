@@ -21,35 +21,37 @@ package org.apache.sysml.utils;
 
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collection;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Map.Entry;
 
-import org.apache.sysml.api.DMLException;
-import org.apache.sysml.hops.FunctionOp;
+import org.apache.sysml.hops.AggBinaryOp;
+import org.apache.sysml.hops.BinaryOp;
+import org.apache.sysml.hops.DataOp;
 import org.apache.sysml.hops.Hop;
-import org.apache.sysml.hops.Hop.VisitStatus;
-import org.apache.sysml.hops.HopsException;
+import org.apache.sysml.hops.Hop.DataOpTypes;
 import org.apache.sysml.hops.LiteralOp;
 import org.apache.sysml.hops.OptimizerUtils;
-import org.apache.sysml.hops.globalopt.gdfgraph.GDFLoopNode;
-import org.apache.sysml.hops.globalopt.gdfgraph.GDFNode;
-import org.apache.sysml.hops.globalopt.gdfgraph.GDFNode.NodeType;
+import org.apache.sysml.hops.ReorgOp;
+import org.apache.sysml.hops.UnaryOp;
+import org.apache.sysml.hops.codegen.cplan.CNode;
+import org.apache.sysml.hops.codegen.cplan.CNodeMultiAgg;
+import org.apache.sysml.hops.codegen.cplan.CNodeTpl;
+import org.apache.sysml.hops.ipa.FunctionCallGraph;
 import org.apache.sysml.lops.Lop;
 import org.apache.sysml.parser.DMLProgram;
-import org.apache.sysml.parser.ForStatement;
 import org.apache.sysml.parser.ExternalFunctionStatement;
+import org.apache.sysml.parser.ForStatement;
 import org.apache.sysml.parser.ForStatementBlock;
 import org.apache.sysml.parser.FunctionStatement;
 import org.apache.sysml.parser.FunctionStatementBlock;
 import org.apache.sysml.parser.IfStatement;
 import org.apache.sysml.parser.IfStatementBlock;
 import org.apache.sysml.parser.ParForStatementBlock;
+import org.apache.sysml.parser.StatementBlock;
 import org.apache.sysml.parser.WhileStatement;
 import org.apache.sysml.parser.WhileStatementBlock;
-import org.apache.sysml.parser.LanguageException;
-import org.apache.sysml.parser.StatementBlock;
-import org.apache.sysml.runtime.DMLRuntimeException;
 import org.apache.sysml.runtime.controlprogram.ExternalFunctionProgramBlock;
 import org.apache.sysml.runtime.controlprogram.ForProgramBlock;
 import org.apache.sysml.runtime.controlprogram.FunctionProgramBlock;
@@ -84,8 +86,15 @@ public class Explain
 		HOPS,     // explain program and hops
 		RUNTIME,  // explain runtime program (default)
 		RECOMPILE_HOPS, // explain hops, incl recompile
-		RECOMPILE_RUNTIME, // explain runtime program, incl recompile 
-	};
+		RECOMPILE_RUNTIME;  // explain runtime program, incl recompile 
+
+		public boolean isHopsType(boolean recompile) {
+			return (this==RECOMPILE_HOPS || (!recompile && this==HOPS));
+		}
+		public boolean isRuntimeType(boolean recompile) {
+			return (this==RECOMPILE_RUNTIME || (!recompile && this==RUNTIME));
+		}
+	}
 	
 	public static class ExplainCounts {
 		public int numCPInst = 0;
@@ -95,19 +104,22 @@ public class Explain
 	
 	//////////////
 	// public explain interface
+
+	public static String display(DMLProgram prog, Program rtprog, ExplainType type, ExplainCounts counts) {
+		if( counts == null )
+			counts = countDistributedOperations(rtprog);
+		
+		//explain plan of program (hops or runtime)
+		return "# EXPLAIN ("+type.name()+"):\n" 
+			+ Explain.explainMemoryBudget(counts)+"\n"
+			+ Explain.explainDegreeOfParallelism(counts)
+			+ Explain.explain(prog, rtprog, type, counts);
+	}
 	
-	/**
-	 * 
-	 * @return
-	 */
 	public static String explainMemoryBudget() {
 		return explainMemoryBudget(new ExplainCounts());
 	}
-	
-	/**
-	 * 
-	 * @return
-	 */
+
 	public static String explainMemoryBudget(ExplainCounts counts)
 	{
 		StringBuilder sb = new StringBuilder();
@@ -141,20 +153,12 @@ public class Explain
 		
 		return sb.toString();		 
 	}
-	
-	/**
-	 * 
-	 * @return
-	 */
+
 	public static String explainDegreeOfParallelism()
 	{
 		return explainDegreeOfParallelism(new ExplainCounts());
 	}
-	
-	/**
-	 * 
-	 * @return
-	 */
+
 	public static String explainDegreeOfParallelism(ExplainCounts counts)
 	{
 		int lk = InfrastructureAnalyzer.getLocalParallelism();
@@ -190,21 +194,14 @@ public class Explain
 			sb.append( rk2 );
 		}
 		
-		return sb.toString();		 
+		return sb.toString();
+	}
+
+	public static String explain(DMLProgram prog, Program rtprog, ExplainType type) {
+		return explain(prog, rtprog, type, null);
 	}
 	
-	/**
-	 * 
-	 * @param prog
-	 * @param rtprog
-	 * @param type
-	 * @return
-	 * @throws LanguageException 
-	 * @throws DMLRuntimeException 
-	 * @throws HopsException 
-	 */
-	public static String explain(DMLProgram prog, Program rtprog, ExplainType type) 
-		throws HopsException, DMLRuntimeException, LanguageException
+	public static String explain(DMLProgram prog, Program rtprog, ExplainType type, ExplainCounts counts) 
 	{
 		//dispatch to individual explain utils
 		switch( type ) {
@@ -215,7 +212,7 @@ public class Explain
 			//explain runtime program	
 			case RUNTIME:  
 			case RECOMPILE_RUNTIME: 
-				return explain(rtprog);
+				return explain(rtprog, counts);
 			case NONE:
 				//do nothing
 		}
@@ -223,17 +220,7 @@ public class Explain
 		return null;
 	}
 
-
-	/**
-	 * 
-	 * @param dmlp
-	 * @return
-	 * @throws LanguageException 
-	 * @throws HopsException 
-	 * @throws DMLRuntimeException 
-	 */
 	public static String explain(DMLProgram prog) 
-		throws HopsException, DMLRuntimeException, LanguageException 
 	{
 		StringBuilder sb = new StringBuilder();
 		
@@ -241,32 +228,29 @@ public class Explain
 		sb.append("\nPROGRAM\n");
 						
 		// Explain functions (if exists)
-		boolean firstFunction = true;
-		for (String namespace : prog.getNamespaces().keySet()) {
-			for (String fname : prog.getFunctionStatementBlocks(namespace).keySet()) {
-				if (firstFunction) {
-					sb.append("--FUNCTIONS\n");
-					firstFunction = false;
+		if( prog.hasFunctionStatementBlocks() ) {
+			sb.append("--FUNCTIONS\n");
+			
+			//show function call graph
+			sb.append("----FUNCTION CALL GRAPH\n");
+			sb.append("------MAIN PROGRAM\n");
+			FunctionCallGraph fgraph = new FunctionCallGraph(prog);
+			sb.append(explainFunctionCallGraph(fgraph, new HashSet<String>(), null, 3));
+		
+			//show individual functions
+			for (String namespace : prog.getNamespaces().keySet()) {
+				for (String fname : prog.getFunctionStatementBlocks(namespace).keySet()) {
+					FunctionStatementBlock fsb = prog.getFunctionStatementBlock(namespace, fname);
+					FunctionStatement fstmt = (FunctionStatement) fsb.getStatement(0);
+					String fkey = DMLProgram.constructFunctionKey(namespace, fname);
 					
-					//show function call dag
-					sb.append("----FUNCTION CALL DAG\n");
-					sb.append("------MAIN PROGRAM\n");
-					HashSet<String> fstack = new HashSet<String>();
-					HashSet<String> lfset = new HashSet<String>();
-					for( StatementBlock sblk : prog.getStatementBlocks() )
-						sb.append(explainFunctionCallDag(sblk, fstack, lfset, 3));
-				}
-				
-				//show individual functions
-				FunctionStatementBlock fsb = prog.getFunctionStatementBlock(namespace, fname);
-				FunctionStatement fstmt = (FunctionStatement) fsb.getStatement(0);
-				
-				if (fstmt instanceof ExternalFunctionStatement)
-					sb.append("----EXTERNAL FUNCTION " + namespace + "::" + fname + "\n");
-				else {
-					sb.append("----FUNCTION " + namespace + "::" + fname + " [recompile="+fsb.isRecompileOnce()+"]\n");
-					for (StatementBlock current : fstmt.getBody())
-						sb.append(explainStatementBlock(current, 3));
+					if (fstmt instanceof ExternalFunctionStatement)
+						sb.append("----EXTERNAL FUNCTION " + fkey + "\n");
+					else {
+						sb.append("----FUNCTION " + fkey + " [recompile="+fsb.isRecompileOnce()+"]\n");
+						for (StatementBlock current : fstmt.getBody())
+							sb.append(explainStatementBlock(current, 3));
+					}
 				}
 			}
 		}
@@ -279,22 +263,63 @@ public class Explain
 		return sb.toString();
 	}
 	
+	public static String getHopDAG(DMLProgram prog, ArrayList<Integer> lines, boolean withSubgraph) {
+		StringBuilder sb = new StringBuilder();
+		StringBuilder nodes = new StringBuilder();
 
-	/**
-	 * 
-	 * @param rtprog
-	 * @return
-	 * @throws HopsException 
-	 */
-	public static String explain( Program rtprog ) 
-		throws HopsException 
+		// create header
+		sb.append("digraph {");
+
+		// Explain functions (if exists)
+		if (prog.hasFunctionStatementBlocks()) {
+
+			// show function call graph
+			// FunctionCallGraph fgraph = new FunctionCallGraph(prog);
+			// sb.append(explainFunctionCallGraph(fgraph, new HashSet<String>(),
+			// null, 3));
+
+			// show individual functions
+			for (String namespace : prog.getNamespaces().keySet()) {
+				for (String fname : prog.getFunctionStatementBlocks(namespace).keySet()) {
+					FunctionStatementBlock fsb = prog.getFunctionStatementBlock(namespace, fname);
+					FunctionStatement fstmt = (FunctionStatement) fsb.getStatement(0);
+					String fkey = DMLProgram.constructFunctionKey(namespace, fname);
+
+					if (!(fstmt instanceof ExternalFunctionStatement)) {
+						addSubGraphHeader(sb, withSubgraph);
+						for (StatementBlock current : fstmt.getBody())
+							sb.append(getHopDAG(current, nodes, lines, withSubgraph));
+						String label = "FUNCTION " + fkey + " recompile=" + fsb.isRecompileOnce() + "\n";
+						addSubGraphFooter(sb, withSubgraph, label);
+					}
+				}
+			}
+		}
+
+		// Explain main program
+		for (StatementBlock sblk : prog.getStatementBlocks())
+			sb.append(getHopDAG(sblk, nodes, lines, withSubgraph));
+
+		sb.append(nodes);
+		sb.append("rankdir = \"BT\"\n");
+		sb.append("}\n");
+		return sb.toString();
+	}
+
+	public static String explain( Program rtprog ) {
+		return explain(rtprog, null);
+	}
+	
+	public static String explain( Program rtprog, ExplainCounts counts ) 
 	{
 		//counts number of instructions
 		boolean sparkExec = OptimizerUtils.isSparkExecutionMode();
-		ExplainCounts counts = new ExplainCounts();
-		countCompiledInstructions(rtprog, counts, !sparkExec, true, sparkExec);
+		if( counts == null ) {
+			counts = new ExplainCounts();
+			countCompiledInstructions(rtprog, counts, !sparkExec, true, sparkExec);
+		}
 	
-		StringBuilder sb = new StringBuilder();		
+		StringBuilder sb = new StringBuilder();
 		
 		//create header
 		sb.append("\nPROGRAM ( size CP/"+(sparkExec?"SP":"MR")+" = ");
@@ -309,17 +334,15 @@ public class Explain
 		{
 			sb.append("--FUNCTIONS\n");
 			
-			//show function call dag
+			//show function call graph
 			if( !rtprog.getProgramBlocks().isEmpty() &&
 				rtprog.getProgramBlocks().get(0).getStatementBlock() != null )
 			{
-				sb.append("----FUNCTION CALL DAG\n");
+				sb.append("----FUNCTION CALL GRAPH\n");
 				sb.append("------MAIN PROGRAM\n");
 				DMLProgram prog = rtprog.getProgramBlocks().get(0).getStatementBlock().getDMLProg();
-				HashSet<String> fstack = new HashSet<String>();
-				HashSet<String> lfset = new HashSet<String>();
-				for( StatementBlock sblk : prog.getStatementBlocks() )
-					sb.append(explainFunctionCallDag(sblk, fstack, lfset, 3));
+				FunctionCallGraph fgraph = new FunctionCallGraph(prog);
+				sb.append(explainFunctionCallGraph(fgraph, new HashSet<String>(), null, 3));
 			}
 			
 			//show individual functions
@@ -346,160 +369,91 @@ public class Explain
 		return sb.toString();	
 	}
 
-	/**
-	 * 
-	 * @param pb
-	 * @return
-	 */
 	public static String explain( ProgramBlock pb )
 	{
 		return explainProgramBlock(pb, 0);
 	}
-	
-	/**
-	 * 
-	 * @param inst
-	 * @return
-	 */
+
 	public static String explain( ArrayList<Instruction> inst )
 	{
 		return explainInstructions(inst, 0);
 	}
-	
-	/**
-	 * 
-	 * @param inst
-	 * @param level
-	 * @return
-	 */
+
 	public static String explain( ArrayList<Instruction> inst, int level )
 	{
 		return explainInstructions(inst, level);
 	}
-	
-	/**
-	 * 
-	 * @param inst
-	 * @return
-	 */
-	public static String explain( Instruction inst )
-	{
+
+	public static String explain( Instruction inst ) {
 		return explainGenericInstruction(inst, 0);
 	}
-	
-	/**
-	 * 
-	 * @param sb
-	 * @return
-	 * @throws DMLRuntimeException 
-	 * @throws HopsException 
-	 */
-	public static String explain( StatementBlock sb ) 
-		throws HopsException, DMLRuntimeException
-	{
+
+	public static String explain( StatementBlock sb ) {
 		return explainStatementBlock(sb, 0);
 	}
-	
-	/**
-	 * 
-	 * @param hops
-	 * @return
-	 * @throws DMLRuntimeException
-	 */
-	public static String explainHops( ArrayList<Hop> hops ) 
-		throws DMLRuntimeException
-	{
+
+	public static String explainHops( ArrayList<Hop> hops ) {
 		return explainHops(hops, 0);
 	}
-	
-	/**
-	 * 
-	 * @param hops
-	 * @param level
-	 * @return
-	 * @throws DMLRuntimeException
-	 */
-	public static String explainHops( ArrayList<Hop> hops, int level ) 
-		throws DMLRuntimeException
-	{
+
+	public static String explainHops( ArrayList<Hop> hops, int level ) {
 		StringBuilder sb = new StringBuilder();
-		
 		Hop.resetVisitStatus(hops);
 		for( Hop hop : hops )
 			sb.append(explainHop(hop, level));
 		Hop.resetVisitStatus(hops);
-		
-		return sb.toString();		
+		return sb.toString();
 	}
-	
-	/**
-	 * 
-	 * @param hop
-	 * @return
-	 * @throws DMLRuntimeException 
-	 */
-	public static String explain( Hop hop ) 
-		throws DMLRuntimeException
-	{
+
+	public static String explain( Hop hop ) {
 		return explain(hop, 0);
 	}
-	
-	/**
-	 * 
-	 * @param hop
-	 * @return
-	 * @throws DMLRuntimeException 
-	 */
-	public static String explain( Hop hop, int level ) 
-		throws DMLRuntimeException
-	{
+
+	public static String explain( Hop hop, int level ) {
 		hop.resetVisitStatus();
 		String ret = explainHop(hop, level);
 		hop.resetVisitStatus();
-		
 		return ret;
 	}
 	
-	/**
-	 * 
-	 * @param gdfnodes
-	 * @return
-	 * @throws DMLRuntimeException
-	 */
-	public static String explainGDFNodes( ArrayList<GDFNode> gdfnodes ) 
-		throws DMLRuntimeException
-	{
-		return explainGDFNodes(gdfnodes, 0);
-	}
-	
-	/**
-	 * 
-	 * @param gdfnodes
-	 * @param level
-	 * @return
-	 * @throws DMLRuntimeException
-	 */
-	public static String explainGDFNodes( ArrayList<GDFNode> gdfnodes, int level ) 
-		throws DMLRuntimeException
-	{
+	public static String explainCPlan( CNodeTpl cplan ) {
 		StringBuilder sb = new StringBuilder();
 		
-		HashSet<Long> memo = new HashSet<Long>();
-		for( GDFNode gnode : gdfnodes )
-			sb.append(explainGDFNode(gnode, level, memo));
+		//create template header
+		sb.append("\n----------------------------------------\n");
+		sb.append("CPLAN: "+cplan.getTemplateInfo()+"\n");
+		sb.append("--inputs: "+Arrays.toString(cplan.getInputNames())+"\n");
+		sb.append("----------------------------------------\n");
 		
-		return sb.toString();		
+		//explain body dag
+		cplan.resetVisitStatusOutputs();
+		if( cplan instanceof CNodeMultiAgg )
+			for( CNode output : ((CNodeMultiAgg)cplan).getOutputs() )
+				sb.append(explainCNode(output, 1));
+		else
+			sb.append(explainCNode(cplan.getOutput(), 1));
+		cplan.resetVisitStatusOutputs();
+		sb.append("----------------------------------------\n");
+		
+		return sb.toString();
 	}
 	
+	public static String explain( CNode node ) {
+		return explain(node, 0);
+	}
+	
+	public static String explain( CNode node, int level ) {
+		return explainCNode(node, level);
+	}
+
 	/**
 	 * Counts the number of compiled MRJob/Spark instructions in the
 	 * given runtime program.
 	 * 
-	 * @param rtprog
-	 * @return
+	 * @param rtprog runtime program
+	 * @return counts
 	 */
-	public static ExplainCounts countDistributedOperations( Program rtprog )
-	{		
+	public static ExplainCounts countDistributedOperations( Program rtprog ) {
 		ExplainCounts counts = new ExplainCounts();
 		if( OptimizerUtils.isSparkExecutionMode() ) 
 			Explain.countCompiledInstructions(rtprog, counts, false, true, true);
@@ -509,40 +463,6 @@ public class Explain
 		return counts;		
 	}
 	
-	/**
-	 * 
-	 * @param arg
-	 * @return
-	 * @throws DMLException
-	 */
-	public static ExplainType parseExplainType( String arg ) 
-		throws DMLException
-	{
-		ExplainType ret = ExplainType.NONE;
-		
-		if( arg !=null )
-		{
-			if( arg.equalsIgnoreCase("hops") )
-				ret = ExplainType.HOPS;
-			else if( arg.equalsIgnoreCase("runtime") )
-				ret = ExplainType.RUNTIME;
-			else if( arg.equalsIgnoreCase("recompile_hops") )
-				ret = ExplainType.RECOMPILE_HOPS;
-			else if( arg.equalsIgnoreCase("recompile_runtime") )
-				ret = ExplainType.RECOMPILE_RUNTIME;
-			else 
-				throw new DMLException("Failed to parse explain type: "+arg+" " +
-						               "(valid types: hops, runtime, recompile_hops, recompile_runtime).");
-		}
-		
-		return ret;
-	}
-	
-	/**
-	 * 
-	 * @param level
-	 * @return
-	 */
 	public static String getIdentation( int level ) {
 		return createOffset(level);
 	}
@@ -550,8 +470,129 @@ public class Explain
 	//////////////
 	// internal explain HOPS
 
+	private static int clusterID = 0;
+
+	public static void reset() {
+		clusterID = 0;
+	}
+
+	private static void addSubGraphHeader(StringBuilder builder, boolean withSubgraph) {
+		if (withSubgraph) {
+			builder.append("subgraph cluster_" + (clusterID++) + " {\n");
+		}
+	}
+
+	private static void addSubGraphFooter(StringBuilder builder, boolean withSubgraph, String label) {
+		if (withSubgraph) {
+			builder.append("label = \"" + label + "\";\n");
+			builder.append("}\n");
+		}
+	}
+
+	private static StringBuilder getHopDAG(StatementBlock sb, StringBuilder nodes, ArrayList<Integer> lines,
+			boolean withSubgraph) {
+		StringBuilder builder = new StringBuilder();
+
+		if (sb instanceof WhileStatementBlock) {
+			addSubGraphHeader(builder, withSubgraph);
+
+			WhileStatementBlock wsb = (WhileStatementBlock) sb;
+			String label = null;
+			if (!wsb.getUpdateInPlaceVars().isEmpty())
+				label = "WHILE (lines " + wsb.getBeginLine() + "-" + wsb.getEndLine() + ") in-place="
+						+ wsb.getUpdateInPlaceVars().toString() + "";
+			else
+				label = "WHILE (lines " + wsb.getBeginLine() + "-" + wsb.getEndLine() + ")";
+			// TODO: Don't show predicate hops for now
+			// builder.append(explainHop(wsb.getPredicateHops()));
+
+			WhileStatement ws = (WhileStatement) sb.getStatement(0);
+			for (StatementBlock current : ws.getBody())
+				builder.append(getHopDAG(current, nodes, lines, withSubgraph));
+
+			addSubGraphFooter(builder, withSubgraph, label);
+		} else if (sb instanceof IfStatementBlock) {
+			addSubGraphHeader(builder, withSubgraph);
+			IfStatementBlock ifsb = (IfStatementBlock) sb;
+			String label = "IF (lines " + ifsb.getBeginLine() + "-" + ifsb.getEndLine() + ")";
+			// TODO: Don't show predicate hops for now
+			// builder.append(explainHop(ifsb.getPredicateHops(), level+1));
+
+			IfStatement ifs = (IfStatement) sb.getStatement(0);
+			for (StatementBlock current : ifs.getIfBody()) {
+				builder.append(getHopDAG(current, nodes, lines, withSubgraph));
+				addSubGraphFooter(builder, withSubgraph, label);
+			}
+			if (!ifs.getElseBody().isEmpty()) {
+				addSubGraphHeader(builder, withSubgraph);
+				label = "ELSE (lines " + ifsb.getBeginLine() + "-" + ifsb.getEndLine() + ")";
+
+				for (StatementBlock current : ifs.getElseBody())
+					builder.append(getHopDAG(current, nodes, lines, withSubgraph));
+				addSubGraphFooter(builder, withSubgraph, label);
+			}
+		} else if (sb instanceof ForStatementBlock) {
+			ForStatementBlock fsb = (ForStatementBlock) sb;
+			addSubGraphHeader(builder, withSubgraph);
+			String label = "";
+			if (sb instanceof ParForStatementBlock) {
+				if (!fsb.getUpdateInPlaceVars().isEmpty())
+					label = "PARFOR (lines " + fsb.getBeginLine() + "-" + fsb.getEndLine() + ") in-place="
+							+ fsb.getUpdateInPlaceVars().toString() + "";
+				else
+					label = "PARFOR (lines " + fsb.getBeginLine() + "-" + fsb.getEndLine() + ")";
+			} else {
+				if (!fsb.getUpdateInPlaceVars().isEmpty())
+					label = "FOR (lines " + fsb.getBeginLine() + "-" + fsb.getEndLine() + ") in-place="
+							+ fsb.getUpdateInPlaceVars().toString() + "";
+				else
+					label = "FOR (lines " + fsb.getBeginLine() + "-" + fsb.getEndLine() + ")";
+			}
+			// TODO: Don't show predicate hops for now
+			// if (fsb.getFromHops() != null)
+			// builder.append(explainHop(fsb.getFromHops(), level+1));
+			// if (fsb.getToHops() != null)
+			// builder.append(explainHop(fsb.getToHops(), level+1));
+			// if (fsb.getIncrementHops() != null)
+			// builder.append(explainHop(fsb.getIncrementHops(), level+1));
+
+			ForStatement fs = (ForStatement) sb.getStatement(0);
+			for (StatementBlock current : fs.getBody())
+				builder.append(getHopDAG(current, nodes, lines, withSubgraph));
+			addSubGraphFooter(builder, withSubgraph, label);
+
+		} else if (sb instanceof FunctionStatementBlock) {
+			FunctionStatement fsb = (FunctionStatement) sb.getStatement(0);
+			addSubGraphHeader(builder, withSubgraph);
+			String label = "Function (lines " + fsb.getBeginLine() + "-" + fsb.getEndLine() + ")";
+			for (StatementBlock current : fsb.getBody())
+				builder.append(getHopDAG(current, nodes, lines, withSubgraph));
+			addSubGraphFooter(builder, withSubgraph, label);
+		} else {
+			// For generic StatementBlock
+			if (sb.requiresRecompilation()) {
+				addSubGraphHeader(builder, withSubgraph);
+			}
+			ArrayList<Hop> hopsDAG = sb.getHops();
+			if (hopsDAG != null && !hopsDAG.isEmpty()) {
+				Hop.resetVisitStatus(hopsDAG);
+				for (Hop hop : hopsDAG)
+					builder.append(getHopDAG(hop, nodes, lines, withSubgraph));
+				Hop.resetVisitStatus(hopsDAG);
+			}
+
+			if (sb.requiresRecompilation()) {
+				builder.append("style=filled;\n");
+				builder.append("color=lightgrey;\n");
+				String label = "(lines " + sb.getBeginLine() + "-" + sb.getEndLine() + ") [recompile="
+						+ sb.requiresRecompilation() + "]";
+				addSubGraphFooter(builder, withSubgraph, label);
+			}
+		}
+		return builder;
+	}
+
 	private static String explainStatementBlock(StatementBlock sb, int level) 
-		throws HopsException, DMLRuntimeException 
 	{
 		StringBuilder builder = new StringBuilder();
 		String offset = createOffset(level);
@@ -624,7 +665,7 @@ public class Explain
 			// For generic StatementBlock
 			builder.append(offset);
 			builder.append("GENERIC (lines "+sb.getBeginLine()+"-"+sb.getEndLine()+") [recompile=" + sb.requiresRecompilation() + "]\n");
-			ArrayList<Hop> hopsDAG = sb.get_hops();
+			ArrayList<Hop> hopsDAG = sb.getHops();
 			if( hopsDAG != null && !hopsDAG.isEmpty() ) {
 				Hop.resetVisitStatus(hopsDAG);
 				for (Hop hop : hopsDAG)
@@ -637,21 +678,15 @@ public class Explain
 	}
 
 	/**
-	 * Do a post-order traverse through the HopDag and explain each Hop
+	 * Do a post-order traverse through the Hop DAG and explain each Hop
 	 * 
-	 * @param hop
-	 * @param level
-	 * @return
-	 * @throws DMLRuntimeException
+	 * @param hop high-level operator
+	 * @param level offset
+	 * @return string explanation of Hop DAG
 	 */
-	private static String explainHop(Hop hop, int level) 
-		throws DMLRuntimeException 
-	{
-		if(   hop.getVisited() == VisitStatus.DONE 
-		   || (!SHOW_LITERAL_HOPS && hop instanceof LiteralOp) )
-		{
+	private static String explainHop(Hop hop, int level) {
+		if( hop.isVisited() || (!SHOW_LITERAL_HOPS && hop instanceof LiteralOp) )
 			return "";
-		}
 		
 		StringBuilder sb = new StringBuilder();
 		String offset = createOffset(level);
@@ -675,7 +710,7 @@ public class Explain
 			childs.append(" (");
 			boolean childAdded = false;
 			for( Hop input : hop.getInput() )
-				if( !(input instanceof LiteralOp) ){
+				if( SHOW_LITERAL_HOPS || !(input instanceof LiteralOp) ){
 					childs.append(childAdded?",":"");
 					childs.append(input.getHopID());
 					childAdded = true;
@@ -719,116 +754,185 @@ public class Explain
 		
 		sb.append('\n');
 		
-		hop.setVisited(VisitStatus.DONE);
+		hop.setVisited();
 		
 		return sb.toString();
 	}
+	
+	private static boolean isInRange(Hop hop, ArrayList<Integer> lines) {
+		boolean isInRange = lines.size() == 0 ? true : false;
+		for (int lineNum : lines) {
+			if (hop.getBeginLine() == lineNum && lineNum == hop.getEndLine()) {
+				return true;
+			}
+		}
+		return isInRange;
+	}
+
+	private static StringBuilder getHopDAG(Hop hop, StringBuilder nodes, ArrayList<Integer> lines, boolean withSubgraph) {
+		StringBuilder sb = new StringBuilder();
+		if (hop.isVisited() || (!SHOW_LITERAL_HOPS && hop instanceof LiteralOp))
+			return sb;
+
+		for (Hop input : hop.getInput()) {
+			if ((SHOW_LITERAL_HOPS || !(input instanceof LiteralOp)) && isInRange(hop, lines)) {
+				String edgeLabel = showMem(input.getOutputMemEstimate(), true);
+				sb.append("h" + input.getHopID() + " -> h" + hop.getHopID() + " [label=\"" + edgeLabel + "\"];\n");
+			}
+		}
+		for (Hop input : hop.getInput())
+			sb.append(getHopDAG(input, nodes, lines, withSubgraph));
+
+		if (isInRange(hop, lines)) {
+			nodes.append("h" + hop.getHopID() + "[label=\"" + getNodeLabel(hop) + "\", " + "shape=\""
+					+ getNodeShape(hop) + "\", color=\"" + getNodeColor(hop) + "\", tooltip=\"" + getNodeToolTip(hop)
+					+ "\"];\n");
+		}
+		hop.setVisited();
+
+		return sb;
+	}
+
+	private static String getNodeLabel(Hop hop) {
+		StringBuilder sb = new StringBuilder();
+		sb.append(hop.getOpString());
+		if (hop instanceof AggBinaryOp) {
+			AggBinaryOp aggBinOp = (AggBinaryOp) hop;
+			if (aggBinOp.getMMultMethod() != null)
+				sb.append(" " + aggBinOp.getMMultMethod().name() + " ");
+		}
+		// data flow properties
+		if (SHOW_DATA_FLOW_PROPERTIES) {
+			if (hop.requiresReblock() && hop.requiresCheckpoint())
+				sb.append(", rblk,chkpt");
+			else if (hop.requiresReblock())
+				sb.append(", rblk");
+			else if (hop.requiresCheckpoint())
+				sb.append(", chkpt");
+		}
+		if (hop.getFilename() == null) {
+			sb.append("[" + hop.getBeginLine() + ":" + hop.getBeginColumn() + "-" + hop.getEndLine() + ":"
+					+ hop.getEndColumn() + "]");
+		} else {
+			sb.append("[" + hop.getFilename() + " " + hop.getBeginLine() + ":" + hop.getBeginColumn() + "-"
+					+ hop.getEndLine() + ":" + hop.getEndColumn() + "]");
+		}
+
+		if (hop.getUpdateType().isInPlace())
+			sb.append("," + hop.getUpdateType().toString().toLowerCase());
+		return sb.toString();
+	}
+
+	private static String getNodeToolTip(Hop hop) {
+		StringBuilder sb = new StringBuilder();
+		if (hop.getExecType() != null) {
+			sb.append(hop.getExecType().name());
+		}
+		sb.append("[" + hop.getDim1() + " X " + hop.getDim2() + "], nnz=" + hop.getNnz());
+		sb.append(", mem= [in=");
+		sb.append(showMem(hop.getInputMemEstimate(), false));
+		sb.append(", inter=");
+		sb.append(showMem(hop.getIntermediateMemEstimate(), false));
+		sb.append(", out=");
+		sb.append(showMem(hop.getOutputMemEstimate(), false));
+		sb.append(" -> ");
+		sb.append(showMem(hop.getMemEstimate(), true));
+		sb.append("]");
+		return sb.toString();
+	}
+
+	private static String getNodeShape(Hop hop) {
+		String shape = "octagon";
+		if (hop.getExecType() != null) {
+			switch (hop.getExecType()) {
+			case CP:
+				shape = "ellipse";
+				break;
+			case SPARK:
+				shape = "box";
+				break;
+			case GPU:
+				shape = "trapezium";
+				break;
+			case MR:
+				shape = "parallelogram";
+				break;
+			default:
+				shape = "octagon";
+				break;
+			}
+		}
+		return shape;
+	}
+
+	private static String getNodeColor(Hop hop) {
+		if (hop instanceof DataOp) {
+			DataOp dOp = (DataOp) hop;
+			if (dOp.getDataOpType() == DataOpTypes.PERSISTENTREAD || dOp.getDataOpType() == DataOpTypes.TRANSIENTREAD) {
+				return "wheat2";
+			} else if (dOp.getDataOpType() == DataOpTypes.PERSISTENTWRITE
+					|| dOp.getDataOpType() == DataOpTypes.TRANSIENTWRITE) {
+				return "wheat4";
+			}
+		} else if (hop instanceof AggBinaryOp) {
+			return "orangered2";
+		} else if (hop instanceof BinaryOp) {
+			return "royalblue2";
+		} else if (hop instanceof ReorgOp) {
+			return "green";
+		} else if (hop instanceof UnaryOp) {
+			return "yellow";
+		}
+		return "black";
+	}
 
 	//////////////
-	// internal explain GDFNODE
+	// internal explain CNODE
 
-	/**
-	 * Do a post-order traverse through the GDFNode DAG and explain each GDFNode.
-	 * Note: nodes referring to literalops are suppressed.
-	 * 
-	 * @param hop
-	 * @param level
-	 * @return
-	 * @throws DMLRuntimeException
-	 */
-	private static String explainGDFNode(GDFNode gnode, int level, HashSet<Long> memo) 
-		throws DMLRuntimeException 
-	{
-		//basic memoization via memo table since gnode has no visit status
-		if( memo.contains(gnode.getID()) || 
-			gnode.getNodeType()==NodeType.HOP_NODE && gnode.getHop() instanceof LiteralOp ) 
-		{
+	private static String explainCNode(CNode cnode, int level) {
+		if( cnode.isVisited() )
 			return "";
-		}
 		
 		StringBuilder sb = new StringBuilder();
 		String offset = createOffset(level);
 		
-		for( GDFNode input : gnode.getInputs() )
-			sb.append(explainGDFNode(input, level, memo));
+		for( CNode input : cnode.getInput() )
+			sb.append(explainCNode(input, level));
 		
 		//indentation
 		sb.append(offset);
 		
 		//hop id
-		String deps = null;
-		if( SHOW_DATA_DEPENDENCIES ) {
-			sb.append("("+gnode.getID()+") ");
+		if( SHOW_DATA_DEPENDENCIES )
+			sb.append("("+cnode.getID()+") ");
 		
+		//operation string
+		sb.append(cnode.toString());
+		
+		//input hop references 
+		if( SHOW_DATA_DEPENDENCIES ) {
 			StringBuilder childs = new StringBuilder();
 			childs.append(" (");
 			boolean childAdded = false;
-			for( GDFNode input : gnode.getInputs() ) {
+			for( CNode input : cnode.getInput() ) {
 				childs.append(childAdded?",":"");
 				childs.append(input.getID());
 				childAdded = true;
 			}
 			childs.append(")");		
 			if( childAdded )
-				deps = childs.toString();
+				sb.append(childs.toString());
 		}
 		
-		//operation string
-		if( gnode instanceof GDFLoopNode ) //LOOP NODES
-		{
-			GDFLoopNode lgnode = (GDFLoopNode) gnode;
-			String offset2 = createOffset(level+1);
-			sb.append(lgnode.explain(deps)+"\n"); //loop header
-			sb.append(offset2+"PRED:\n");
-			sb.append(explainGDFNode(lgnode.getLoopPredicate(),level+2, memo));
-			sb.append(offset2+"BODY:\n");
-			//note: memo table and already done child explain prevents redundancy
-			for( Entry<String,GDFNode> root : lgnode.getLoopOutputs().entrySet() ) {
-				sb.append(explainGDFNode(root.getValue(), level+2, memo));
-			}
-		}
-		else //GENERAL CASE (BASIC/CROSSBLOCK NODES)
-		{
-			sb.append(gnode.explain(deps));
-			sb.append('\n');
-		}
-		
-		/*
-		//matrix characteristics
-		sb.append(" [" + hop.getDim1() + "," 
-		               + hop.getDim2() + "," 
-				       + hop.getRowsInBlock() + "," 
-		               + hop.getColsInBlock() + "," 
-				       + hop.getNnz() + "]");
-		
-		//memory estimates
-		sb.append(" [" + showMem(hop.getInputMemEstimate(), false) + "," 
-		               + showMem(hop.getIntermediateMemEstimate(), false) + "," 
-				       + showMem(hop.getOutputMemEstimate(), false) + " -> " 
-		               + showMem(hop.getMemEstimate(), true) + "]");
-		
-		//exec type
-		if (hop.getExecType() != null)
-			sb.append(", " + hop.getExecType());
-		*/
-		
-		
-		//memoization
-		memo.add(gnode.getID());
+		sb.append('\n');
+		cnode.setVisited();
 		
 		return sb.toString();
 	}
-	
-	
+
 	//////////////
 	// internal explain RUNTIME
 
-	/**
-	 * 
-	 * @param pb
-	 * @param level
-	 * @return
-	 */
 	private static String explainProgramBlock( ProgramBlock pb, int level ) 
 	{
 		StringBuilder sb = new StringBuilder();
@@ -901,13 +1005,7 @@ public class Explain
 		
 		return sb.toString();
 	}
-	
-	/**
-	 * 
-	 * @param instSet
-	 * @param level
-	 * @return
-	 */
+
 	private static String explainInstructions( ArrayList<Instruction> instSet, int level )
 	{
 		StringBuilder sb = new StringBuilder();
@@ -919,17 +1017,13 @@ public class Explain
 			
 			sb.append( offsetInst );
 			sb.append( tmp );
+			
 			sb.append( '\n' );
 		}
 		
 		return sb.toString();
 	}
-	
-	/**
-	 * 
-	 * @param inst
-	 * @return
-	 */
+
 	private static String explainGenericInstruction( Instruction inst, int level )
 	{
 		String tmp = null;
@@ -946,13 +1040,7 @@ public class Explain
 		
 		return tmp;
 	}
-	
-	/**
-	 * 
-	 * @param inst
-	 * @param level
-	 * @return
-	 */
+
 	private static String explainMRJobInstruction( MRJobInstruction inst, int level )
 	{		
 		String instruction = "MR-Job[\n";
@@ -974,12 +1062,7 @@ public class Explain
 		
 		return instruction;
 	}
-	
-	/**
-	 * 
-	 * @param mem
-	 * @return
-	 */
+
 	@SuppressWarnings("unused")
 	private static String showMem(double mem, boolean units) 
 	{
@@ -987,12 +1070,7 @@ public class Explain
 			return "MAX";
 		return OptimizerUtils.toMB(mem) + (units?"MB":"");
 	}
-	
-	/**
-	 * 
-	 * @param level
-	 * @return
-	 */
+
 	private static String createOffset( int level )
 	{
 		StringBuilder sb = new StringBuilder();
@@ -1000,15 +1078,7 @@ public class Explain
 			sb.append("--");
 		return sb.toString();
 	}
-	
-	/**
-	 * 
-	 * @param rtprog
-	 * @param counts
-	 * @param MR
-	 * @param CP
-	 * @param SP
-	 */
+
 	private static void countCompiledInstructions( Program rtprog, ExplainCounts counts, boolean MR, boolean CP, boolean SP )
 	{
 		//analyze DML-bodied functions
@@ -1024,11 +1094,11 @@ public class Explain
 	 * Recursively counts the number of compiled MRJob instructions in the
 	 * given runtime program block. 
 	 * 
-	 * @param pb
-	 * @param counts
-	 * @param MR
-	 * @param CP
-	 * @param SP
+	 * @param pb program block
+	 * @param counts explain countst
+	 * @param MR if true, count Hadoop instructions
+	 * @param CP if true, count CP instructions
+	 * @param SP if true, count Spark instructions
 	 */
 	private static void countCompiledInstructions(ProgramBlock pb, ExplainCounts counts, boolean MR, boolean CP, boolean SP) 
 	{
@@ -1069,25 +1139,31 @@ public class Explain
 			countCompiledInstructions(pb.getInstructions(), counts, MR, CP, SP);
 		}
 	}
-	
+
 	/**
-	 * 
+	 * Count the number of Hadoop instructions, CP instructions, Spark
+	 * instructions, and/or Spark reblock instructions in a list of
+	 * instructions.
+	 *
 	 * @param instSet
+	 *            list of instructions
 	 * @param counts
+	 *            explain counts
 	 * @param MR
+	 *            if true, count Hadoop instructions
 	 * @param CP
+	 *            if true, count CP instructions
 	 * @param SP
-	 * @return
+	 *            if true, count Spark instructions and Spark reblock
+	 *            instructions
 	 */
-	private static int countCompiledInstructions( ArrayList<Instruction> instSet, ExplainCounts counts, boolean MR, boolean CP, boolean SP )
+	private static void countCompiledInstructions( ArrayList<Instruction> instSet, ExplainCounts counts, boolean MR, boolean CP, boolean SP )
 	{
-		int ret = 0;
-		
 		for( Instruction inst : instSet )
 		{
 			if( MR && inst instanceof MRJobInstruction ) 
 				counts.numJobs++;
-			else if( SP && inst instanceof CPInstruction )
+			else if( CP && inst instanceof CPInstruction )
 				counts.numCPInst++;
 			else if( SP && inst instanceof SPInstruction )
 				counts.numJobs++;
@@ -1096,81 +1172,23 @@ public class Explain
 			if( SP && (inst instanceof CSVReblockSPInstruction || inst instanceof ReblockSPInstruction) )
 				counts.numReblocks++;
 		}
-		
-		return ret;
 	}
-	
-	/**
-	 * 
-	 * @param sb
-	 * @param fstack
-	 * @param lfset
-	 * @param level
-	 * @return
-	 * @throws HopsException
-	 */
-	private static String explainFunctionCallDag(StatementBlock sb, HashSet<String> fstack, HashSet<String> lfset, int level) 
-		throws HopsException 
+
+	private static String explainFunctionCallGraph(FunctionCallGraph fgraph, HashSet<String> fstack, String fkey, int level) 
 	{
 		StringBuilder builder = new StringBuilder();
-		
-		if (sb instanceof WhileStatementBlock) {
-			WhileStatement ws = (WhileStatement)sb.getStatement(0);
-			for (StatementBlock current : ws.getBody())
-				builder.append(explainFunctionCallDag(current, fstack, lfset, level));
-		} 
-		else if (sb instanceof IfStatementBlock) {
-			IfStatement ifs = (IfStatement) sb.getStatement(0);
-			for (StatementBlock current : ifs.getIfBody())
-				builder.append(explainFunctionCallDag(current, fstack, lfset, level));
-			for (StatementBlock current : ifs.getElseBody())
-				builder.append(explainFunctionCallDag(current, fstack, lfset, level));
-		} 
-		else if (sb instanceof ForStatementBlock) {
-			ForStatement fs = (ForStatement)sb.getStatement(0);
-			for (StatementBlock current : fs.getBody())
-				builder.append(explainFunctionCallDag(current, fstack, lfset, level));
-		} 
-		else if (sb instanceof FunctionStatementBlock) {
-			FunctionStatement fsb = (FunctionStatement) sb.getStatement(0);
-			for (StatementBlock current : fsb.getBody())
-				builder.append(explainFunctionCallDag(current, fstack, lfset, level));
-		} 
-		else {
-			// For generic StatementBlock
-			ArrayList<Hop> hopsDAG = sb.get_hops();
-			if( hopsDAG != null && !hopsDAG.isEmpty() ) {
-				//function ops can only occur as root nodes of the dag
-				for( Hop h : hopsDAG )
-					if( h instanceof FunctionOp ){
-						FunctionOp fop = (FunctionOp) h;
-						String fkey = DMLProgram.constructFunctionKey(fop.getFunctionNamespace(), fop.getFunctionName());
-						//prevent redundant call edges
-						if( !lfset.contains(fkey) && !fop.getFunctionNamespace().equals(DMLProgram.INTERNAL_NAMESPACE) )
-						{
-							//recursively explain function call dag
-							if( !fstack.contains(fkey) ) {
-								fstack.add(fkey);
-								String offset = createOffset(level);
-								builder.append(offset + "--" + fkey + "\n");
-								FunctionStatementBlock fsb = sb.getDMLProg()
-										.getFunctionStatementBlock(fop.getFunctionNamespace(), fop.getFunctionName());
-								FunctionStatement fs = (FunctionStatement) fsb.getStatement(0);
-								HashSet<String> lfset2 = new HashSet<String>(); 
-								for( StatementBlock csb : fs.getBody() )
-									builder.append(explainFunctionCallDag(csb, fstack, lfset2, level+1));
-								fstack.remove(fkey);
-							}
-							//recursive function call
-							else {
-								String offset = createOffset(level);
-								builder.append(offset + "-->" + fkey + " (recursive)\n");
-							}
-							
-							//mark as visited for current function call context
-							lfset.add( fkey );
-						}
-					}
+		String offset = createOffset(level);
+		Collection<String> cfkeys = fgraph.getCalledFunctions(fkey);
+		if( cfkeys != null ) {
+			for( String cfkey : cfkeys ) {
+				if( fstack.contains(cfkey) && fgraph.isRecursiveFunction(cfkey) )
+					builder.append(offset + "--" + cfkey + " (recursive)\n");
+				else {
+					fstack.add(cfkey);
+					builder.append(offset + "--" + cfkey + "\n");
+					builder.append(explainFunctionCallGraph(fgraph, fstack, cfkey, level+1));
+					fstack.remove(cfkey);
+				}
 			}
 		}
 

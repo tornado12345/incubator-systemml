@@ -21,7 +21,6 @@ package org.apache.sysml.runtime.functionobjects;
 
 import java.io.Serializable;
 
-import org.apache.sysml.runtime.DMLRuntimeException;
 import org.apache.sysml.runtime.instructions.cp.Data;
 import org.apache.sysml.runtime.instructions.cp.KahanObject;
 
@@ -43,15 +42,8 @@ public class KahanPlus extends KahanFunction implements Serializable
 		return singleObj;
 	}
 	
-	public Object clone() throws CloneNotSupportedException {
-		// cloning is not supported for singleton classes
-		throw new CloneNotSupportedException();
-	}
-	
 	@Override
-	public Data execute(Data in1, double in2) 
-		throws DMLRuntimeException 
-	{
+	public Data execute(Data in1, double in2) {
 		KahanObject kahanObj=(KahanObject)in1;
 		
 		//fast path for INF/-INF in order to ensure result correctness
@@ -64,14 +56,12 @@ public class KahanPlus extends KahanFunction implements Serializable
 		//default path for any other value
 		double correction=in2+kahanObj._correction;
 		double sum=kahanObj._sum+correction;
-		kahanObj.set(sum, correction-(sum-kahanObj._sum)); //prevent eager JIT opt 		
+		kahanObj.set(sum, correction-(sum-kahanObj._sum)); //prevent eager JIT opt
 		return kahanObj;
 	}
 	
 	@Override // in1, in2 is the sum, in3 is the correction
-	public Data execute(Data in1, double in2, double in3) 
-		throws DMLRuntimeException 
-	{
+	public Data execute(Data in1, double in2, double in3) {
 		KahanObject kahanObj=(KahanObject)in1;
 		
 		//fast path for INF/-INF in order to ensure result correctness
@@ -92,9 +82,10 @@ public class KahanPlus extends KahanFunction implements Serializable
 	 * Simplified version of execute(Data in1, double in2) 
 	 * without exception handling and casts.
 	 * 
-	 * @param in1
-	 * @param in2
+	 * @param in1 kahan object input
+	 * @param in2 double input
 	 */
+	@Override
 	public void execute2(KahanObject in1, double in2) 
 	{
 		//fast path for INF/-INF in order to ensure result correctness

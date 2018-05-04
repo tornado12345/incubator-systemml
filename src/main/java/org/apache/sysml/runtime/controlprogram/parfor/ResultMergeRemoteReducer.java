@@ -34,6 +34,8 @@ import org.apache.hadoop.mapred.Reporter;
 
 import org.apache.sysml.runtime.DMLRuntimeException;
 import org.apache.sysml.runtime.controlprogram.caching.MatrixObject;
+import org.apache.sysml.runtime.controlprogram.parfor.stat.InfrastructureAnalyzer;
+import org.apache.sysml.runtime.matrix.data.DenseBlock;
 import org.apache.sysml.runtime.matrix.data.InputInfo;
 import org.apache.sysml.runtime.matrix.data.MatrixBlock;
 import org.apache.sysml.runtime.matrix.data.MatrixCell;
@@ -52,13 +54,11 @@ import org.apache.sysml.runtime.util.DataConverter;
  */
 public class ResultMergeRemoteReducer 
 	implements Reducer<Writable, Writable, Writable, Writable>
-{	
-	
+{
 	private ResultMergeReducer _reducer = null;
 	
-	public ResultMergeRemoteReducer( ) 
-	{
-		
+	public ResultMergeRemoteReducer( ) {
+		//do nothing
 	}
 	
 	@Override
@@ -68,41 +68,33 @@ public class ResultMergeRemoteReducer
 		_reducer.processKeyValueList(key, valueList, out, reporter);
 	}
 
-	/**
-	 * 
-	 */
 	public void configure(JobConf job)
 	{
 		InputInfo ii = MRJobConfiguration.getResultMergeInputInfo(job);
 		String compareFname = MRJobConfiguration.getResultMergeInfoCompareFilename(job);
 		
 		//determine compare required
-		boolean requiresCompare = false;
-		if( !compareFname.equals("null") )
-			requiresCompare = true;
+		boolean requiresCompare = !compareFname.equals("null");
+		boolean isAccum = MRJobConfiguration.getResultMergeInfoAccumulator(job);
 		
 		if( ii == InputInfo.TextCellInputInfo )
 			_reducer = new ResultMergeReducerTextCell(requiresCompare);
 		else if( ii == InputInfo.BinaryCellInputInfo )
 			_reducer = new ResultMergeReducerBinaryCell(requiresCompare);
 		else if( ii == InputInfo.BinaryBlockInputInfo )
-			_reducer = new ResultMergeReducerBinaryBlock(requiresCompare);
+			_reducer = new ResultMergeReducerBinaryBlock(requiresCompare, isAccum, job);
 		else
-			throw new RuntimeException("Unable to configure mapper with unknown input info: "+ii.toString());
+			throw new RuntimeException("Unable to configure mapper with unknown input info: "+ii.toString()+" "+isAccum);
 	}
-	
-	/**
-	 * 
-	 */
+
 	@Override
-	public void close() throws IOException 
-	{
+	public void close() throws IOException {
 		//do nothing
 	}
 
 	
 	private interface ResultMergeReducer //interface in order to allow ResultMergeReducerBinaryBlock to inherit from ResultMerge
-	{	
+	{
 		void processKeyValueList( Writable key, Iterator<Writable> valueList, OutputCollector<Writable, Writable> out, Reporter reporter ) 
 			throws IOException;
 	}
@@ -113,8 +105,7 @@ public class ResultMergeRemoteReducer
 		private StringBuilder _sb = null;
 		private Text _objValue = null;
 		
-		public ResultMergeReducerTextCell(boolean requiresCompare)
-		{
+		public ResultMergeReducerTextCell(boolean requiresCompare) {
 			_requiresCompare = requiresCompare;
 			_sb = new StringBuilder();
 			_objValue = new Text();
@@ -138,7 +129,7 @@ public class ResultMergeRemoteReducer
 				//scan for compare object (incl result merge if compare available)
 				MatrixIndexes key2 = (MatrixIndexes) key;
 				Double cellCompare = null;
-				Collection<Double> cellList = new LinkedList<Double>();
+				Collection<Double> cellList = new LinkedList<>();
 				boolean found = false;
 				while( valueList.hasNext() ) {
 					TaggedMatrixCell tVal = (TaggedMatrixCell) valueList.next();
@@ -158,7 +149,7 @@ public class ResultMergeRemoteReducer
 							_sb.append(lvalue);
 							_objValue.set( _sb.toString() );
 							_sb.setLength(0);
-							out.collect(NullWritable.get(), _objValue );	
+							out.collect(NullWritable.get(), _objValue );
 							found = true;
 							break; //only one write per cell possible (independence)
 						}// note: objs with equal value are directly discarded
@@ -176,8 +167,8 @@ public class ResultMergeRemoteReducer
 							_sb.append(' ');
 							_sb.append(c.doubleValue());
 							_objValue.set( _sb.toString() );
-							_sb.setLength(0);							
-							out.collect(NullWritable.get(), _objValue );	
+							_sb.setLength(0);
+							out.collect(NullWritable.get(), _objValue );
 							break; //only one write per cell possible (independence)
 						}
 			}
@@ -185,7 +176,7 @@ public class ResultMergeRemoteReducer
 			else
 			{
 				MatrixIndexes key2 = (MatrixIndexes) key;
-				while( valueList.hasNext() )  
+				while( valueList.hasNext() )
 				{
 					TaggedMatrixCell tVal = (TaggedMatrixCell) valueList.next(); 
 					MatrixCell value = (MatrixCell) tVal.getBaseObject();
@@ -196,13 +187,11 @@ public class ResultMergeRemoteReducer
 					_sb.append(' ');
 					_sb.append(value.getValue());
 					_objValue.set( _sb.toString() );
-					_sb.setLength(0);				
-					out.collect(NullWritable.get(), _objValue );	
+					_sb.setLength(0);
+					out.collect(NullWritable.get(), _objValue );
 					break; //only one write per cell possible (independence)
 				}
 			}
-			
-			
 		}
 	}
 	
@@ -211,8 +200,7 @@ public class ResultMergeRemoteReducer
 		private boolean _requiresCompare;
 		private MatrixCell _objValue;
 		
-		public ResultMergeReducerBinaryCell(boolean requiresCompare)
-		{
+		public ResultMergeReducerBinaryCell(boolean requiresCompare) {
 			_requiresCompare = requiresCompare;
 			_objValue = new MatrixCell();
 		}
@@ -234,7 +222,7 @@ public class ResultMergeRemoteReducer
 				
 				//scan for compare object (incl result merge if compare available)
 				Double cellCompare = null;
-				Collection<Double> cellList = new LinkedList<Double>();
+				Collection<Double> cellList = new LinkedList<>();
 				boolean found = false;
 				while( valueList.hasNext() ) {
 					TaggedMatrixCell tVal = (TaggedMatrixCell) valueList.next();
@@ -247,7 +235,7 @@ public class ResultMergeRemoteReducer
 							cellList.add( cVal.getValue() );
 						else if( cellCompare.doubleValue() != cVal.getValue() ) //compare on the fly
 						{
-							out.collect(key, cVal );	
+							out.collect(key, cVal );
 							found = true;
 							break; //only one write per cell possible (independence)
 						}// note: objs with equal value are directly discarded
@@ -256,21 +244,19 @@ public class ResultMergeRemoteReducer
 				
 				//result merge for objs before compare
 				if( !found )
-					for( Double c : cellList )				
-						if( !c.equals( cellCompare) )
-						{				
+					for( Double c : cellList )
+						if( !c.equals( cellCompare) ) {
 							_objValue.setValue(c.doubleValue());
-							out.collect(key, _objValue );	
+							out.collect(key, _objValue );
 							break; //only one write per cell possible (independence)
 						}
 			}
 			//without compare
 			else
 			{
-				while( valueList.hasNext() )  
-				{
-					TaggedMatrixCell tVal = (TaggedMatrixCell) valueList.next(); 
-					out.collect((MatrixIndexes)key, (MatrixCell)tVal.getBaseObject());	
+				while( valueList.hasNext() ) {
+					TaggedMatrixCell tVal = (TaggedMatrixCell) valueList.next();
+					out.collect((MatrixIndexes)key, (MatrixCell)tVal.getBaseObject());
 					break; //only one write per cell possible (independence)
 				}
 			}
@@ -279,24 +265,24 @@ public class ResultMergeRemoteReducer
 	
 	private static class ResultMergeReducerBinaryBlock extends ResultMerge implements ResultMergeReducer
 	{
-		private boolean _requiresCompare;
+		private static final long serialVersionUID = 84399890805869855L;
 		
-		public ResultMergeReducerBinaryBlock(boolean requiresCompare)
-		{
+		private boolean _requiresCompare;
+		private JobConf _job = null;
+		
+		public ResultMergeReducerBinaryBlock(boolean requiresCompare, boolean isAccum, JobConf job) {
 			_requiresCompare = requiresCompare;
+			_job = job;
+			_isAccum = isAccum;
 		}
 		
 		@Override
-		public MatrixObject executeParallelMerge(int par) 
-			throws DMLRuntimeException 
-		{
+		public MatrixObject executeParallelMerge(int par) {
 			throw new DMLRuntimeException("Unsupported operation.");
 		}
 
 		@Override
-		public MatrixObject executeSerialMerge() 
-			throws DMLRuntimeException 
-		{
+		public MatrixObject executeSerialMerge() {
 			throw new DMLRuntimeException("Unsupported operation.");
 		}
 
@@ -308,42 +294,38 @@ public class ResultMergeRemoteReducer
 			{
 				MatrixIndexes ixOut = ((ResultMergeTaggedMatrixIndexes)key).getIndexes();
 				MatrixBlock mbOut = null;
-				double[][] aCompare = null;
+				DenseBlock aCompare = null;
 				boolean appendOnly = false;
 				
 				//get and prepare compare block if required
-				if( _requiresCompare )
-				{
+				if( _requiresCompare ) {
 					TaggedMatrixBlock tVal = (TaggedMatrixBlock) valueList.next();
 					MatrixBlock bVal = (MatrixBlock) tVal.getBaseObject();
 					if( tVal.getTag()!=ResultMergeRemoteMR.COMPARE_TAG )
 						throw new IOException("Failed to read compare block at expected first position.");
-					aCompare = DataConverter.convertToDoubleMatrix(bVal);
+					aCompare = DataConverter.convertToDenseBlock(bVal,
+						InfrastructureAnalyzer.isLocalMode(_job));
 				}
 				
 				//merge all result blocks into final result block 
-				while( valueList.hasNext() ) 
-				{
+				while( valueList.hasNext() ) {
 					TaggedMatrixBlock tVal = (TaggedMatrixBlock) valueList.next();
 					MatrixBlock bVal = (MatrixBlock) tVal.getBaseObject();
-					
-					if( mbOut == null ) //copy first block
-					{
+					if( mbOut == null ) { //copy first block
 						mbOut = new MatrixBlock();
 						mbOut.copy( bVal );
 						appendOnly = mbOut.isInSparseFormat();
 					}
-					else //merge remaining blocks
-					{
+					else { //merge remaining blocks
 						if( _requiresCompare )
 							mergeWithComp(mbOut, bVal, aCompare);
 						else
-							mergeWithoutComp(mbOut, bVal, appendOnly);	
+							mergeWithoutComp(mbOut, bVal, appendOnly);
 					}
 				}
 				
 				//sort sparse due to append-only
-				if( appendOnly )
+				if( appendOnly && !_isAccum )
 					mbOut.sortSparseRows();
 				
 				//change sparsity if required after 
@@ -354,8 +336,7 @@ public class ResultMergeRemoteReducer
 			catch( Exception ex )
 			{
 				throw new IOException(ex);
-			}			
+			}
 		}
-		
 	}
 }

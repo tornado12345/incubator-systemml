@@ -40,7 +40,7 @@ public class PartialAggregate extends Lop
 		RowCol, 
 		Row, 
 		Col
-	};
+	}
 
 	public enum CorrectionLocationType { 
 		NONE, 
@@ -50,8 +50,15 @@ public class PartialAggregate extends Lop
 		LASTTWOCOLUMNS,
 		LASTFOURROWS,
 		LASTFOURCOLUMNS,
-		INVALID
-	};
+		INVALID;
+		
+		public int getNumRemovedRowsColumns() {
+			return (this==LASTROW || this==LASTCOLUMN) ? 1 :
+				(this==LASTTWOROWS || this==LASTTWOCOLUMNS) ? 2 :
+				(this==LASTFOURROWS || this==LASTFOURCOLUMNS) ? 4 : 0;
+		}
+		
+	}
 	
 	private Aggregate.OperationTypes operation;
 	private DirectionTypes direction;
@@ -65,23 +72,13 @@ public class PartialAggregate extends Lop
 	
 	public PartialAggregate( Lop input, Aggregate.OperationTypes op,
 			PartialAggregate.DirectionTypes direct, DataType dt, ValueType vt)
-		throws LopsException 
 	{
 		super(Lop.Type.PartialAggregate, dt, vt);
 		init(input, op, direct, dt, vt, ExecType.MR);
 	}
 
 	public PartialAggregate( Lop input, Aggregate.OperationTypes op,
-			PartialAggregate.DirectionTypes direct, DataType dt, ValueType vt, ExecType et)
-		throws LopsException 
-	{
-		super(Lop.Type.PartialAggregate, dt, vt);
-		init(input, op, direct, dt, vt, et);
-	}
-	
-	public PartialAggregate( Lop input, Aggregate.OperationTypes op,
 			PartialAggregate.DirectionTypes direct, DataType dt, ValueType vt, ExecType et, int k)
-		throws LopsException 
 	{
 		super(Lop.Type.PartialAggregate, dt, vt);
 		init(input, op, direct, dt, vt, et);
@@ -90,7 +87,6 @@ public class PartialAggregate extends Lop
 	
 	public PartialAggregate( Lop input, Aggregate.OperationTypes op,
 			PartialAggregate.DirectionTypes direct, DataType dt, ValueType vt, SparkAggType aggtype, ExecType et)
-		throws LopsException 
 	{
 		super(Lop.Type.PartialAggregate, dt, vt);
 		init(input, op, direct, dt, vt, et);
@@ -143,12 +139,7 @@ public class PartialAggregate extends Lop
 	{
 		_dropCorr = true;
 	}
-	
-	public static CorrectionLocationType decodeCorrectionLocation(String loc) 
-	{
-		return CorrectionLocationType.valueOf(loc);
-	}
-	
+
 	/**
 	 * This method computes the location of "correction" terms in the output
 	 * produced by PartialAgg instruction.
@@ -166,17 +157,12 @@ public class PartialAggregate extends Lop
 	 * dml.runtime.matrix.operator.AggregateOperator.java and dml.runtime.matrix)
 	 * 
 	 * @return correct location
-	 * @throws LopsException if LopsException occurs
 	 */
-	public CorrectionLocationType getCorrectionLocation() 
-		throws LopsException 
-	{
+	public CorrectionLocationType getCorrectionLocation() {
 		return getCorrectionLocation(operation, direction);
 	}
 	
-	public static CorrectionLocationType getCorrectionLocation(Aggregate.OperationTypes operation, DirectionTypes direction) 
-		throws LopsException 
-	{
+	public static CorrectionLocationType getCorrectionLocation(Aggregate.OperationTypes operation, DirectionTypes direction) {
 		CorrectionLocationType loc;
 
 		switch (operation) {
@@ -260,14 +246,13 @@ public class PartialAggregate extends Lop
 	}
 
 	public void setDimensionsBasedOnDirection(long dim1, long dim2,  
-			long rowsPerBlock, long colsPerBlock) throws LopsException 
+			long rowsPerBlock, long colsPerBlock)
 	{
 		setDimensionsBasedOnDirection(this, dim1, dim2, rowsPerBlock, colsPerBlock, direction);
 	}
 
 	public static void setDimensionsBasedOnDirection(Lop lop, long dim1, long dim2,  
-			long rowsPerBlock, long colsPerBlock, DirectionTypes dir) 
-		throws LopsException 
+			long rowsPerBlock, long colsPerBlock, DirectionTypes dir)
 	{
 		try {
 			if (dir == DirectionTypes.Row)
@@ -283,6 +268,7 @@ public class PartialAggregate extends Lop
 		}
 	}
 	
+	@Override
 	public String toString() {
 		return "Partial Aggregate " + operation;
 	}
@@ -296,48 +282,34 @@ public class PartialAggregate extends Lop
 	 */
 	@Override
 	public String getInstructions(String input1, String output) 
-		throws LopsException 
 	{
 		StringBuilder sb = new StringBuilder();
 		sb.append( getExecType() );
+		
 		sb.append( OPERAND_DELIMITOR );
 		sb.append( getOpcode() );
+		
 		sb.append( OPERAND_DELIMITOR );
 		sb.append( getInputs().get(0).prepInputOperand(input1) );
+		
 		sb.append( OPERAND_DELIMITOR );
-		sb.append( this.prepOutputOperand(output) );
+		sb.append( prepOutputOperand(output) );
 		
-		//in case of spark, we also compile the optional aggregate flag into the instruction.
-		if( getExecType() == ExecType.SPARK ) {
-			sb.append( OPERAND_DELIMITOR );
+		//exec-type specific attributes
+		sb.append( OPERAND_DELIMITOR );
+		if( getExecType() == ExecType.SPARK )
 			sb.append( _aggtype );	
-		}
-		
-		//in case of cp, we also compile the number of threads into the instruction
-		if( getExecType() == ExecType.CP ){
-			sb.append( OPERAND_DELIMITOR );
+		else if( getExecType() == ExecType.MR )
+			sb.append( _dropCorr );
+		else if( getExecType() == ExecType.CP )
 			sb.append( _numThreads );	
-		}
 		
 		return sb.toString();
 	}
 	
 	@Override
-	public String getInstructions(int input_index, int output_index)
-		throws LopsException 
-	{
-		StringBuilder sb = new StringBuilder();
-		sb.append( getExecType() );
-		sb.append( Lop.OPERAND_DELIMITOR );
-		sb.append( getOpcode() );
-		sb.append( OPERAND_DELIMITOR );
-		sb.append( getInputs().get(0).prepInputOperand(input_index) );
-		sb.append( OPERAND_DELIMITOR );
-		sb.append( this.prepOutputOperand(output_index) );
-		sb.append( OPERAND_DELIMITOR );
-		sb.append( _dropCorr );
-
-		return sb.toString();
+	public String getInstructions(int input_index, int output_index) {
+		return getInstructions(String.valueOf(input_index), String.valueOf(output_index));
 	}
 
 	public static String getOpcode(Aggregate.OperationTypes op, DirectionTypes dir) 
@@ -398,9 +370,11 @@ public class PartialAggregate extends Lop
 			}
 
 			case Product: {
-				if( dir == DirectionTypes.RowCol )
-					return "ua*";
-				break;
+				switch( dir ) {
+					case RowCol: return "ua*";
+					case Row:    return "uar*";
+					case Col:    return "uac*";
+				}
 			}
 			
 			case Max: {

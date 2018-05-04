@@ -33,7 +33,7 @@ import org.apache.sysml.runtime.DMLRuntimeException;
 import org.apache.sysml.runtime.functionobjects.Plus;
 import org.apache.sysml.runtime.instructions.mr.AggregateInstruction;
 import org.apache.sysml.runtime.instructions.mr.MRInstruction;
-import org.apache.sysml.runtime.instructions.mr.TernaryInstruction;
+import org.apache.sysml.runtime.instructions.mr.CtableInstruction;
 import org.apache.sysml.runtime.matrix.data.MatrixIndexes;
 import org.apache.sysml.runtime.matrix.data.MatrixValue;
 import org.apache.sysml.runtime.matrix.data.OperationsOnMatrixValues;
@@ -44,10 +44,8 @@ import org.apache.sysml.runtime.util.MapReduceTool;
 
 public class ReduceBase extends MRBaseForCommonInstructions
 {
-		
 	//aggregate instructions
-	protected HashMap<Byte, ArrayList<AggregateInstruction>> 
-	agg_instructions=new HashMap<Byte, ArrayList<AggregateInstruction>>();
+	protected HashMap<Byte, ArrayList<AggregateInstruction>> agg_instructions=new HashMap<>();
 	
 	//default aggregate operation
 	protected static final AggregateOperator DEFAULT_AGG_OP = new AggregateOperator(0, Plus.getPlusFnObject());
@@ -67,7 +65,7 @@ public class ReduceBase extends MRBaseForCommonInstructions
 	protected CollectMultipleConvertedOutputs collectFinalMultipleOutputs;
 	
 	//a counter to calculate the time spent in a reducer or a combiner
-	public static enum Counters {COMBINE_OR_REDUCE_TIME };
+	public static enum Counters {COMBINE_OR_REDUCE_TIME }
 
 	//the counters to record how many nonZero cells have been produced for each output
 	protected long[] resultsNonZeros=null;
@@ -94,6 +92,7 @@ public class ReduceBase extends MRBaseForCommonInstructions
 		}
 	}
 	
+	@Override
 	public void configure(JobConf job)
 	{	
 		super.configure(job);
@@ -120,7 +119,7 @@ public class ReduceBase extends MRBaseForCommonInstructions
 			//parse unary and binary operations
 			MRInstruction[] tmp = MRJobConfiguration.getInstructionsInReducer(job);
 			if( tmp != null ) {
-				mixed_instructions=new ArrayList<MRInstruction>();
+				mixed_instructions=new ArrayList<>();
 				Collections.addAll(mixed_instructions, tmp);
 			}
 			
@@ -147,7 +146,7 @@ public class ReduceBase extends MRBaseForCommonInstructions
 				ArrayList<AggregateInstruction> vec=agg_instructions.get(ins.input);
 				if(vec==null)
 				{
-					vec = new ArrayList<AggregateInstruction>();
+					vec = new ArrayList<>();
 					agg_instructions.put(ins.input, vec);
 				}
 				vec.add(ins);
@@ -162,7 +161,7 @@ public class ReduceBase extends MRBaseForCommonInstructions
 				vec=agg_instructions.get(partialIns.input);
 				if(vec==null)
 				{
-					vec=new ArrayList<AggregateInstruction>();
+					vec=new ArrayList<>();
 					agg_instructions.put(partialIns.input, vec);
 				}
 				vec.add(partialIns);
@@ -179,7 +178,7 @@ public class ReduceBase extends MRBaseForCommonInstructions
 	
 	protected ArrayList<Integer> getOutputIndexes(byte outputTag)
 	{
-		ArrayList<Integer> ret = new ArrayList<Integer>();
+		ArrayList<Integer> ret = new ArrayList<>();
 		for(int i=0; i<resultIndexes.length; i++)
 			if(resultIndexes[i]==outputTag)
 				ret.add(i);
@@ -188,13 +187,14 @@ public class ReduceBase extends MRBaseForCommonInstructions
 	
 	protected static ArrayList<Integer> getOutputIndexes(byte outputTag, byte[] resultIndexes)
 	{
-		ArrayList<Integer> ret=new ArrayList<Integer>();
+		ArrayList<Integer> ret=new ArrayList<>();
 		for(int i=0; i<resultIndexes.length; i++)
 			if(resultIndexes[i]==outputTag)
 				ret.add(i);
 		return ret;
 	}
 	
+	@Override
 	public void close() throws IOException
 	{
 		if(cachedReporter!=null)
@@ -282,9 +282,7 @@ public class ReduceBase extends MRBaseForCommonInstructions
 	
 	//process one aggregate instruction
 	private void processAggregateHelp(long row, long col, MatrixValue value, 
-			AggregateInstruction instruction, boolean imbededCorrection) 
-	throws DMLRuntimeException
-	{
+			AggregateInstruction instruction, boolean imbededCorrection) {
 		AggregateOperator aggOp=(AggregateOperator)instruction.getOperator();
 		
 		//there should be just one value in cache.
@@ -362,17 +360,12 @@ public class ReduceBase extends MRBaseForCommonInstructions
 			throw new IOException(e);
 		}
 	}
-	
 
-	/**
-	 * 
-	 * @return
-	 */
 	protected boolean containsTernaryInstruction()
 	{
 		if( mixed_instructions != null )
 			for(MRInstruction inst : mixed_instructions)
-				if( inst instanceof TernaryInstruction )
+				if( inst instanceof CtableInstruction )
 					return true;
 		return false;
 	}
@@ -380,22 +373,18 @@ public class ReduceBase extends MRBaseForCommonInstructions
 	protected boolean dimsKnownForTernaryInstructions() {
 		if( mixed_instructions != null )
 			for(MRInstruction inst : mixed_instructions)
-				if( inst instanceof TernaryInstruction && !((TernaryInstruction)inst).knownOutputDims() )
+				if( inst instanceof CtableInstruction && !((CtableInstruction)inst).knownOutputDims() )
 					return false;
 		return true;
 	}
 
-	/**
-	 * 
-	 * @param job
-	 */
 	protected void prepareMatrixCharacteristicsTernaryInstruction(JobConf job)
 	{
 		if( mixed_instructions != null )
 			for(MRInstruction inst : mixed_instructions)
-				if( inst instanceof TernaryInstruction )
+				if( inst instanceof CtableInstruction )
 				{
-					TernaryInstruction tinst = (TernaryInstruction) inst;
+					CtableInstruction tinst = (CtableInstruction) inst;
 					if( tinst.input1!=-1 )
 						dimensions.put(tinst.input1, MRJobConfiguration.getMatrixCharacteristicsForInput(job, tinst.input1));					
 					//extend as required, currently only ctableexpand needs blocksizes

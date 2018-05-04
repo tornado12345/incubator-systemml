@@ -24,15 +24,15 @@ import org.apache.sysml.runtime.controlprogram.context.ExecutionContext;
 import org.apache.sysml.runtime.matrix.data.FrameBlock;
 import org.apache.sysml.runtime.matrix.operators.Operator;
 
-public final class FrameAppendCPInstruction extends AppendCPInstruction
-{	
-	public FrameAppendCPInstruction(Operator op, CPOperand in1, CPOperand in2, CPOperand in3, CPOperand out, AppendType type, String opcode, String istr) {
+public final class FrameAppendCPInstruction extends AppendCPInstruction {
+
+	protected FrameAppendCPInstruction(Operator op, CPOperand in1, CPOperand in2, CPOperand in3, CPOperand out,
+			AppendType type, String opcode, String istr) {
 		super(op, in1, in2, in3, out, type, opcode, istr);
 	}
 
 	@Override
 	public void processInstruction(ExecutionContext ec)
-		throws DMLRuntimeException 
 	{
 		//get inputs
 		FrameBlock fin1 = ec.getFrameInput(input1.getName());
@@ -49,7 +49,7 @@ public final class FrameAppendCPInstruction extends AppendCPInstruction
 		} 
 			
 		//execute append operations (append both inputs to initially empty output)
-		FrameBlock ret = fin1.appendOperations(fin2, new FrameBlock(), _type==AppendType.CBIND);
+		FrameBlock ret = fin1.append(fin2, new FrameBlock(), _type==AppendType.CBIND);
 		
 		//set output and release inputs 
 		ec.setFrameOutput(output.getName(), ret);

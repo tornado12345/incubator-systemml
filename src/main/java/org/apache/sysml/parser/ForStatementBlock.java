@@ -19,13 +19,11 @@
 
 package org.apache.sysml.parser;
 
-import java.io.IOException;
 import java.util.ArrayList;
 import java.util.HashMap;
 
 import org.apache.sysml.conf.ConfigurationManager;
 import org.apache.sysml.hops.Hop;
-import org.apache.sysml.hops.HopsException;
 import org.apache.sysml.hops.recompile.Recompiler;
 import org.apache.sysml.lops.Lop;
 import org.apache.sysml.runtime.instructions.cp.BooleanObject;
@@ -54,8 +52,7 @@ public class ForStatementBlock extends StatementBlock
 
 	@Override
 	public VariableSet validate(DMLProgram dmlProg, VariableSet ids, HashMap<String,ConstIdentifier> constVars, boolean conditional) 
-		throws LanguageException, ParseException, IOException 
-	{	
+	{
 		if (_statements.size() > 1){
 			raiseValidateError("ForStatementBlock should have only 1 statement (for statement)", conditional);
 		}
@@ -182,7 +179,8 @@ public class ForStatementBlock extends StatementBlock
 		return ids;
 	}
 	
-	public VariableSet initializeforwardLV(VariableSet activeInPassed) throws LanguageException {
+	@Override
+	public VariableSet initializeforwardLV(VariableSet activeInPassed) {
 		
 		ForStatement fstmt = (ForStatement)_statements.get(0);
 		if (_statements.size() > 1){
@@ -245,7 +243,8 @@ public class ForStatementBlock extends StatementBlock
 		return _liveOut;
 	}
 
-	public VariableSet initializebackwardLV(VariableSet loPassed) throws LanguageException{
+	@Override
+	public VariableSet initializebackwardLV(VariableSet loPassed) {
 		
 		ForStatement fstmt = (ForStatement)_statements.get(0);
 			
@@ -263,17 +262,7 @@ public class ForStatementBlock extends StatementBlock
 		return loReturn;
 	
 	}
-
-	public ArrayList<Hop> get_hops() throws HopsException {
-		
-		if (_hops != null && !_hops.isEmpty()){
-			LOG.error(this.printBlockErrorLocation() + "there should be no HOPs associated with the ForStatementBlock");
-			throw new HopsException(this.printBlockErrorLocation() + "there should be no HOPs associated with the ForStatementBlock");
-		}
-		
-		return _hops;
-	}
-
+	
 	public void setFromHops(Hop hops) { _fromHops = hops; }
 	public void setToHops(Hop hops) { _toHops = hops; }
 	public void setIncrementHops(Hop hops) { _incrementHops = hops; }
@@ -292,9 +281,8 @@ public class ForStatementBlock extends StatementBlock
 	public Lop getToLops()        { return _toLops; }
 	public Lop getIncrementLops() { return _incrementLops; }
 
-	
-	
-	public VariableSet analyze(VariableSet loPassed) throws LanguageException{
+	@Override
+	public VariableSet analyze(VariableSet loPassed) {
  		
 		VariableSet predVars = new VariableSet();
 		IterablePredicate ip = ((ForStatement)_statements.get(0)).getIterablePredicate(); 
@@ -348,9 +336,7 @@ public class ForStatementBlock extends StatementBlock
 	}
 	
 
-	public void performConstantPropagation(HashMap<String, ConstIdentifier> currConstVars) 
-		throws LanguageException
-	{
+	public void performConstantPropagation(HashMap<String, ConstIdentifier> currConstVars) {
 		IterablePredicate ip = getIterPredicate();
 		
 		// handle replacement in from expression
@@ -369,38 +355,31 @@ public class ForStatementBlock extends StatementBlock
 			ip.setIncrementExpr(replacementExpr);
 	}
 	
-	private Expression replaceConstantVar(Expression expr, HashMap<String, ConstIdentifier> currConstVars)
+	private static Expression replaceConstantVar(Expression expr, HashMap<String, ConstIdentifier> currConstVars)
 	{
 		Expression ret = null;
 		
 		if (expr instanceof DataIdentifier && !(expr instanceof IndexedIdentifier)) 
 		{	
 			// check if the DataIdentifier variable is a ConstIdentifier
-			String identifierName = ((DataIdentifier)expr).getName();
-			if (currConstVars.containsKey(identifierName))
-			{
+			String identifierName = ((DataIdentifier) expr).getName();
+			if (currConstVars.containsKey(identifierName)) {
 				ConstIdentifier constValue = currConstVars.get(identifierName);
-				//AUTO CASTING (using runtime operations for consistency)
-				switch( constValue.getValueType() ) 
-				{
-					case DOUBLE: 
-						ret = new IntIdentifier(new DoubleObject(((DoubleIdentifier)constValue).getValue()).getLongValue(),
-								expr.getFilename(), expr.getBeginLine(), expr.getBeginColumn(), 
-								expr.getEndLine(), expr.getEndColumn());
-						break;
-					case INT:    
-						ret = new IntIdentifier((IntIdentifier)constValue,
-								expr.getFilename(), expr.getBeginLine(), expr.getBeginColumn(), 
-								expr.getEndLine(), expr.getEndColumn());
-						break;
-					case BOOLEAN: 
-						ret = new IntIdentifier(new BooleanObject(((BooleanIdentifier)constValue).getValue()).getLongValue(),
-								expr.getFilename(), expr.getBeginLine(), expr.getBeginColumn(), 
-								expr.getEndLine(), expr.getEndColumn());
-						break;
-						
-					default:
-						//do nothing
+				// AUTO CASTING (using runtime operations for consistency)
+				switch (constValue.getValueType()) {
+				case DOUBLE:
+					ret = new IntIdentifier(new DoubleObject(((DoubleIdentifier) constValue).getValue()).getLongValue(),
+							expr);
+					break;
+				case INT:
+					ret = new IntIdentifier((IntIdentifier) constValue, expr);
+					break;
+				case BOOLEAN:
+					ret = new IntIdentifier(
+							new BooleanObject(((BooleanIdentifier) constValue).getValue()).getLongValue(), expr);
+					break;
+				default:
+					// do nothing
 				}
 			}
 		}
@@ -417,29 +396,24 @@ public class ForStatementBlock extends StatementBlock
 	// materialized hops recompilation flags
 	////
 	
-	public void updatePredicateRecompilationFlags() 
-		throws HopsException
-	{
+	public boolean updatePredicateRecompilationFlags() {
 		if( ConfigurationManager.isDynamicRecompilation() ) {
 			_requiresFromRecompile = Recompiler.requiresRecompilation(getFromHops());
 			_requiresToRecompile = Recompiler.requiresRecompilation(getToHops());
 			_requiresIncrementRecompile = Recompiler.requiresRecompilation(getIncrementHops());
 		}
+		return (_requiresFromRecompile || _requiresToRecompile || _requiresIncrementRecompile);
 	}
 	
-	public boolean requiresFromRecompilation()
-	{
+	public boolean requiresFromRecompilation() {
 		return _requiresFromRecompile;
 	}
 	
-	public boolean requiresToRecompilation()
-	{
+	public boolean requiresToRecompilation() {
 		return _requiresToRecompile;
 	}
 	
-	public boolean requiresIncrementRecompilation()
-	{
+	public boolean requiresIncrementRecompilation() {
 		return _requiresIncrementRecompile;
 	}
-	
 }

@@ -19,6 +19,7 @@
 
 package org.apache.sysml.parser;
 
+import org.antlr.v4.runtime.ParserRuleContext;
 import org.apache.sysml.runtime.util.UtilFunctions;
 
 
@@ -27,29 +28,41 @@ public class DoubleIdentifier extends ConstIdentifier
 {
 	
 	private double _val;
-	
-	
-	public DoubleIdentifier(double val, String filename, int blp, int bcp, int elp, int ecp){
+
+	public DoubleIdentifier(double val) {
 		super();
-		 _val = val;
-		_kind = Kind.Data;
-		this.setDimensions(0,0);
-        this.computeDataType();
-        this.setValueType(ValueType.DOUBLE);
-        this.setAllPositions(filename, blp, bcp, elp, ecp);
+		setInfo(val);
+		setBeginLine(-1);
+		setBeginColumn(-1);
+		setEndLine(-1);
+		setEndColumn(-1);
+		setText(null);
 	}
-	
-	public DoubleIdentifier(DoubleIdentifier d, String filename, int blp, int bcp, int elp, int ecp){
-		super();
-		 _val = d.getValue();
-		_kind = Kind.Data;
-		this.setDimensions(0,0);
-        this.computeDataType();
-        this.setValueType(ValueType.DOUBLE);
-        this.setAllPositions(filename, blp, bcp, elp, ecp);
+
+	public DoubleIdentifier(double val, ParseInfo parseInfo) {
+		this(val);
+		setParseInfo(parseInfo);
 	}
-	
-	public Expression rewriteExpression(String prefix) throws LanguageException{
+
+	public DoubleIdentifier(DoubleIdentifier d, ParseInfo parseInfo) {
+		this(d.getValue());
+		setParseInfo(parseInfo);
+	}
+
+	public DoubleIdentifier(ParserRuleContext ctx, double val, String filename) {
+		this(val);
+		setCtxValuesAndFilename(ctx, filename);
+	}
+
+	private void setInfo(double val) {
+		_val = val;
+		setDimensions(0, 0);
+		computeDataType();
+		setValueType(ValueType.DOUBLE);
+	}
+
+	@Override
+	public Expression rewriteExpression(String prefix) {
 		return this;
 	}
 	
@@ -66,6 +79,7 @@ public class DoubleIdentifier extends ConstIdentifier
 		_val = v;
 	}
 	
+	@Override
 	public String toString(){
 		return Double.toString(_val);
 	}

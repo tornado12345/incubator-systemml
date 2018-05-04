@@ -19,10 +19,11 @@
 
 package org.apache.sysml.hops;
 
+import java.util.Arrays;
 import java.util.HashMap;
 
-import org.apache.commons.logging.Log;
-import org.apache.commons.logging.LogFactory;
+import org.apache.log4j.Level;
+import org.apache.log4j.Logger;
 import org.apache.sysml.api.DMLScript;
 import org.apache.sysml.api.DMLScript.RUNTIME_PLATFORM;
 import org.apache.sysml.conf.CompilerConfig;
@@ -32,16 +33,20 @@ import org.apache.sysml.conf.DMLConfig;
 import org.apache.sysml.hops.Hop.DataOpTypes;
 import org.apache.sysml.hops.Hop.FileFormatTypes;
 import org.apache.sysml.hops.Hop.OpOp2;
+import org.apache.sysml.hops.Hop.ReOrgOp;
 import org.apache.sysml.hops.rewrite.HopRewriteUtils;
 import org.apache.sysml.lops.Checkpoint;
 import org.apache.sysml.lops.Lop;
 import org.apache.sysml.lops.LopProperties.ExecType;
 import org.apache.sysml.lops.compile.Dag;
-import org.apache.sysml.parser.Expression.DataType;
+import org.apache.sysml.parser.ForStatementBlock;
 import org.apache.sysml.parser.Expression.ValueType;
 import org.apache.sysml.runtime.DMLRuntimeException;
+import org.apache.sysml.runtime.controlprogram.ForProgramBlock;
 import org.apache.sysml.runtime.controlprogram.LocalVariableMap;
+import org.apache.sysml.runtime.controlprogram.caching.LazyWriteBuffer;
 import org.apache.sysml.runtime.controlprogram.context.SparkExecutionContext;
+import org.apache.sysml.runtime.controlprogram.parfor.ProgramConverter;
 import org.apache.sysml.runtime.controlprogram.parfor.stat.InfrastructureAnalyzer;
 import org.apache.sysml.runtime.functionobjects.IntegerDivide;
 import org.apache.sysml.runtime.functionobjects.Modulus;
@@ -51,15 +56,12 @@ import org.apache.sysml.runtime.matrix.MatrixCharacteristics;
 import org.apache.sysml.runtime.matrix.data.MatrixBlock;
 import org.apache.sysml.runtime.matrix.data.OutputInfo;
 import org.apache.sysml.runtime.matrix.data.SparseBlock;
-import org.apache.sysml.runtime.matrix.data.SparseRow;
 import org.apache.sysml.runtime.util.IndexRange;
 import org.apache.sysml.runtime.util.UtilFunctions;
 import org.apache.sysml.yarn.ropt.YarnClusterAnalyzer;
 
 public class OptimizerUtils 
 {
-	private static final Log LOG = LogFactory.getLog(OptimizerUtils.class.getName());
-	
 	////////////////////////////////////////////////////////
 	// Optimizer constants and flags (incl tuning knobs)  //
 	////////////////////////////////////////////////////////
@@ -91,7 +93,6 @@ public class OptimizerUtils
 	public static final long INT_SIZE = 4;
 	public static final long CHAR_SIZE = 1;
 	public static final long BOOLEAN_SIZE = 1;
-	public static final double BIT_SIZE = (double)1/8;
 	public static final double INVALID_SIZE = -1d; // memory estimate not computed
 
 	//constants for valid CP matrix dimension sizes / nnz (dense/sparse)
@@ -99,6 +100,8 @@ public class OptimizerUtils
 	public static final long MAX_NNZ_CP_SPARSE = (MatrixBlock.DEFAULT_SPARSEBLOCK == 
 			SparseBlock.Type.MCSR) ? Long.MAX_VALUE : Integer.MAX_VALUE;
 
+	public static final long SAFE_REP_CHANGE_THRES = 8 * 1024 *1024; //8MB
+	
 	/**
 	 * Enables common subexpression elimination in dags. There is however, a potential tradeoff
 	 * between computation redundancy and data transfer between MR jobs. Since, we do not reason
@@ -112,7 +115,8 @@ public class OptimizerUtils
 	 */
 	public static boolean ALLOW_CONSTANT_FOLDING = true;
 	
-	public static boolean ALLOW_ALGEBRAIC_SIMPLIFICATION = true; 
+	public static boolean ALLOW_ALGEBRAIC_SIMPLIFICATION = true;
+	public static boolean ALLOW_OPERATOR_FUSION = true;
 	
 	/**
 	 * Enables if-else branch removal for constant predicates (original literals or 
@@ -138,11 +142,6 @@ public class OptimizerUtils
 	public static boolean ALLOW_WORSTCASE_SIZE_EXPRESSION_EVALUATION = true;
 
 	public static boolean ALLOW_RAND_JOB_RECOMPILE = true;
-	
-	/**
-	 * Enables CP-side data transformation for small files.
-	 */
-	public static boolean ALLOW_TRANSFORM_RECOMPILE = true;
 
 	/**
 	 * Enables parfor runtime piggybacking of MR jobs into the packed jobs for
@@ -156,6 +155,14 @@ public class OptimizerUtils
 	 * if save to do so (e.g., if called once).
 	 */
 	public static boolean ALLOW_INTER_PROCEDURAL_ANALYSIS = true;
+
+	/**
+	 * Number of inter-procedural analysis (IPA) repetitions. If set to >=2, we apply
+	 * IPA multiple times in order to allow scalar propagation over complex function call
+	 * graphs and various interactions between constant propagation, constant folding,
+	 * and other rewrites such as branch removal and the merge of statement block sequences.
+	 */
+	public static int IPA_NUM_REPETITIONS = 3;
 
 	/**
 	 * Enables sum product rewrites such as mapmultchains. In the future, this will cover 
@@ -175,6 +182,12 @@ public class OptimizerUtils
 	 */
 	public static boolean ALLOW_LOOP_UPDATE_IN_PLACE = true;
 	
+	/**
+	 * Enables a specific rewrite for code motion, i.e., hoisting loop invariant code
+	 * out of while, for, and parfor loops.
+	 */
+	public static boolean ALLOW_CODE_MOTION = false;
+	
 	
 	/**
 	 * Specifies a multiplier computing the degree of parallelism of parallel
@@ -193,15 +206,7 @@ public class OptimizerUtils
 	 * 
 	 */
 	public static final boolean ALLOW_COMBINE_FILE_INPUT_FORMAT = true;
-	
-	/**
-	 * Enables automatic csv-binary block reblock.
-	 */
-	public static boolean ALLOW_FRAME_CSV_REBLOCK = true;
-	
-	
-	public static long GPU_MEMORY_BUDGET = -1;
-	
+
 	//////////////////////
 	// Optimizer levels //
 	//////////////////////
@@ -249,7 +254,7 @@ public class OptimizerUtils
 		O3_LOCAL_RESOURCE_TIME_MEMORY,
 		O4_GLOBAL_TIME_MEMORY,
 		O5_DEBUG_MODE,
-	};
+	}
 		
 	public static OptimizationLevel getOptLevel() {
 		int optlevel = ConfigurationManager.getCompilerConfig().getInt(ConfigType.OPT_LEVEL);
@@ -264,18 +269,18 @@ public class OptimizerUtils
 		return (getOptLevel() == level);
 	}
 	
-	public static CompilerConfig constructCompilerConfig( DMLConfig dmlconf ) 
-		throws DMLRuntimeException
+	public static CompilerConfig constructCompilerConfig( DMLConfig dmlconf ) {
+		return constructCompilerConfig(new CompilerConfig(), dmlconf);
+	}
+	
+	public static CompilerConfig constructCompilerConfig( CompilerConfig cconf, DMLConfig dmlconf ) 
 	{
-		//create default compiler configuration
-		CompilerConfig cconf = new CompilerConfig();
-		
 		//each script sets its own block size, opt level etc
 		cconf.set(ConfigType.BLOCK_SIZE, dmlconf.getIntValue( DMLConfig.DEFAULT_BLOCK_SIZE ));
 
 		//handle optimization level
 		int optlevel = dmlconf.getIntValue(DMLConfig.OPTIMIZATION_LEVEL);
-		if( optlevel < 0 || optlevel > 5 )
+		if( optlevel < 0 || optlevel > 7 )
 			throw new DMLRuntimeException("Error: invalid optimization level '"+optlevel+"' (valid values: 0-5).");
 	
 		// This overrides any optimization level that is present in the configuration file.
@@ -295,6 +300,7 @@ public class OptimizerUtils
 				ALLOW_ALGEBRAIC_SIMPLIFICATION = false;
 				ALLOW_AUTO_VECTORIZATION = false;
 				ALLOW_INTER_PROCEDURAL_ANALYSIS = false;
+				IPA_NUM_REPETITIONS = 1;
 				ALLOW_BRANCH_REMOVAL = false;
 				ALLOW_SUM_PRODUCT_REWRITES = false;
 				break;
@@ -306,6 +312,7 @@ public class OptimizerUtils
 				ALLOW_ALGEBRAIC_SIMPLIFICATION = false;
 				ALLOW_AUTO_VECTORIZATION = false;
 				ALLOW_INTER_PROCEDURAL_ANALYSIS = false;
+				IPA_NUM_REPETITIONS = 1;
 				ALLOW_BRANCH_REMOVAL = false;
 				ALLOW_SUM_PRODUCT_REWRITES = false;
 				ALLOW_LOOP_UPDATE_IN_PLACE = false;
@@ -318,13 +325,13 @@ public class OptimizerUtils
 			case 3:
 				cconf.set(ConfigType.OPT_LEVEL, OptimizationLevel.O3_LOCAL_RESOURCE_TIME_MEMORY.ordinal());
 			break;
-							
+			
 			// opt level 3: global, time- and memory-based (all advanced rewrites)
 			case 4:
 				cconf.set(ConfigType.OPT_LEVEL, OptimizationLevel.O4_GLOBAL_TIME_MEMORY.ordinal());
 				break;
 			// opt level 4: debug mode (no interfering rewrites)
-			case 5:				
+			case 5:
 				cconf.set(ConfigType.OPT_LEVEL, OptimizationLevel.O5_DEBUG_MODE.ordinal());
 				ALLOW_CONSTANT_FOLDING = false;
 				ALLOW_COMMON_SUBEXPRESSION_ELIMINATION = false;
@@ -339,29 +346,55 @@ public class OptimizerUtils
 				cconf.set(ConfigType.ALLOW_DYN_RECOMPILATION, false);
 				cconf.set(ConfigType.ALLOW_INDIVIDUAL_SB_SPECIFIC_OPS, false);
 				break;
+			
+			// opt level 6 and7: SPOOF w/o fused operators, otherwise same as O2
+			// (hidden optimization levels not documented on purpose, as they will
+			// be removed once SPOOF is production ready)	
+			case 6:
+				cconf.set(ConfigType.OPT_LEVEL, OptimizationLevel.O2_LOCAL_MEMORY_DEFAULT.ordinal());
+				ALLOW_AUTO_VECTORIZATION = false;
+				break;
+			case 7:
+				cconf.set(ConfigType.OPT_LEVEL, OptimizationLevel.O2_LOCAL_MEMORY_DEFAULT.ordinal());
+				ALLOW_OPERATOR_FUSION = false;
+				ALLOW_AUTO_VECTORIZATION = false;
+				ALLOW_SUM_PRODUCT_REWRITES = false;
+				break;
 		}
 		
 		//handle parallel text io (incl awareness of thread contention in <jdk8)
-		if (!dmlconf.getBooleanValue(DMLConfig.CP_PARALLEL_TEXTIO)) {
+		if (!dmlconf.getBooleanValue(DMLConfig.CP_PARALLEL_IO)) {
 			cconf.set(ConfigType.PARALLEL_CP_READ_TEXTFORMATS, false);
 			cconf.set(ConfigType.PARALLEL_CP_WRITE_TEXTFORMATS, false);
 			cconf.set(ConfigType.PARALLEL_CP_READ_BINARYFORMATS, false);
 			cconf.set(ConfigType.PARALLEL_CP_WRITE_BINARYFORMATS, false);
 		}
-		else if(   InfrastructureAnalyzer.isJavaVersionLessThanJDK8() 
-			    && InfrastructureAnalyzer.getLocalParallelism() > 1   )
-		{
-			LOG.warn("Auto-disable multi-threaded text read for 'text' and 'csv' due to thread contention on JRE < 1.8"
-					+ " (java.version="+ System.getProperty("java.version")+").");			
-			cconf.set(ConfigType.PARALLEL_CP_READ_TEXTFORMATS, false);
-		}
 
 		//handle parallel matrix mult / rand configuration
-		if (!dmlconf.getBooleanValue(DMLConfig.CP_PARALLEL_MATRIXMULT)) {
+		if (!dmlconf.getBooleanValue(DMLConfig.CP_PARALLEL_OPS)) {
 			cconf.set(ConfigType.PARALLEL_CP_MATRIX_OPERATIONS, false);
-		}	
+		}
 		
 		return cconf;
+	}
+	
+	public static void resetStaticCompilerFlags() {
+		//TODO this is a workaround for MLContext to avoid a major refactoring before the release; this method 
+		//should be removed as soon all modified static variables are properly handled in the compiler config
+		ALLOW_ALGEBRAIC_SIMPLIFICATION = true;
+		ALLOW_AUTO_VECTORIZATION = true;
+		ALLOW_BRANCH_REMOVAL = true;
+		ALLOW_CONSTANT_FOLDING = true;
+		ALLOW_COMMON_SUBEXPRESSION_ELIMINATION = true;
+		ALLOW_INTER_PROCEDURAL_ANALYSIS = true;
+		ALLOW_LOOP_UPDATE_IN_PLACE = true;
+		ALLOW_OPERATOR_FUSION = true;
+		ALLOW_RAND_JOB_RECOMPILE = true;
+		ALLOW_SIZE_EXPRESSION_EVALUATION = true;
+		ALLOW_SPLIT_HOP_DAGS = true;
+		ALLOW_SUM_PRODUCT_REWRITES = true;
+		ALLOW_WORSTCASE_SIZE_EXPRESSION_EVALUATION = true;
+		IPA_NUM_REPETITIONS = 3;
 	}
 
 	public static long getDefaultSize() {
@@ -387,29 +420,29 @@ public class OptimizerUtils
 	 * 
 	 * @return local memory budget
 	 */
-	public static double getLocalMemBudget()
-	{
+	public static double getLocalMemBudget() {
 		double ret = InfrastructureAnalyzer.getLocalMaxMemory();
 		return ret * OptimizerUtils.MEM_UTIL_FACTOR;
 	}
 	
-	public static double getRemoteMemBudgetMap()
-	{
+	public static double getRemoteMemBudgetMap() {
 		return getRemoteMemBudgetMap(false);
 	}
 	
-	public static double getRemoteMemBudgetMap(boolean substractSortBuffer)
-	{
+	public static double getRemoteMemBudgetMap(boolean substractSortBuffer) {
 		double ret = InfrastructureAnalyzer.getRemoteMaxMemoryMap();
 		if( substractSortBuffer )
 			ret -= InfrastructureAnalyzer.getRemoteMaxMemorySortBuffer();
 		return ret * OptimizerUtils.MEM_UTIL_FACTOR;
 	}
 
-	public static double getRemoteMemBudgetReduce()
-	{
+	public static double getRemoteMemBudgetReduce() {
 		double ret = InfrastructureAnalyzer.getRemoteMaxMemoryReduce();
 		return ret * OptimizerUtils.MEM_UTIL_FACTOR;
+	}
+	
+	public static boolean isMaxLocalParallelism(int k) {
+		return InfrastructureAnalyzer.getLocalParallelism() == k;
 	}
 
 	public static boolean checkSparkBroadcastMemoryBudget( double size )
@@ -423,15 +456,12 @@ public class OptimizerUtils
 		return ( size < memBudgetExec && 2*size < memBudgetLocal );
 	}
 
-	public static boolean checkSparkBroadcastMemoryBudget( long rlen, long clen, long brlen, long bclen, long nnz )
-	{
+	public static boolean checkSparkBroadcastMemoryBudget( long rlen, long clen, long brlen, long bclen, long nnz ) {
 		double memBudgetExec = SparkExecutionContext.getBroadcastMemoryBudget();
 		double memBudgetLocal = OptimizerUtils.getLocalMemBudget();
-
 		double sp = getSparsity(rlen, clen, nnz);
 		double size = estimateSizeExactSparsity(rlen, clen, sp);
 		double sizeP = estimatePartitionedSizeExactSparsity(rlen, clen, brlen, bclen, sp);
-		
 		//basic requirement: the broadcast needs to to fit once in the remote broadcast memory 
 		//and twice into the local memory budget because we have to create a partitioned broadcast
 		//memory and hand it over to the spark context as in-memory object
@@ -439,25 +469,25 @@ public class OptimizerUtils
 				&& sizeP < memBudgetExec && size+sizeP < memBudgetLocal );
 	}
 
-	public static boolean checkSparkCollectMemoryBudget( MatrixCharacteristics mc, long memPinned )
-	{
-		return checkSparkCollectMemoryBudget(
-				mc.getRows(), 
-				mc.getCols(),
-				mc.getRowsPerBlock(),
-				mc.getColsPerBlock(),
-				mc.getNonZeros(), memPinned);
+	public static boolean checkSparkCollectMemoryBudget( MatrixCharacteristics mc, long memPinned ) {
+		return checkSparkCollectMemoryBudget(mc.getRows(), mc.getCols(), mc.getRowsPerBlock(),
+			mc.getColsPerBlock(), mc.getNonZerosBound(), memPinned, false);
 	}
 	
-	public static boolean checkSparkCollectMemoryBudget( long rlen, long clen, int brlen, int bclen, long nnz, long memPinned )
-	{
+	public static boolean checkSparkCollectMemoryBudget( MatrixCharacteristics mc, long memPinned, boolean checkBP ) {
+		return checkSparkCollectMemoryBudget(mc.getRows(), mc.getCols(), mc.getRowsPerBlock(),
+			mc.getColsPerBlock(), mc.getNonZerosBound(), memPinned, checkBP);
+	}
+	
+	private static boolean checkSparkCollectMemoryBudget( long rlen, long clen, int brlen, int bclen, long nnz, long memPinned, boolean checkBP ) {
 		//compute size of output matrix and its blocked representation
 		double sp = getSparsity(rlen, clen, nnz);
 		double memMatrix = estimateSizeExactSparsity(rlen, clen, sp);
 		double memPMatrix = estimatePartitionedSizeExactSparsity(rlen, clen, brlen, bclen, sp);
-		
 		//check if both output matrix and partitioned matrix fit into local mem budget
-		return (memPinned + memMatrix + memPMatrix < getLocalMemBudget());
+		return (memPinned + memMatrix + memPMatrix < getLocalMemBudget())
+		//check if the output matrix fits into the write buffer to avoid unnecessary evictions
+			&& (!checkBP || memMatrix < LazyWriteBuffer.getWriteBufferLimit());
 	}
 
 	public static boolean checkSparseBlockCSRConversion( MatrixCharacteristics mcIn ) {
@@ -475,6 +505,9 @@ public class OptimizerUtils
 	 */
 	public static int getNumReducers( boolean configOnly )
 	{
+		if( isSparkExecutionMode() )
+			return SparkExecutionContext.getDefaultParallelism(false);
+		
 		int ret = ConfigurationManager.getNumReducers();
 		if( !configOnly ) {
 			ret = Math.min(ret,InfrastructureAnalyzer.getRemoteParallelReduceTasks());
@@ -489,6 +522,9 @@ public class OptimizerUtils
 
 	public static int getNumMappers()
 	{
+		if( isSparkExecutionMode() )
+			return SparkExecutionContext.getDefaultParallelism(false);
+		
 		int ret = InfrastructureAnalyzer.getRemoteParallelMapTasks();
 			
 		//correction max number of reducers on yarn clusters
@@ -650,7 +686,7 @@ public class OptimizerUtils
 				mc.getCols(), 
 				mc.getRowsPerBlock(), 
 				mc.getColsPerBlock(), 
-				mc.getNonZeros());
+				mc.getNonZerosBound());
 	}
 	
 	/**
@@ -688,8 +724,8 @@ public class OptimizerUtils
 		//check for guaranteed existence of empty blocks (less nnz than total number of blocks)
 		long tnrblks = (long)Math.ceil((double)rlen/brlen);
 		long tncblks = (long)Math.ceil((double)clen/bclen);
-		long nnz = (long) Math.ceil(sp * rlen * clen);		
-		if( nnz < tnrblks * tncblks ) {
+		long nnz = (long) Math.ceil(sp * rlen * clen);
+		if( nnz <= tnrblks * tncblks ) {
 			long lrlen = Math.min(rlen, brlen);
 			long lclen = Math.min(clen, bclen);
 			return nnz * estimateSizeExactSparsity(lrlen, lclen, 1)
@@ -704,16 +740,16 @@ public class OptimizerUtils
 
 		//estimate size of bottom boundary blocks 
 		long lrlen = rlen % brlen;
-		if( ncblks > 0 && lrlen > 0 )
+		if( ncblks > 0 && lrlen >= 0 )
 			ret += ncblks * estimateSizeExactSparsity(lrlen, bclen, sp);
 		
 		//estimate size of right boundary blocks
 		long lclen = clen % bclen;
-		if( nrblks > 0 && lclen > 0 )
+		if( nrblks > 0 && lclen >= 0 )
 			ret += nrblks * estimateSizeExactSparsity(brlen, lclen, sp);
 		
 		//estimate size of bottom right boundary block
-		if( lrlen > 0 && lclen > 0  )
+		if( lrlen >= 0 && lclen >= 0  )
 			ret += estimateSizeExactSparsity(lrlen, lclen, sp);
 		
 		return ret;
@@ -736,37 +772,7 @@ public class OptimizerUtils
 	{
 		return estimateSizeExactSparsity(0, 0, 0.0d);
 	}
-	
-	/**
-	 * Estimates the memory footprint of a SparseRow with <code>clen</code>
-	 * columns and <code>sp</code> sparsity. This method accounts for the
-	 * overhead incurred by extra cells allocated (but not used) for SparseRow.
-	 * It assumes that non-zeros are uniformly distributed in the matrix --
-	 * i.e., #estimated nnz in a given SparseRow = clen*sp.
-	 * 
-	 * @param clen number of cols
-	 * @param sp sparsity
-	 * @return estimated size in bytes
-	 */
-	public static long estimateRowSize(long clen, double sp) 
-	{	
-		if ( sp == 0 )
-			return 0;
-		
-		int basicSize = 28;
-		int cellSize = 12; // every cell takes 12 (8+4) bytes
-		if ( sp == 1 ) {
-			return clen * cellSize; 
-		}
-		long  numCells = SparseRow.initialCapacity;
-		if ( (long) (sp*clen) > numCells ) {
-			numCells = (long) (sp*clen);
-		}
-		long allocatedCells = (long)Math.pow(2, Math.ceil(Math.log(numCells)/Math.log(2)) );
-		long rowSize = basicSize +  allocatedCells * cellSize;
-		return rowSize;
-	}
-	
+
 	public static long estimateSizeTextOutput( long rows, long cols, long nnz, OutputInfo oinfo )
 	{
 		long bsize = MatrixBlock.estimateSizeOnDisk(rows, cols, nnz);
@@ -777,6 +783,17 @@ public class OptimizerUtils
 		
 		//unknown output info
 		return bsize;
+	}
+	
+	public static double getTotalMemEstimate(Hop[] in, Hop out) {
+		return getTotalMemEstimate(in, out, false);
+	}
+	
+	public static double getTotalMemEstimate(Hop[] in, Hop out, boolean denseOut) {
+		return Arrays.stream(in)
+			.mapToDouble(h -> h.getOutputMemEstimate()).sum()
+			+ (!denseOut ? out.getOutputMemEstimate() :
+				OptimizerUtils.estimateSize(out.getDim1(), out.getDim2()));
 	}
 	
 	/**
@@ -815,6 +832,11 @@ public class OptimizerUtils
 				|| (rl-1)/brlen == (ru-1)/brlen && (cl-1)%bclen == 0 
 				|| (rl-1)%brlen == 0 && (cl-1)/bclen == (cu-1)/bclen);
 	}
+	
+	public static boolean isValidCPDimensions( MatrixCharacteristics mc ) {
+		return isValidCPDimensions(mc.getRows(), mc.getCols());
+	}
+	
 	/**
 	 * Returns false if dimensions known to be invalid; other true
 	 * 
@@ -897,32 +919,23 @@ public class OptimizerUtils
 	 * @return unique temp file name
 	 */
 	public static String getUniqueTempFileName() {
-		return new Dag<Lop>().getNextUniqueFilename();
-	}
-	
-	/**
-	 * Wrapper over internal varname construction for external usage.
-	 * 
-	 * @param dt data type
-	 * @return unique variable name
-	 */
-	public static String getUniqueVariableName(DataType dt) {
-		return Dag.getNextUniqueVarname(dt);
+		return ConfigurationManager.getScratchSpace()
+			+ Lop.FILE_SEPARATOR + Lop.PROCESS_PREFIX + DMLScript.getUUID()
+			+ Lop.FILE_SEPARATOR + ProgramConverter.CP_ROOT_THREAD_ID + Lop.FILE_SEPARATOR 
+			+ Dag.getNextUniqueFilenameSuffix();
 	}
 
-	public static boolean allowsToFilterEmptyBlockOutputs( Hop hop ) 
-		throws HopsException
-	{
+	public static boolean allowsToFilterEmptyBlockOutputs( Hop hop ) {
 		boolean ret = true;
 		for( Hop p : hop.getParent() ) {
 			p.optFindExecType(); //ensure exec type evaluated
-			ret &=   (  p.getExecType()==ExecType.CP 
-					 ||(p instanceof AggBinaryOp && allowsToFilterEmptyBlockOutputs(p) )
-					 ||(p instanceof DataOp && ((DataOp)p).getDataOpType()==DataOpTypes.PERSISTENTWRITE && ((DataOp)p).getInputFormatType()==FileFormatTypes.TEXT))
-				  && !(p instanceof FunctionOp || (p instanceof DataOp && ((DataOp)p).getInputFormatType()!=FileFormatTypes.TEXT) ); //no function call or transient write
+			ret &= ( p.getExecType()==ExecType.CP 
+				||(p instanceof AggBinaryOp && allowsToFilterEmptyBlockOutputs(p) )
+				||(HopRewriteUtils.isReorg(p, ReOrgOp.RESHAPE, ReOrgOp.TRANS) && allowsToFilterEmptyBlockOutputs(p) )
+				||(HopRewriteUtils.isData(p, DataOpTypes.PERSISTENTWRITE) && ((DataOp)p).getInputFormatType()==FileFormatTypes.TEXT))
+				&& !(p instanceof FunctionOp || (p instanceof DataOp && ((DataOp)p).getInputFormatType()!=FileFormatTypes.TEXT) ); //no function call or transient write
 		}
-			
-		return ret;	
+		return ret;
 	}
 
 	public static int getConstrainedNumThreads(int maxNumThreads)
@@ -941,6 +954,11 @@ public class OptimizerUtils
 		}
 			
 		return ret;
+	}
+	
+	public static Level getDefaultLogLevel() {
+		Level log = Logger.getRootLogger().getLevel();
+		return (log != null) ? log : Level.INFO;
 	}
 	
 	////////////////////////
@@ -966,7 +984,7 @@ public class OptimizerUtils
 			return Math.min(1, nnz1/m) * Math.min(1, nnz2/n);
 		}
 		else
-			return (1 - Math.pow(1-sp1*sp2, k) );
+			return 1 - Math.pow(1-sp1*sp2, k);
 	}
 
 	public static double getLeftIndexingSparsity( long rlen1, long clen1, long nnz1, long rlen2, long clen2, long nnz2 )
@@ -1016,15 +1034,21 @@ public class OptimizerUtils
 		return ( op==OpOp2.NOTEQUAL && val==0);
 	}
 
-	public static double getBinaryOpSparsityConditionalSparseSafe( double sp1, OpOp2 op, LiteralOp lit )
-	{
+	public static boolean isBinaryOpSparsityConditionalSparseSafe( OpOp2 op, LiteralOp lit ) {
 		double val = HopRewriteUtils.getDoubleValueSafe(lit);
-		
 		return (  (op==OpOp2.GREATER  && val==0) 
 				||(op==OpOp2.LESS     && val==0)
 				||(op==OpOp2.NOTEQUAL && val==0)
 				||(op==OpOp2.EQUAL    && val!=0)
-				||(op==OpOp2.MINUS    && val==0)) ? sp1 : 1.0;
+				||(op==OpOp2.MINUS    && val==0)
+				||(op==OpOp2.PLUS     && val==0)
+				||(op==OpOp2.POW      && val!=0)
+				||(op==OpOp2.MAX      && val<=0)
+				||(op==OpOp2.MIN      && val>=0));
+	}
+	
+	public static double getBinaryOpSparsityConditionalSparseSafe( double sp1, OpOp2 op, LiteralOp lit ) {
+		return isBinaryOpSparsityConditionalSparseSafe(op, lit) ? sp1 : 1.0;
 	}
 	
 	/**
@@ -1046,11 +1070,10 @@ public class OptimizerUtils
 			//NOTE: for matrix-scalar operations this estimate is too conservative, because 
 			//Math.min(1, sp1 + sp2) will always give a sparsity 1 if we pass sp2=1 for scalars.
 			//In order to do better (with guarantees), we need to take the actual values into account  
-			switch(op) 
-			{
+			switch(op) {
 				case PLUS:
 				case MINUS:
-				case LESS: 
+				case LESS:
 				case GREATER:
 				case NOTEQUAL:
 				case MIN:
@@ -1061,47 +1084,43 @@ public class OptimizerUtils
 				case AND:
 					ret = Math.min(sp1, sp2); break;
 				case DIV:
+					ret = Math.min(1, sp1 + (1-sp2)); break;
 				case MODULUS:
 				case POW:
 				case MINUS_NZ:
-				case LOG_NZ:	
-					ret = sp1; break; 
+				case LOG_NZ:
+					ret = sp1; break;
 				//case EQUAL: //doesnt work on worstcase estimates, but on 
-				//	ret = 1-Math.abs(sp1-sp2); break;	
-	
+				//	ret = 1-Math.abs(sp1-sp2); break;
 				default:
 					ret = 1.0;
 			}
 		}
 		else
 		{
-			switch(op) {			
+			switch(op) {
 				case PLUS:
 				case MINUS:
 					// result[i,j] != 0 iff A[i,j] !=0 || B[i,j] != 0
 					// worst case estimate = sp1+sp2
-					ret = (1 - (1-sp1)*(1-sp2)); 
+					ret = (1 - (1-sp1)*(1-sp2));
 					break;
-					
 				case MULT:
 					// result[i,j] != 0 iff A[i,j] !=0 && B[i,j] != 0
 					// worst case estimate = min(sp1,sp2)
-					ret = sp1 * sp2;  
+					ret = sp1 * sp2;
 					break;
-					
 				case DIV:
 					ret = 1.0; // worst case estimate
 					break;
-					
-				case LESS: 
+				case LESS:
 				case LESSEQUAL:
 				case GREATER:
 				case GREATEREQUAL:
-				case EQUAL: 
+				case EQUAL:
 				case NOTEQUAL:
 					ret = 1.0; // purely data-dependent operations, and hence worse-case estimate
 					break;
-					
 				//MIN, MAX, AND, OR, LOG, POW
 				default:
 					ret = 1.0;
@@ -1111,16 +1130,35 @@ public class OptimizerUtils
 		return ret; 
 	}
 	
+	public static long getOuterNonZeros(long n1, long n2, long nnz1, long nnz2, OpOp2 op) {
+		if( nnz1 < 0 || nnz2 < 0 )
+			return n1 * n2;
+		switch(op) {
+			case PLUS:
+			case MINUS:
+			case LESS:
+			case GREATER:
+			case NOTEQUAL:
+			case MIN:
+			case MAX:
+			case OR:
+				return n1 * n2
+					- (n1-nnz1) * (n2-nnz2);
+			case MULT:
+			case AND:
+				return nnz1 * nnz2;
+			default:
+				return n1 * n2;
+		}
+	}
+	
 	public static double getSparsity( MatrixCharacteristics mc ) {
 		return getSparsity(mc.getRows(), mc.getCols(), mc.getNonZeros());
 	}
 	
-	public static double getSparsity( long dim1, long dim2, long nnz )
-	{
-		if( dim1<=0 || dim2<=0 || nnz<0 )
-			return 1.0;
-		else
-			return Math.min(((double)nnz)/dim1/dim2, 1.0);
+	public static double getSparsity( long dim1, long dim2, long nnz ) {
+		return ( dim1<=0 || dim2<=0 || nnz<0 ) ? 1.0 :
+			Math.min(((double)nnz)/dim1/dim2, 1.0);
 	}
 	
 	public static String toMB(double inB) {
@@ -1129,7 +1167,39 @@ public class OptimizerUtils
 		return String.format("%.0f", inB/(1024*1024) );
 	}
 	
-
+	public static long getNumIterations(ForProgramBlock fpb, long defaultValue) {
+		if( fpb.getStatementBlock()==null )
+			return defaultValue;
+		ForStatementBlock fsb = (ForStatementBlock) fpb.getStatementBlock();
+		try {
+			HashMap<Long,Long> memo = new HashMap<>();
+			long from = rEvalSimpleLongExpression(fsb.getFromHops().getInput().get(0), memo);
+			long to = rEvalSimpleLongExpression(fsb.getToHops().getInput().get(0), memo);
+			long increment = (fsb.getIncrementHops()==null) ? (from < to) ? 1 : -1 : 
+				rEvalSimpleLongExpression(fsb.getIncrementHops().getInput().get(0), memo);
+			if( from != Long.MAX_VALUE && to != Long.MAX_VALUE && increment != Long.MAX_VALUE )
+				return (int)Math.ceil(((double)(to-from+1))/increment);
+		}
+		catch(Exception ex){}
+		return defaultValue;
+	}
+	
+	public static long getNumIterations(ForProgramBlock fpb, LocalVariableMap vars, long defaultValue) {
+		if( fpb.getStatementBlock()==null )
+			return defaultValue;
+		ForStatementBlock fsb = (ForStatementBlock) fpb.getStatementBlock();
+		try {
+			HashMap<Long,Long> memo = new HashMap<>();
+			long from = rEvalSimpleLongExpression(fsb.getFromHops().getInput().get(0), memo, vars);
+			long to = rEvalSimpleLongExpression(fsb.getToHops().getInput().get(0), memo, vars);
+			long increment = (fsb.getIncrementHops()==null) ? (from < to) ? 1 : -1 : 
+				rEvalSimpleLongExpression(fsb.getIncrementHops().getInput().get(0), memo);
+			if( from != Long.MAX_VALUE && to != Long.MAX_VALUE && increment != Long.MAX_VALUE )
+				return (int)Math.ceil(((double)(to-from+1))/increment);
+		}
+		catch(Exception ex){}
+		return defaultValue;
+	}
 	
 	/**
 	 * Function to evaluate simple size expressions over literals and now/ncol.
@@ -1140,15 +1210,13 @@ public class OptimizerUtils
 	 * @param root the root high-level operator
 	 * @param valMemo ?
 	 * @return size expression
-	 * @throws HopsException if HopsException occurs
 	 */
 	public static long rEvalSimpleLongExpression( Hop root, HashMap<Long, Long> valMemo ) 
-		throws HopsException
 	{
 		long ret = Long.MAX_VALUE;
 		
 		//for simplicity and robustness call double and cast.
-		HashMap<Long, Double> dvalMemo = new HashMap<Long, Double>();
+		HashMap<Long, Double> dvalMemo = new HashMap<>();
 		double tmp = rEvalSimpleDoubleExpression(root, dvalMemo);
 		if( tmp!=Double.MAX_VALUE )
 			ret = UtilFunctions.toLong( tmp );
@@ -1157,12 +1225,11 @@ public class OptimizerUtils
 	}
 	
 	public static long rEvalSimpleLongExpression( Hop root, HashMap<Long, Long> valMemo, LocalVariableMap vars ) 
-		throws HopsException
 	{
 		long ret = Long.MAX_VALUE;
 		
 		//for simplicity and robustness call double and cast.
-		HashMap<Long, Double> dvalMemo = new HashMap<Long, Double>();
+		HashMap<Long, Double> dvalMemo = new HashMap<>();
 		double tmp = rEvalSimpleDoubleExpression(root, dvalMemo, vars);
 		if( tmp!=Double.MAX_VALUE )
 			ret = UtilFunctions.toLong( tmp );
@@ -1171,7 +1238,6 @@ public class OptimizerUtils
 	}
 	
 	public static double rEvalSimpleDoubleExpression( Hop root, HashMap<Long, Double> valMemo ) 
-		throws HopsException
 	{
 		//memoization (prevent redundant computation of common subexpr)
 		if( valMemo.containsKey(root.getHopID()) )
@@ -1197,7 +1263,6 @@ public class OptimizerUtils
 	}
 	
 	public static double rEvalSimpleDoubleExpression( Hop root, HashMap<Long, Double> valMemo, LocalVariableMap vars ) 
-		throws HopsException
 	{
 		//memoization (prevent redundant computation of common subexpr)
 		if( valMemo.containsKey(root.getHopID()) )
@@ -1226,7 +1291,6 @@ public class OptimizerUtils
 	}
 
 	protected static double rEvalSimpleUnaryDoubleExpression( Hop root, HashMap<Long, Double> valMemo ) 
-		throws HopsException
 	{
 		//memoization (prevent redundant computation of common subexpr)
 		if( valMemo.containsKey(root.getHopID()) )
@@ -1238,9 +1302,9 @@ public class OptimizerUtils
 		Hop input = uroot.getInput().get(0);
 		
 		if(uroot.getOp() == Hop.OpOp1.NROW)
-			ret = (input.getDim1()>0) ? input.getDim1() : Double.MAX_VALUE;
+			ret = input.rowsKnown() ? input.getDim1() : Double.MAX_VALUE;
 		else if( uroot.getOp() == Hop.OpOp1.NCOL )
-			ret = (input.getDim2()>0) ? input.getDim2() : Double.MAX_VALUE;
+			ret = input.colsKnown() ? input.getDim2() : Double.MAX_VALUE;
 		else
 		{
 			double lval = rEvalSimpleDoubleExpression(uroot.getInput().get(0), valMemo);
@@ -1248,8 +1312,10 @@ public class OptimizerUtils
 			{
 				switch( uroot.getOp() )
 				{
-					case SQRT:	ret = Math.sqrt(lval); break;
+					case SQRT:  ret = Math.sqrt(lval); break;
 					case ROUND: ret = Math.round(lval); break;
+					case CEIL:  ret = Math.ceil(lval); break;
+					case FLOOR: ret = Math.floor(lval); break;
 					case CAST_AS_BOOLEAN: ret = (lval!=0)? 1 : 0; break;
 					case CAST_AS_INT: ret = UtilFunctions.toLong(lval); break;
 					case CAST_AS_DOUBLE: ret = lval; break;
@@ -1263,7 +1329,6 @@ public class OptimizerUtils
 	}
 
 	protected static double rEvalSimpleUnaryDoubleExpression( Hop root, HashMap<Long, Double> valMemo, LocalVariableMap vars ) 
-		throws HopsException
 	{
 		//memoization (prevent redundant computation of common subexpr)
 		if( valMemo.containsKey(root.getHopID()) )
@@ -1275,9 +1340,9 @@ public class OptimizerUtils
 		Hop input = uroot.getInput().get(0);
 		
 		if(uroot.getOp() == Hop.OpOp1.NROW)
-			ret = (input.getDim1()>0) ? input.getDim1() : Double.MAX_VALUE;
+			ret = input.rowsKnown() ? input.getDim1() : Double.MAX_VALUE;
 		else if( uroot.getOp() == Hop.OpOp1.NCOL )
-			ret = (input.getDim2()>0) ? input.getDim2() : Double.MAX_VALUE;
+			ret = input.colsKnown() ? input.getDim2() : Double.MAX_VALUE;
 		else
 		{
 			double lval = rEvalSimpleDoubleExpression(uroot.getInput().get(0), valMemo, vars);
@@ -1285,8 +1350,10 @@ public class OptimizerUtils
 			{
 				switch( uroot.getOp() )
 				{
-					case SQRT:	ret = Math.sqrt(lval); break;
+					case SQRT:  ret = Math.sqrt(lval); break;
 					case ROUND: ret = Math.round(lval); break;
+					case CEIL:  ret = Math.ceil(lval); break;
+					case FLOOR: ret = Math.floor(lval); break;
 					case CAST_AS_BOOLEAN: ret = (lval!=0)? 1 : 0; break;
 					case CAST_AS_INT: ret = UtilFunctions.toLong(lval); break;
 					case CAST_AS_DOUBLE: ret = lval; break;
@@ -1300,7 +1367,6 @@ public class OptimizerUtils
 	}
 
 	protected static double rEvalSimpleBinaryDoubleExpression( Hop root, HashMap<Long, Double> valMemo ) 
-		throws HopsException
 	{
 		//memoization (prevent redundant computation of common subexpr)
 		if( valMemo.containsKey(root.getHopID()) )
@@ -1336,7 +1402,6 @@ public class OptimizerUtils
 	}
 
 	protected static double rEvalSimpleBinaryDoubleExpression( Hop root, HashMap<Long, Double> valMemo, LocalVariableMap vars ) 
-		throws HopsException
 	{
 		//memoization (prevent redundant computation of common subexpr)
 		if( valMemo.containsKey(root.getHopID()) )

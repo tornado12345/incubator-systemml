@@ -181,7 +181,7 @@ public class FullSelectPosTest extends AutomatedTestBase
 			fullDMLScriptName = HOME + TEST_NAME + ".dml";
 			
 			//stats parameter required for opcode check
-			programArgs = new String[]{"-stats", "-args", input("A"), output("B") };
+			programArgs = new String[]{"-stats", "-explain", "-args", input("A"), output("B") };
 			
 			fullRScriptName = HOME + TEST_NAME + ".R";
 			rCmd = "Rscript" + " " + fullRScriptName + " " + inputDir() + " " + expectedDir();
@@ -199,11 +199,11 @@ public class FullSelectPosTest extends AutomatedTestBase
 			TestUtils.compareMatrices(dmlfile, rfile, eps, "Stat-DML", "Stat-R");
 			
 			//check generated opcode
-			if( rewrites ){
-				if( instType == ExecType.CP )
-					Assert.assertTrue("Missing opcode: sel+", Statistics.getCPHeavyHitterOpCodes().contains("sel+"));
-				else if ( instType == ExecType.SPARK )
-					Assert.assertTrue("Missing opcode: "+Instruction.SP_INST_PREFIX+"sel+", Statistics.getCPHeavyHitterOpCodes().contains(Instruction.SP_INST_PREFIX+"sel+"));	
+			if( rewrites ) {
+				String expected_op = (instType == ExecType.SPARK) ? Instruction.SP_INST_PREFIX+"max" : "max";
+				if(instType == ExecType.CP || instType == ExecType.SPARK)
+					Assert.assertTrue("Missing opcode: " + expected_op , Statistics.getCPHeavyHitterOpCodes().contains(expected_op)
+						|| Statistics.getCPHeavyHitterOpCodes().contains("gpu_max"));
 			}
 		}
 		finally

@@ -25,7 +25,6 @@ import org.apache.spark.api.java.function.PairFunction;
 
 import scala.Tuple2;
 
-import org.apache.sysml.runtime.DMLRuntimeException;
 import org.apache.sysml.runtime.controlprogram.context.ExecutionContext;
 import org.apache.sysml.runtime.controlprogram.context.SparkExecutionContext;
 import org.apache.sysml.runtime.instructions.InstructionUtils;
@@ -37,30 +36,16 @@ import org.apache.sysml.runtime.matrix.data.MatrixIndexes;
 import org.apache.sysml.runtime.matrix.data.OperationsOnMatrixValues;
 import org.apache.sysml.runtime.matrix.operators.AggregateUnaryOperator;
 
-/**
- * 
- */
-public class CumulativeAggregateSPInstruction extends AggregateUnarySPInstruction 
-{
-	
-	public CumulativeAggregateSPInstruction(AggregateUnaryOperator op, CPOperand in1, CPOperand out, String opcode, String istr )
-	{
-		super(op, null, in1, out, null, opcode, istr);
-		_sptype = SPINSTRUCTION_TYPE.CumsumAggregate;		
+public class CumulativeAggregateSPInstruction extends AggregateUnarySPInstruction {
+
+	private CumulativeAggregateSPInstruction(AggregateUnaryOperator op, CPOperand in1, CPOperand out, String opcode, String istr) {
+		super(SPType.CumsumAggregate, op, null, in1, out, null, opcode, istr);
 	}
 
-	/**
-	 * 
-	 * @param str
-	 * @return
-	 * @throws DMLRuntimeException
-	 */
-	public static CumulativeAggregateSPInstruction parseInstruction( String str ) 
-		throws DMLRuntimeException 
-	{
+	public static CumulativeAggregateSPInstruction parseInstruction( String str ) {
 		String[] parts = InstructionUtils.getInstructionPartsWithValueType( str );
 		InstructionUtils.checkNumFields ( parts, 2 );
-				
+		
 		String opcode = parts[0];
 		CPOperand in1 = new CPOperand(parts[1]);
 		CPOperand out = new CPOperand(parts[2]);
@@ -71,9 +56,7 @@ public class CumulativeAggregateSPInstruction extends AggregateUnarySPInstructio
 	}
 	
 	@Override
-	public void processInstruction(ExecutionContext ec) 
-		throws DMLRuntimeException
-	{
+	public void processInstruction(ExecutionContext ec) {
 		SparkExecutionContext sec = (SparkExecutionContext)ec;
 		MatrixCharacteristics mc = sec.getMatrixCharacteristics(input1.getName());
 		long rlen = mc.getRows();
@@ -87,17 +70,13 @@ public class CumulativeAggregateSPInstruction extends AggregateUnarySPInstructio
 		AggregateUnaryOperator auop = (AggregateUnaryOperator) _optr;
 		JavaPairRDD<MatrixIndexes,MatrixBlock> out = 
 				in.mapToPair(new RDDCumAggFunction(auop, rlen, brlen, bclen));
-		out = RDDAggregateUtils.mergeByKey(out);
+		out = RDDAggregateUtils.mergeByKey(out, false);
 		
 		//put output handle in symbol table
 		sec.setRDDHandleForVariable(output.getName(), out);	
 		sec.addLineageRDD(output.getName(), input1.getName());
 	}
-	
-	/**
-	 * 
-	 * 
-	 */
+
 	private static class RDDCumAggFunction implements PairFunction<Tuple2<MatrixIndexes, MatrixBlock>, MatrixIndexes, MatrixBlock> 
 	{
 		private static final long serialVersionUID = 11324676268945117L;
@@ -129,7 +108,7 @@ public class CumulativeAggregateSPInstruction extends AggregateUnarySPInstructio
 			OperationsOnMatrixValues.performAggregateUnary( ixIn, blkIn, ixOut, blkOut, 
 					                            ((AggregateUnaryOperator)_op), _brlen, _bclen);
 			if( ((AggregateUnaryOperator)_op).aggOp.correctionExists )
-				blkOut.dropLastRowsOrColums(((AggregateUnaryOperator)_op).aggOp.correctionLocation);
+				blkOut.dropLastRowsOrColumns(((AggregateUnaryOperator)_op).aggOp.correctionLocation);
 			
 			//cumsum expand partial aggregates
 			long rlenOut = (long)Math.ceil((double)_rlen/_brlen);
@@ -142,7 +121,7 @@ public class CumulativeAggregateSPInstruction extends AggregateUnarySPInstructio
 			ixOut.setIndexes(rixOut, ixOut.getColumnIndex());
 			
 			//output new tuple
-			return new Tuple2<MatrixIndexes, MatrixBlock>(ixOut, blkOut2);
+			return new Tuple2<>(ixOut, blkOut2);
 		}
 	}
 }

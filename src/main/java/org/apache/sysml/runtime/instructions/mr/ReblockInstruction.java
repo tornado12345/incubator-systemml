@@ -26,22 +26,19 @@ import org.apache.sysml.runtime.matrix.mapred.CachedValueMap;
 import org.apache.sysml.runtime.matrix.mapred.IndexedMatrixValue;
 import org.apache.sysml.runtime.matrix.operators.Operator;
 
-
-public class ReblockInstruction extends UnaryMRInstructionBase 
-{
-	
+public class ReblockInstruction extends UnaryMRInstructionBase {
 	public int brlen;
 	public int bclen;
 	public boolean outputEmptyBlocks;
-	
-	public ReblockInstruction (Operator op, byte in, byte out, int br, int bc, boolean emptyBlocks, String istr) {
-		super(op, in, out);
-		brlen=br;
-		bclen=bc;
+
+	protected ReblockInstruction(Operator op, byte in, byte out, int br, int bc, boolean emptyBlocks, String istr) {
+		super(MRType.Reblock, op, in, out);
+		brlen = br;
+		bclen = bc;
 		outputEmptyBlocks = emptyBlocks;
 		instString = istr;
 	}
-	
+
 	public static ReblockInstruction parseInstruction(String str) 
 	{
 		Operator op = null;
@@ -65,10 +62,7 @@ public class ReblockInstruction extends UnaryMRInstructionBase
 	@Override
 	public void processInstruction(Class<? extends MatrixValue> valueClass,
 			CachedValueMap cachedValues, IndexedMatrixValue tempValue,
-			IndexedMatrixValue zeroInput, int blockRowFactor, int blockColFactor)
-			throws DMLRuntimeException {
+			IndexedMatrixValue zeroInput, int blockRowFactor, int blockColFactor) {
 		throw new DMLRuntimeException("ReblockInstruction.processInstruction should never be called");
-		
 	}
-	
 }

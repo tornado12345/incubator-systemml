@@ -25,7 +25,11 @@ import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.io.OutputStreamWriter;
+import java.text.SimpleDateFormat;
+import java.util.Date;
 
+import org.apache.commons.lang.StringUtils;
+import org.apache.commons.lang3.StringEscapeUtils;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.fs.FSDataInputStream;
@@ -39,18 +43,20 @@ import org.apache.hadoop.io.DoubleWritable;
 import org.apache.hadoop.io.IntWritable;
 import org.apache.hadoop.mapred.JobConf;
 import org.apache.sysml.conf.ConfigurationManager;
+import org.apache.sysml.hops.OptimizerUtils;
 import org.apache.sysml.parser.DataExpression;
 import org.apache.sysml.parser.Expression.DataType;
 import org.apache.sysml.parser.Expression.ValueType;
 import org.apache.sysml.runtime.DMLRuntimeException;
+import org.apache.sysml.runtime.io.IOUtilFunctions;
 import org.apache.sysml.runtime.io.MatrixReader;
 import org.apache.sysml.runtime.io.MatrixReaderFactory;
 import org.apache.sysml.runtime.matrix.MatrixCharacteristics;
+import org.apache.sysml.runtime.matrix.MetaDataNumItemsByEachReducer;
 import org.apache.sysml.runtime.matrix.data.CSVFileFormatProperties;
 import org.apache.sysml.runtime.matrix.data.FileFormatProperties;
 import org.apache.sysml.runtime.matrix.data.InputInfo;
 import org.apache.sysml.runtime.matrix.data.MatrixBlock;
-import org.apache.sysml.runtime.matrix.data.NumItemsByEachReducerMetaData;
 import org.apache.sysml.runtime.matrix.data.OutputInfo;
 import org.apache.sysml.runtime.matrix.mapred.MRConfigurationNames;
 import org.apache.sysml.runtime.matrix.sort.ReadWithZeros;
@@ -60,13 +66,9 @@ import org.apache.wink.json4j.OrderedJSONObject;
 
 public class MapReduceTool 
 {
+	private static final int MAX_DELETE_RETRIES = 10;
+	
 	private static final Log LOG = LogFactory.getLog(MapReduceTool.class.getName());
-	private static JobConf _rJob = null; //cached job conf for read-only operations
-	
-	static{
-		_rJob = ConfigurationManager.getCachedJobConf();
-	}
-	
 	
 	public static String getUniqueKeyPerTask(JobConf job, boolean inMapper) {
 		//TODO: investigate ID pattern, required for parallel jobs
@@ -84,31 +86,12 @@ public class MapReduceTool
 		// remove all the leading 0s
 		return String.valueOf(Long.parseLong(nodePrefix));
 	}
-	
-	@Deprecated
-	public static String getUniqueKeyPerTaskWithLeadingZros(JobConf job, boolean inMapper) {
-		String nodePrefix = job.get(MRConfigurationNames.MR_TASK_ATTEMPT_ID);
-		int i;
-		if (inMapper)
-			i = nodePrefix.indexOf("_m_");
-		else
-			i = nodePrefix.indexOf("_r_");
-		int j = nodePrefix.lastIndexOf("_");
-		nodePrefix = nodePrefix.substring(i + 3, j);
-		return nodePrefix;
-	}
 
-	
 	public static int getUniqueTaskId(JobConf job) {
-		//TODO: investigate ID pattern, required for parallel jobs
-		/*String nodePrefix = job.get(MRConfigurationNames.MR_TASK_ATTEMPT_ID); 
-		return IDHandler.extractIntID(nodePrefix);*/
-		
 		String nodePrefix = job.get(MRConfigurationNames.MR_TASK_ATTEMPT_ID);
 		int j = nodePrefix.lastIndexOf("_");
 		int i=nodePrefix.lastIndexOf("_", j-1);
 		nodePrefix = nodePrefix.substring(i+1, j);
-		// System.out.println("nodePrefix = " + nodePrefix) ;
 		return Integer.valueOf(nodePrefix);
 	}
 
@@ -116,30 +99,48 @@ public class MapReduceTool
 		return job.get(MRConfigurationNames.MR_TASK_ATTEMPT_ID);
 	}
 
-	public static boolean existsFileOnHDFS(String fname){
-		boolean ret = true;
-		try{
-			Path outpath = new Path(fname);
-			ret = FileSystem.get(_rJob).exists(outpath);
+	public static boolean existsFileOnHDFS(String fname) {
+		//robustness for empty strings (e.g., JMLC, MLContext)
+		if( fname == null || fname.isEmpty() || fname.trim().isEmpty() )
+			return false;
+		
+		try {
+			Path path = new Path(fname);
+			return IOUtilFunctions
+				.getFileSystem(path).exists(path);
 		}
-		catch(Exception ex)
-		{
-			LOG.error("Exception caught in existsFileOnHDFS", ex);
-			ret = false;
+		catch(Exception ex) {
+			LOG.error("Failed check existsFileOnHDFS.", ex);
 		}
-		return ret;
+		return false;
 	}
 	
-	public static void deleteFileIfExistOnHDFS(Path outpath, JobConf job) throws IOException {
-		if (FileSystem.get(job).exists(outpath)) {
-			FileSystem.get(job).delete(outpath, true);
+	public static boolean isDirectory(String fname) {
+		//robustness for empty strings (e.g., JMLC, MLContext)
+		if( fname == null || fname.isEmpty() || fname.trim().isEmpty() )
+			return false;
+		
+		try {
+			Path path = new Path(fname);
+			return IOUtilFunctions
+				.getFileSystem(path).isDirectory(path);
 		}
+		catch(Exception ex) {
+			LOG.error("Failed check isDirectory.", ex);
+		}
+		return false;
 	}
 	
-	public static void deleteFileIfExistOnLFS(Path outpath, JobConf job) throws IOException {
-		if (FileSystem.getLocal(job).exists(outpath)) {
-			FileSystem.getLocal(job).delete(outpath, true);
+	public static FileStatus[] getDirectoryListing(String fname) {
+		try {
+			Path path = new Path(fname);
+			return IOUtilFunctions
+				.getFileSystem(path).listStatus(path);
 		}
+		catch(Exception ex) {
+			LOG.error("Failed listing of directory contents.", ex);
+		}
+		return new FileStatus[0];
 	}
 
 	public static void deleteFileWithMTDIfExistOnHDFS(String fname)  throws IOException {
@@ -148,33 +149,44 @@ public class MapReduceTool
 	}
 	
 	public static void deleteFileIfExistOnHDFS(String dir) throws IOException {
-		Path outpath = new Path(dir);
-		FileSystem fs = FileSystem.get(_rJob);
-		if (fs.exists(outpath)) {
-			//System.err.println("Deleting " + outpath + " ... ");
-			fs.delete(outpath, true);
+		Path path = new Path(dir);
+		deleteFileIfExists(IOUtilFunctions.getFileSystem(path), path);
+	}
+
+	public static void deleteFileIfExistOnHDFS(Path outpath, JobConf job) throws IOException {
+		deleteFileIfExists(IOUtilFunctions.getFileSystem(outpath, job), outpath);
+	}
+	
+	public static void deleteFileIfExistOnLFS(Path outpath, JobConf job) throws IOException {
+		deleteFileIfExists(FileSystem.getLocal(job), outpath);
+	}
+	
+	private static void deleteFileIfExists(FileSystem fs, Path outpath) throws IOException {
+		if( fs.exists(outpath) ) {
+			int retries = MAX_DELETE_RETRIES;
+			while( !fs.delete(outpath, true) && retries > 0 ) {
+				retries--;
+			}
 		}
 	}
 
-	public static boolean isHDFSDirectory(String dir) throws IOException {
-		FileSystem fs = FileSystem.get(_rJob);
-		Path pth = new Path(dir);
-		FileStatus fstat = fs.getFileStatus(pth);
-		return fstat.isDirectory();
-	}
-
 	public static boolean isHDFSFileEmpty(String dir) throws IOException {
-		FileSystem fs = FileSystem.get(_rJob);
-		return isFileEmpty(fs, dir);
+		//robustness for empty strings (e.g., JMLC, MLContext)
+		if( dir == null || dir.isEmpty() || dir.trim().isEmpty())
+			return false;
+		Path path = new Path(dir);
+		FileSystem fs = IOUtilFunctions.getFileSystem(path);
+		return isFileEmpty(fs, path);
 	}
 
-	public static boolean isFileEmpty(FileSystem fs, String dir) throws IOException {
-		Path pth = new Path(dir);
-		FileStatus fstat = fs.getFileStatus(pth);
+	public static boolean isFileEmpty(FileSystem fs, Path dir) throws IOException {
+		FileStatus fstat = fs.getFileStatus(dir);
 
-		if (fstat.isDirectory()) {
+		if( fstat.isDirectory() 
+			|| IOUtilFunctions.isObjectStoreFileScheme(dir) )
+		{
 			// it is a directory
-			FileStatus[] stats = fs.listStatus(pth);
+			FileStatus[] stats = fs.listStatus(dir);
 			if (stats != null) {
 				for (FileStatus stat : stats) {
 					if (stat.getLen() > 0)
@@ -184,33 +196,35 @@ public class MapReduceTool
 			} else {
 				return true;
 			}
-		} else {
+		} 
+		else {
 			// it is a regular file
-			if (fstat.getLen() == 0)
-				return true;
-			else
-				return false;
+			return (fstat.getLen() == 0);
 		}
 	}
 
 	public static void renameFileOnHDFS(String originalDir, String newDir) throws IOException {
-		Path originalpath = new Path(originalDir);
+		Path pathOrig = new Path(originalDir);
+		Path pathNew = new Path(newDir);
+		if( !IOUtilFunctions.isSameFileScheme(pathOrig, pathNew) )
+			throw new IOException("Cannot rename files to different target file system.");
 		
 		deleteFileIfExistOnHDFS(newDir);
-		Path newpath = new Path(newDir);
-		
-		FileSystem fs = FileSystem.get(_rJob);
-		if (fs.exists(originalpath)) {
-			fs.rename(originalpath, newpath);
-		}
-		else {
+		FileSystem fs = IOUtilFunctions.getFileSystem(pathOrig);
+		if( fs.exists(pathOrig) )
+			fs.rename(pathOrig, pathNew);
+		else
 			throw new FileNotFoundException(originalDir);
-		}
 	}
 	
 	public static void mergeIntoSingleFile(String originalDir, String newFile) throws IOException {
-		FileSystem fs = FileSystem.get(_rJob);
-		FileUtil.copyMerge(fs, new Path(originalDir), fs, new Path(newFile), true, _rJob, null);
+		Path pathOrig = new Path(originalDir);
+		Path pathNew = new Path(newFile);
+		if( !IOUtilFunctions.isSameFileScheme(pathOrig, pathNew) )
+			throw new IOException("Cannot merge files into different target file system.");
+		FileSystem fs = IOUtilFunctions.getFileSystem(pathOrig);
+		FileUtil.copyMerge(fs, pathOrig, fs, pathNew, true, 
+			ConfigurationManager.getCachedJobConf(), null);
 	}
 
 	public static void copyFileOnHDFS(String originalDir, String newDir) throws IOException {
@@ -220,66 +234,30 @@ public class MapReduceTool
 		boolean overwrite = true;
 		
 		JobConf job = new JobConf(ConfigurationManager.getCachedJobConf());
-		FileSystem fs = FileSystem.get(job);
+		FileSystem fs = IOUtilFunctions.getFileSystem(originalPath, job);
 		if (fs.exists(originalPath)) {
 			FileUtil.copy(fs, originalPath, fs, newPath, deleteSource, overwrite, job);
 		}
 	}
-
-	/**
-	 * 
-	 * @param dir
-	 * @return
-	 * @throws IOException
-	 */
-	public static String getSubDirs(String dir) 
-		throws IOException 
-	{
-		FileSystem fs = FileSystem.get(_rJob); 
-		FileStatus[] files = fs.listStatus(new Path(dir));
-		StringBuilder sb = new StringBuilder();
-		for (FileStatus file : files) {
-			if ( sb.length()>0 )
-				sb.append(",");
-			sb.append(file.getPath().toString());
-		}
-		return sb.toString();
-	}
-
-	/**
-	 * 
-	 * @param dir
-	 * @return
-	 * @throws IOException
-	 */
-	public static String getSubDirsIgnoreLogs(String dir) 
-		throws IOException 
-	{
-		FileSystem fs = FileSystem.get(_rJob);
-		FileStatus[] files = fs.listStatus(new Path(dir));
-		StringBuilder sb = new StringBuilder();
-		for (FileStatus file : files) {
-			String name = file.getPath().toString();
-			if (name.contains("_logs"))
-				continue;
-			if( sb.length()>0 )
-				sb.append(",");
-			sb.append(name);
-		}
-		return sb.toString();
-	}
 	
+	public static long estimateNnzBasedOnFileSize(Path path,
+		long rlen, long clen, int brlen, int bclen, double factor) throws IOException
+	{
+		return (long) Math.min(rlen*clen, rlen*clen*(getFilesizeOnHDFS(path)/factor/
+			OptimizerUtils.estimatePartitionedSizeExactSparsity(rlen, clen, brlen, bclen, 1.0)));
+	}
+
 	/**
 	 * Returns the size of a file or directory on hdfs in bytes.
 	 * 
-	 * @param path
-	 * @return
-	 * @throws IOException
+	 * @param path file system path
+	 * @return file size
+	 * @throws IOException if IOException occurs
 	 */
 	public static long getFilesizeOnHDFS( Path path ) 
 		throws IOException
 	{
-		FileSystem fs = FileSystem.get(_rJob);
+		FileSystem fs = IOUtilFunctions.getFileSystem(path);
 		long ret = 0; //in bytes
 		if( fs.isDirectory(path) )
 			ret = fs.getContentSummary(path).getLength();
@@ -291,9 +269,9 @@ public class MapReduceTool
 	}
 	
 	private static BufferedReader setupInputFile ( String filename ) throws IOException {
-        Path pt=new Path(filename);
-        FileSystem fs = FileSystem.get(_rJob);
-        BufferedReader br=new BufferedReader(new InputStreamReader(fs.open(pt)));		
+        Path path = new Path(filename);
+        FileSystem fs = IOUtilFunctions.getFileSystem(path);
+		BufferedReader br=new BufferedReader(new InputStreamReader(fs.open(path)));		
         return br;
 	}
 	
@@ -312,24 +290,25 @@ public class MapReduceTool
 	public static String readStringFromHDFSFile(String filename) 
 		throws IOException 
 	{
-		BufferedReader br = setupInputFile(filename);
-		// handle multi-line strings in the HDFS file
 		StringBuilder sb = new StringBuilder();
-		String line = null;
-		while ( (line = br.readLine()) != null ) {
-			sb.append(line);
-			sb.append("\n");
+		try( BufferedReader br = setupInputFile(filename) ) {
+			// handle multi-line strings in the HDFS file
+			String line = null;
+			while ( (line = br.readLine()) != null ) {
+				sb.append(line);
+				sb.append("\n");
+			}
 		}
-		br.close();
 		
 		//return string without last character
 		return sb.substring(0, sb.length()-1);
 	}
 	
 	public static Object readObjectFromHDFSFile(String filename, ValueType vt) throws IOException {
-		BufferedReader br = setupInputFile(filename);
-		String line = br.readLine();
-		br.close();
+		String line = null;
+		try( BufferedReader br = setupInputFile(filename) ) {
+			line = br.readLine();
+		}
 		if( line == null )
 			throw new IOException("Empty file on hdfs: "+filename);
 		
@@ -342,9 +321,9 @@ public class MapReduceTool
 	}
 		
 	private static BufferedWriter setupOutputFile ( String filename ) throws IOException {
-        Path pt=new Path(filename);
-        FileSystem fs = FileSystem.get(_rJob);
-        BufferedWriter br=new BufferedWriter(new OutputStreamWriter(fs.create(pt,true)));		
+        Path path = new Path(filename);
+        FileSystem fs = IOUtilFunctions.getFileSystem(path);
+		BufferedWriter br=new BufferedWriter(new OutputStreamWriter(fs.create(path,true)));		
         return br;
 	}
 	
@@ -365,57 +344,54 @@ public class MapReduceTool
 	}
 	
 	public static void writeObjectToHDFS ( Object obj, String filename ) throws IOException {
-		BufferedWriter br = setupOutputFile(filename);
-		br.write(obj.toString());
-		br.close();
+		try( BufferedWriter br = setupOutputFile(filename) ) {
+			br.write(obj.toString());
+		}
 	}
 	
 	public static void writeDimsFile ( String filename, byte[] unknownFlags, long[] maxRows, long[] maxCols) throws IOException {
-        BufferedWriter br = setupOutputFile(filename);
-        StringBuilder line = new StringBuilder();
-        for ( int i=0; i < unknownFlags.length; i++ ) {
-        	if ( unknownFlags[i]  != (byte)0 ) {
-        		line.append(i);
-        		line.append(" " + maxRows[i]);
-        		line.append(" " + maxCols[i]);
-        		line.append("\n");
-        	}
+		try( BufferedWriter br = setupOutputFile(filename) ) {
+	        StringBuilder line = new StringBuilder();
+	        for ( int i=0; i < unknownFlags.length; i++ ) {
+	        	if ( unknownFlags[i]  != (byte)0 ) {
+	        		line.append(i);
+	        		line.append(" " + maxRows[i]);
+	        		line.append(" " + maxCols[i]);
+	        		line.append("\n");
+	        	}
+	        }
+	        br.write(line.toString());
         }
-        br.write(line.toString());
-        br.close();
 	}
 	
 	public static MatrixCharacteristics[] processDimsFiles(String dir, MatrixCharacteristics[] stats) 
 		throws IOException 
 	{
-		Path pt=new Path(dir);
-        FileSystem fs = FileSystem.get(_rJob);
+		Path path = new Path(dir);
+		FileSystem fs = IOUtilFunctions.getFileSystem(path);
 		
-        if ( !fs.exists(pt) )
+        if ( !fs.exists(path) )
         	return stats;
         
-        FileStatus fstat = fs.getFileStatus(pt);
+        FileStatus fstat = fs.getFileStatus(path);
 		
         if ( fstat.isDirectory() ) 
         {
-			FileStatus[] files = fs.listStatus(pt);
+			FileStatus[] files = fs.listStatus(path);
 			for ( int i=0; i < files.length; i++ ) {
 				Path filePath = files[i].getPath();
-				//System.out.println("Processing dims file: " + filePath.toString());
-				BufferedReader br = setupInputFile(filePath.toString());
-				
-				String line = "";
-				while((line=br.readLine()) != null ) {
-					String[] parts = line.split(" ");
-					int resultIndex = Integer.parseInt(parts[0]);
-					long maxRows = Long.parseLong(parts[1]);
-					long maxCols = Long.parseLong(parts[2]);
-					
-					stats[resultIndex].setDimension( (stats[resultIndex].getRows() < maxRows ? maxRows : stats[resultIndex].getRows()), 
-							                         (stats[resultIndex].getCols() < maxCols ? maxCols : stats[resultIndex].getCols()) );
+				try( BufferedReader br = setupInputFile(filePath.toString()) ) {
+					String line = "";
+					while((line=br.readLine()) != null ) {
+						String[] parts = line.split(" ");
+						int resultIndex = Integer.parseInt(parts[0]);
+						long maxRows = Long.parseLong(parts[1]);
+						long maxCols = Long.parseLong(parts[2]);
+						
+						stats[resultIndex].setDimension( (stats[resultIndex].getRows() < maxRows ? maxRows : stats[resultIndex].getRows()), 
+								                         (stats[resultIndex].getCols() < maxCols ? maxCols : stats[resultIndex].getCols()) );
+					}
 				}
-				
-				br.close();
 			}
 		}
 		else 
@@ -445,14 +421,11 @@ public class MapReduceTool
 			OutputInfo outinfo, FileFormatProperties formatProperties) 
 		throws IOException 
 	{
-		Path pt = new Path(mtdfile);
-		FileSystem fs = FileSystem.get(_rJob);
-		BufferedWriter br = new BufferedWriter(new OutputStreamWriter(fs.create(pt,true)));
-
-		try {
-			String mtd = metaDataToString(mtdfile, vt, schema, dt, mc, outinfo, formatProperties);
+		Path path = new Path(mtdfile);
+		FileSystem fs = IOUtilFunctions.getFileSystem(path);
+		try( BufferedWriter br = new BufferedWriter(new OutputStreamWriter(fs.create(path,true))) ) {
+			String mtd = metaDataToString(vt, schema, dt, mc, outinfo, formatProperties);
 			br.write(mtd);
-			br.close();
 		} catch (Exception e) {
 			throw new IOException("Error creating and writing metadata JSON file", e);
 		}
@@ -461,35 +434,18 @@ public class MapReduceTool
 	public static void writeScalarMetaDataFile(String mtdfile, ValueType vt) 
 		throws IOException 
 	{
-		Path pt = new Path(mtdfile);
-		FileSystem fs = FileSystem.get(_rJob);
-		BufferedWriter br = new BufferedWriter(new OutputStreamWriter(fs.create(pt,true)));
-
-		try {
-			String mtd = metaDataToString(mtdfile, vt, null, 
-				DataType.SCALAR, null, OutputInfo.TextCellOutputInfo, null);
+		Path path = new Path(mtdfile);
+		FileSystem fs = IOUtilFunctions.getFileSystem(path);
+		try( BufferedWriter br = new BufferedWriter(new OutputStreamWriter(fs.create(path,true))) ) {
+			String mtd = metaDataToString(vt, null, DataType.SCALAR, null, OutputInfo.TextCellOutputInfo, null);
 			br.write(mtd);
-			br.close();
 		} 
 		catch (Exception e) {
 			throw new IOException("Error creating and writing metadata JSON file", e);
 		}
 	}
-	
-	/**
-	 * 
-	 * @param mtdfile
-	 * @param vt
-	 * @param schema
-	 * @param dt
-	 * @param mc
-	 * @param outinfo
-	 * @param formatProperties
-	 * @return
-	 * @throws JSONException 
-	 * @throws DMLRuntimeException 
-	 */
-	public static String metaDataToString(String mtdfile, ValueType vt, ValueType[] schema, DataType dt, MatrixCharacteristics mc, 
+
+	public static String metaDataToString(ValueType vt, ValueType[] schema, DataType dt, MatrixCharacteristics mc,
 			OutputInfo outinfo, FileFormatProperties formatProperties) throws JSONException, DMLRuntimeException
 	{
 		OrderedJSONObject mtd = new OrderedJSONObject(); // maintain order in output file
@@ -533,8 +489,24 @@ public class MapReduceTool
 			mtd.put(DataExpression.DELIM_HAS_HEADER_ROW, csvProperties.hasHeader());
 			mtd.put(DataExpression.DELIM_DELIMITER, csvProperties.getDelim());
 		}
-		mtd.put(DataExpression.DESCRIPTIONPARAM,
-			new OrderedJSONObject().put(DataExpression.AUTHORPARAM, "SystemML"));
+
+		if (formatProperties != null) {
+			String description = formatProperties.getDescription();
+			if (StringUtils.isNotEmpty(description)) {
+				String jsonDescription = StringEscapeUtils.escapeJson(description);
+				mtd.put(DataExpression.DESCRIPTIONPARAM, jsonDescription);
+			}
+		}
+
+		String userName = System.getProperty("user.name");
+		if (StringUtils.isNotEmpty(userName)) {
+			mtd.put(DataExpression.AUTHORPARAM, userName);
+		} else {
+			mtd.put(DataExpression.AUTHORPARAM, "SystemML");
+		}
+
+		SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss z");
+		mtd.put(DataExpression.CREATEDPARAM, sdf.format(new Date()));
 
 		return mtd.toString(4); // indent with 4 spaces	
 	}
@@ -543,7 +515,8 @@ public class MapReduceTool
 		throws IOException, DMLRuntimeException
 	{
 		MatrixReader reader = MatrixReaderFactory.createMatrixReader(inputinfo);
-		MatrixBlock mb = reader.readMatrixFromHDFS(dir, rlen, clen, brlen, bclen, rlen*clen);
+		long estnnz = (rlen <= 0 || clen <= 0) ? -1 : rlen * clen;
+		MatrixBlock mb = reader.readMatrixFromHDFS(dir, rlen, clen, brlen, bclen, estnnz);
 		return DataConverter.convertToDoubleMatrix(mb);
 	}
 	
@@ -551,11 +524,12 @@ public class MapReduceTool
 		throws IOException, DMLRuntimeException
 	{
 		MatrixReader reader = MatrixReaderFactory.createMatrixReader(inputinfo);
-		MatrixBlock mb = reader.readMatrixFromHDFS(dir, rlen, clen, brlen, bclen, rlen*clen);
-		return DataConverter.convertToDoubleVector(mb);
+		long estnnz = (rlen <= 0 || clen <= 0) ? -1 : rlen * clen;
+		MatrixBlock mb = reader.readMatrixFromHDFS(dir, rlen, clen, brlen, bclen, estnnz);
+		return DataConverter.convertToDoubleVector(mb, false);
 	}
 	
-	public static double median(String dir, NumItemsByEachReducerMetaData metadata) throws IOException {
+	public static double median(String dir, MetaDataNumItemsByEachReducer metadata) throws IOException {
 		long[] counts=metadata.getNumItemsArray();
 		long[] ranges=new long[counts.length];
 		ranges[0]=counts[0];
@@ -568,11 +542,11 @@ public class MapReduceTool
 	}
 	
 
-	public static double pickValue(String dir, NumItemsByEachReducerMetaData metadata, double p) throws IOException {
+	public static double pickValue(String dir, MetaDataNumItemsByEachReducer metadata, double p) throws IOException {
 		return pickValueWeight(dir, metadata, p, false)[0];
 	}
 	
-	public static double[] pickValueWeight(String dir, NumItemsByEachReducerMetaData metadata, double p, boolean average) 
+	public static double[] pickValueWeight(String dir, MetaDataNumItemsByEachReducer metadata, double p, boolean average) 
 	throws IOException
 	{
 		long[] counts=metadata.getNumItemsArray();
@@ -599,8 +573,8 @@ public class MapReduceTool
 		else
 			offset=(int)pos-1;
 		
-		FileSystem fs=FileSystem.get(_rJob);
 		Path path=new Path(dir);
+		FileSystem fs=IOUtilFunctions.getFileSystem(path);
 		FileStatus[] files=fs.listStatus(path);
 		Path fileToRead=null;
 		for(FileStatus file: files)
@@ -614,63 +588,56 @@ public class MapReduceTool
 			throw new RuntimeException("cannot read partition "+currentPart);
 		
 		int buffsz = 64 * 1024;
-		FSDataInputStream currentStream=fs.open(fileToRead, buffsz);
-	    DoubleWritable readKey=new DoubleWritable();
+		DoubleWritable readKey=new DoubleWritable();
 	    IntWritable readValue=new IntWritable();
-	    
-		boolean contain0s=false;
-		long numZeros=0;
-		if(currentPart==metadata.getPartitionOfZero())
-		{
-			contain0s=true;
-			numZeros=metadata.getNumberOfZero();
-		}
-	    ReadWithZeros reader=new ReadWithZeros(currentStream, contain0s, numZeros);
-
-	    int numRead=0;
-	    while(numRead<=offset)
-		{
-	    	reader.readNextKeyValuePairs(readKey, readValue);
-			numRead+=readValue.get();
-			cum_weight += readValue.get();
-		}
-	    
-	    double ret = readKey.get();
-	    if(average) {
-	    	if(numRead<=offset+1) {
-	    		reader.readNextKeyValuePairs(readKey, readValue);
+	    FSDataInputStream currentStream = null;
+		double ret = -1;
+	    try {
+			currentStream = fs.open(fileToRead, buffsz);
+		    
+			boolean contain0s=false;
+			long numZeros=0;
+			if(currentPart==metadata.getPartitionOfZero())
+			{
+				contain0s=true;
+				numZeros=metadata.getNumberOfZero();
+			}
+		    ReadWithZeros reader=new ReadWithZeros(currentStream, contain0s, numZeros);
+	
+		    int numRead=0;
+		    while(numRead<=offset)
+			{
+		    	reader.readNextKeyValuePairs(readKey, readValue);
+				numRead+=readValue.get();
 				cum_weight += readValue.get();
-				ret = (ret+readKey.get())/2;
-	    	}
-	    }
-	    currentStream.close();
-		return new double[] {ret, (average ? -1 : readValue.get()), (average ? -1 : cum_weight)};
+			}
+		    
+		    ret = readKey.get();
+		    if(average) {
+		    	if(numRead<=offset+1) {
+		    		reader.readNextKeyValuePairs(readKey, readValue);
+					cum_weight += readValue.get();
+					ret = (ret+readKey.get())/2;
+		    	}
+		    }
+		}
+		finally {
+			IOUtilFunctions.closeSilently(currentStream);
+		}
+	    return new double[] {ret, (average ? -1 : readValue.get()), (average ? -1 : cum_weight)};
 	}
-	
-	/**
-	 * 
-	 * @param name
-	 * @return
-	 */
-	public static int extractNumberFromOutputFile(String name)
-	{
-		int i=name.indexOf("part-");
-		assert(i>=0);
-		return Integer.parseInt(name.substring(i+5));
-	}
-	
-	/**
-	 * 
-	 * @param dir
-	 * @param permissions
-	 * @throws IOException
-	 */
+
 	public static void createDirIfNotExistOnHDFS(String dir, String permissions) 
+		throws IOException 
+	{
+		createDirIfNotExistOnHDFS(new Path(dir), permissions);
+	}
+	
+	public static void createDirIfNotExistOnHDFS(Path path, String permissions) 
 		throws IOException
 	{
-		Path path = new Path(dir);
 		try {
-			FileSystem fs = FileSystem.get(_rJob);
+			FileSystem fs = IOUtilFunctions.getFileSystem(path);
 			if( !fs.exists(path) ) 
 			{
 				char[] c = permissions.toCharArray();
@@ -689,20 +656,12 @@ public class MapReduceTool
 		//NOTE: we depend on the configured umask, setting umask in job or fspermission has no effect
 		//similarly setting MRConfigurationNames.DFS_DATANODE_DATA_DIR_PERM as no effect either.
 	}
-	
-	
-	/**
-	 * 
-	 * @param filename
-	 * @param overwrite
-	 * @return
-	 * @throws IOException
-	 */
+
 	public static FSDataOutputStream getHDFSDataOutputStream(String filename, boolean overwrite) 
 		throws IOException
 	{
-		FileSystem fs = FileSystem.get(_rJob);
 		Path path = new Path(filename);
-		return fs.create(path, overwrite);
+		return IOUtilFunctions.getFileSystem(path)
+			.create(path, overwrite);
 	}
 }

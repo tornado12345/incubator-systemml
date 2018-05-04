@@ -34,7 +34,6 @@ import org.apache.sysml.hops.LeftIndexingOp;
 import org.apache.sysml.hops.LeftIndexingOp.LeftIndexingMethod;
 import org.apache.sysml.lops.LopProperties.ExecType;
 import org.apache.sysml.parser.Expression.ValueType;
-import org.apache.sysml.runtime.DMLRuntimeException;
 import org.apache.sysml.runtime.matrix.MatrixCharacteristics;
 import org.apache.sysml.runtime.matrix.data.FrameBlock;
 import org.apache.sysml.runtime.matrix.data.InputInfo;
@@ -97,30 +96,30 @@ public class FrameIndexingDistTest extends AutomatedTestBase
 
 	// Left Indexing Spark test cases
 	@Test
-	public void testMapLeftIndexingSP() throws DMLRuntimeException, IOException {
-		runTestLeftIndexing(ExecType.SPARK, LeftIndexingMethod.SP_MLEFTINDEX, schemaMixedLarge, IXType.LIX, true);
+	public void testMapLeftIndexingSP() throws IOException {
+		runTestLeftIndexing(ExecType.SPARK, LeftIndexingMethod.SP_MLEFTINDEX_R, schemaMixedLarge, IXType.LIX, true);
 	}
 	
 	@Test
-	public void testGeneralLeftIndexingSP() throws DMLRuntimeException, IOException {
+	public void testGeneralLeftIndexingSP() throws IOException {
 		runTestLeftIndexing(ExecType.SPARK, LeftIndexingMethod.SP_GLEFTINDEX, schemaMixedLarge, IXType.LIX, true);
 	}
 	
 	
 	// Right Indexing Spark test cases
 	@Test
-	public void testRightIndexingSPSparse() throws DMLRuntimeException, IOException {
+	public void testRightIndexingSPSparse() throws IOException {
 		runTestLeftIndexing(ExecType.SPARK, null, schemaMixedLarge, IXType.RIX, true);
 	}
 	
 	@Test
-	public void testRightIndexingSPDense() throws DMLRuntimeException, IOException {
+	public void testRightIndexingSPDense() throws IOException {
 		runTestLeftIndexing(ExecType.SPARK, null, schemaMixedLarge, IXType.RIX, false);
 	}
 	
 
 	
-	private void runTestLeftIndexing(ExecType et, LeftIndexingOp.LeftIndexingMethod indexingMethod, ValueType[] schema, IXType itype, boolean bSparse) throws DMLRuntimeException, IOException {
+	private void runTestLeftIndexing(ExecType et, LeftIndexingOp.LeftIndexingMethod indexingMethod, ValueType[] schema, IXType itype, boolean bSparse) throws IOException {
 		
 		boolean sparkConfigOld = DMLScript.USE_LOCAL_SPARK_CONFIG;
 		RUNTIME_PLATFORM oldRTP = rtplatform;
@@ -265,7 +264,7 @@ public class FrameIndexingDistTest extends AutomatedTestBase
 		}
 	}
 	
-	private void verifyFrameData(FrameBlock frame1, FrameBlock frame2, ValueType[] schema) {
+	private static void verifyFrameData(FrameBlock frame1, FrameBlock frame2, ValueType[] schema) {
 		for ( int i=0; i<frame1.getNumRows(); i++ )
 			for( int j=0; j<frame1.getNumColumns(); j++ )	{
 				Object val1 = UtilFunctions.stringToObject(schema[j], UtilFunctions.objectToString(frame1.get(i, j)));

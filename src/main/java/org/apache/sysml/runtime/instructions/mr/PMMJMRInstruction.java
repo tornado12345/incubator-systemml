@@ -34,29 +34,18 @@ import org.apache.sysml.runtime.matrix.mapred.MRBaseForCommonInstructions;
 import org.apache.sysml.runtime.matrix.operators.Operator;
 import org.apache.sysml.runtime.util.UtilFunctions;
 
-
-/**
- * 
- * 
- */
-public class PMMJMRInstruction extends BinaryMRInstructionBase implements IDistributedCacheConsumer
-{	
-	
+public class PMMJMRInstruction extends BinaryMRInstructionBase implements IDistributedCacheConsumer {
 	private long _rlen = -1;
 	private boolean _outputEmptyBlocks = true;
-	
-	
-	public PMMJMRInstruction(Operator op, byte in1, byte in2, byte out, long nrow, CacheType ctype, boolean outputEmpty, String istr)
-	{
-		super(op, in1, in2, out);
+
+	private PMMJMRInstruction(Operator op, byte in1, byte in2, byte out, long nrow, CacheType ctype,
+			boolean outputEmpty, String istr) {
+		super(MRType.PMMJ, op, in1, in2, out);
 		instString = istr;
-		
 		_rlen = nrow;
 		_outputEmptyBlocks = outputEmpty;
-		
-		//NOTE: cache type only used by distributed cache input
 	}
-	
+
 	public long getNumRows() {
 		return _rlen;
 	}
@@ -64,18 +53,9 @@ public class PMMJMRInstruction extends BinaryMRInstructionBase implements IDistr
 	public boolean getOutputEmptyBlocks() {
 		return _outputEmptyBlocks;
 	}
-	
-	/**
-	 * 
-	 * @param str
-	 * @return
-	 * @throws DMLRuntimeException
-	 */
-	public static PMMJMRInstruction parseInstruction ( String str ) 
-		throws DMLRuntimeException 
-	{
+
+	public static PMMJMRInstruction parseInstruction ( String str ) {
 		InstructionUtils.checkNumFields ( str, 6 );
-		
 		String[] parts = InstructionUtils.getInstructionParts(str);
 		String opcode = parts[0];
 		byte in1 = Byte.parseByte(parts[1]);
@@ -84,10 +64,8 @@ public class PMMJMRInstruction extends BinaryMRInstructionBase implements IDistr
 		byte out = Byte.parseByte(parts[4]);
 		CacheType ctype = CacheType.valueOf(parts[5]);
 		boolean outputEmpty = Boolean.parseBoolean(parts[6]);
-		
 		if(!opcode.equalsIgnoreCase("pmm"))
 			throw new DMLRuntimeException("Unknown opcode while parsing an PmmMRInstruction: " + str);
-		
 		return new PMMJMRInstruction(new Operator(true), in1, in2, out, nrow, ctype, outputEmpty, str);
 	}
 	
@@ -95,8 +73,7 @@ public class PMMJMRInstruction extends BinaryMRInstructionBase implements IDistr
 	public void processInstruction(Class<? extends MatrixValue> valueClass,
 			CachedValueMap cachedValues, IndexedMatrixValue tempValue,
 			IndexedMatrixValue zeroInput, int blockRowFactor, int blockColFactor)
-		throws DMLRuntimeException 
-	{	
+	{
 		//get both matrix inputs (left side always permutation)
 		DistributedCacheInput dcInput = MRBaseForCommonInstructions.dcValues.get(input1);
 		IndexedMatrixValue in2 = cachedValues.getFirst(input2);

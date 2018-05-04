@@ -33,15 +33,15 @@
 # tol   Double 0.000001 Tolerance (epsilon) for WCSS change ratio
 # samp  Int       50    Average number of records per centroid in data samples
 # C     String  "C.mtx" Location to store the output matrix with the centroids
-# isY   Int        0    0 = do not write Y,  1 = write Y
+# isY   Boolean FALSE   do not write Y
 # Y     String  "Y.mtx" Location to store the mapping of records to centroids
 # fmt   String  "text"  Matrix output format, usually "text" or "csv"
-# verb  Int        0    0 = do not print per-iteration stats, 1 = print them
+# verb  Boolean FALSE   do not print per-iteration stats
 # ----------------------------------------------------------------------------
 #
 # Example:
 # hadoop jar SystemML.jar -f Kmeans.dml -nvargs X=X.mtx k=5 C=centroids.mtx
-# hadoop jar SystemML.jar -f Kmeans.dml -nvargs X=X.mtx k=5 runs=100 maxi=5000 tol=0.00000001 samp=20 C=centroids.mtx isY=1 Y=clusters.mtx verb=1
+# hadoop jar SystemML.jar -f Kmeans.dml -nvargs X=X.mtx k=5 runs=100 maxi=5000 tol=0.00000001 samp=20 C=centroids.mtx isY=TRUE Y=clusters.mtx verb=TRUE
 
 fileX = $X;
 fileY = ifdef ($Y, "Y.mtx");
@@ -51,8 +51,8 @@ num_centroids = $k;
 num_runs   = ifdef ($runs, 10);      # $runs=10;
 max_iter   = ifdef ($maxi, 1000);    # $maxi=1000;
 eps        = ifdef ($tol, 0.000001); # $tol=0.000001;
-is_write_Y = ifdef ($isY, 0);        # $isY=0;
-is_verbose = ifdef ($verb, 0);       # $verb=0;
+is_write_Y = ifdef ($isY, FALSE);    # $isY=FALSE;
+is_verbose = ifdef ($verb, FALSE);   # $verb=FALSE;
 fmtCY      = ifdef ($fmt, "text");   # $fmt="text";
 avg_sample_size_per_centroid = ifdef ($samp, 50);  # $samp=50;
 
@@ -118,11 +118,8 @@ for (i in 1 : num_centroids)
     # Update min_distances to preserve the loop invariant:
     distances = X_samples_sq_norms + samples_vs_runs_map %*% rowSums (centroids ^ 2)
               - 2 * rowSums (X_samples * (samples_vs_runs_map %*% centroids));
-    if (i == 1) {
-        min_distances = is_row_in_samples * distances;
-    } else {
-        min_distances = min (min_distances, distances);
-}   }
+    min_distances = ifelse(i==1, is_row_in_samples*distances, min(min_distances,distances));
+}
 
 # STEP 2: PERFORM K-MEANS ITERATIONS FOR ALL RUNS:
 
@@ -138,7 +135,7 @@ parfor (run_index in 1 : num_runs, check = 0)
     C_old = C;
     iter_count = 0;
     term_code = 0;
-    wcss = 0;
+    wcss = Inf
 
     while (term_code == 0)
     {
@@ -149,34 +146,35 @@ parfor (run_index in 1 : num_runs, check = 0)
         # Compute the current centroid-based within-cluster sum of squares (WCSS)
         wcss_old = wcss;
         wcss = sumXsq + sum (minD);
-        if (is_verbose == 1) {
-            if (iter_count == 0) {
+        if (is_verbose == TRUE) {
+            if (iter_count == 0)
                 print ("Run " + run_index + ", At Start-Up:  Centroid WCSS = " + wcss);
-            } else {
+            else
                 print ("Run " + run_index + ", Iteration " + iter_count + ":  Centroid WCSS = " + wcss
                     + ";  Centroid change (avg.sq.dist.) = " + (sum ((C - C_old) ^ 2) / num_centroids));
-        }   }
+        }
+        
+        # Find the closest centroid for each record
+        P = D <= minD;
+        # If some records belong to multiple centroids, share them equally
+        P = P / rowSums (P);
+        # Compute the column normalization factor for P
+        P_denom = colSums (P);
+        # Compute new centroids as weighted averages over the records
+        C_new = (t(P) %*% X) / t(P_denom);
+        
         # Check if convergence or maximum iteration has been reached
-        if (wcss_old - wcss < eps * wcss & iter_count > 0) {
-            term_code = 1;  # Convergence is reached
-        } else {
-            if (iter_count >= max_iter) {
-                term_code = 2;  # Maximum iteration is reached
-            } else {
-                iter_count = iter_count + 1;
-                # Find the closest centroid for each record
-                P = (D <= minD);
-                # If some records belong to multiple centroids, share them equally
-                P = P / rowSums (P);
-                # Compute the column normalization factor for P
-                P_denom = colSums (P);
-                if (sum (P_denom <= 0) > 0) {
-                    term_code = 3;  # There is a "runaway" centroid with 0.0 denominator
-                } else {
-                    C_old = C;
-                    # Compute new centroids as weighted averages over the records
-                    C = (t(P) %*% X) / t(P_denom);
-    }   }   }   }
+        iter_count = iter_count + 1
+        if(wcss_old - wcss < eps * wcss)
+           term_code = 1; # Convergence reached
+        else if(iter_count >= max_iter) 
+           term_code = 2; # Max iteration reached
+        else if(sum (P_denom <= 0) > 0)
+           term_code = 3; # "Runaway" centroid (0.0 denom)
+        else {
+           C_old = C; C = C_new; 
+        }
+    }
     print ("Run " + run_index + ", Iteration " + iter_count + ":  Terminated with code = " + term_code + ",  Centroid WCSS = " + wcss);
     All_Centroids [(num_centroids * (run_index - 1) + 1) : (num_centroids * run_index), ] = C;
     final_wcss [run_index, 1] = wcss;
@@ -208,7 +206,7 @@ if (num_successful_runs > 0) {
     C = All_Centroids [(num_centroids * (best_index - 1) + 1) : (num_centroids * best_index), ];
     print ("Writing out the best-WCSS centroids...");
     write (C, fileC, format=fmtCY);
-    if (is_write_Y == 1) {
+    if (is_write_Y == TRUE) {
         print ("Writing out the best-WCSS cluster labels...");
         D =  -2 * (X %*% t(C)) + t(rowSums (C ^ 2));
         P = (D <= rowMins (D));

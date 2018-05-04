@@ -24,7 +24,6 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 
 import org.apache.hadoop.fs.FileSystem;
@@ -33,6 +32,7 @@ import org.apache.hadoop.mapred.JobConf;
 import org.apache.sysml.hops.OptimizerUtils;
 import org.apache.sysml.runtime.DMLRuntimeException;
 import org.apache.sysml.runtime.matrix.data.FrameBlock;
+import org.apache.sysml.runtime.util.CommonThreadPool;
 
 
 /**
@@ -41,18 +41,7 @@ import org.apache.sysml.runtime.matrix.data.FrameBlock;
  */
 public class FrameReaderBinaryBlockParallel extends FrameReaderBinaryBlock
 {
-	/**
-	 * 
-	 * @param path
-	 * @param job
-	 * @param fs 
-	 * @param dest
-	 * @param rlen
-	 * @param clen
-	 * 
-	 * @throws IOException
-	 * @throws DMLRuntimeException 
-	 */
+	@Override
 	protected void readBinaryBlockFrameFromHDFS( Path path, JobConf job, FileSystem fs, FrameBlock dest, long rlen, long clen )
 		throws IOException, DMLRuntimeException
 	{
@@ -61,13 +50,13 @@ public class FrameReaderBinaryBlockParallel extends FrameReaderBinaryBlock
 		try 
 		{
 			//create read tasks for all files
-			ExecutorService pool = Executors.newFixedThreadPool(numThreads);
-			ArrayList<ReadFileTask> tasks = new ArrayList<ReadFileTask>();
-			for( Path lpath : getSequenceFilePaths(fs, path) )
+			ExecutorService pool = CommonThreadPool.get(numThreads);
+			ArrayList<ReadFileTask> tasks = new ArrayList<>();
+			for( Path lpath : IOUtilFunctions.getSequenceFilePaths(fs, path) )
 				tasks.add(new ReadFileTask(lpath, job, fs, dest));
 
 			//wait until all tasks have been executed
-			List<Future<Object>> rt = pool.invokeAll(tasks);	
+			List<Future<Object>> rt = pool.invokeAll(tasks);
 			pool.shutdown();
 			
 			//check for exceptions
@@ -78,10 +67,7 @@ public class FrameReaderBinaryBlockParallel extends FrameReaderBinaryBlock
 			throw new IOException("Failed parallel read of binary block input.", e);
 		}
 	}
-	
-	/**
-	 * 
-	 */
+
 	private class ReadFileTask implements Callable<Object> 
 	{
 		private Path _path = null;

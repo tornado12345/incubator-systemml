@@ -31,31 +31,24 @@ import org.apache.sysml.runtime.DMLScriptException;
 import org.apache.sysml.runtime.controlprogram.caching.MatrixObject.UpdateType;
 import org.apache.sysml.runtime.controlprogram.context.ExecutionContext;
 import org.apache.sysml.runtime.instructions.Instruction;
-import org.apache.sysml.runtime.instructions.cp.Data;
 import org.apache.sysml.runtime.instructions.cp.IntObject;
 import org.apache.sysml.runtime.instructions.cp.ScalarObject;
-import org.apache.sysml.runtime.util.UtilFunctions;
 import org.apache.sysml.yarn.DMLAppMasterUtils;
 
 public class ForProgramBlock extends ProgramBlock
-{	
-	protected ArrayList<Instruction> 	_fromInstructions;
-	protected ArrayList<Instruction> 	_toInstructions;
-	protected ArrayList<Instruction> 	_incrementInstructions;
+{
+	protected ArrayList<Instruction> _fromInstructions;
+	protected ArrayList<Instruction> _toInstructions;
+	protected ArrayList<Instruction> _incrementInstructions;
+	protected ArrayList <Instruction> _exitInstructions;
+	protected ArrayList<ProgramBlock> _childBlocks;
+	protected final String _iterPredVar; 
 	
-	protected ArrayList <Instruction> 	_exitInstructions ;
-	protected ArrayList<ProgramBlock> 	_childBlocks;
-
-	protected String[]                  _iterablePredicateVars; //from,to,where constants/internal vars not captured via instructions
-
-	
-	public ForProgramBlock(Program prog, String[] iterPredVars) throws DMLRuntimeException
-	{
+	public ForProgramBlock(Program prog, String iterPredVar) {
 		super(prog);
-		
-		_exitInstructions = new ArrayList<Instruction>();
-		_childBlocks = new ArrayList<ProgramBlock>();
-		_iterablePredicateVars = iterPredVars;
+		_exitInstructions = new ArrayList<>();
+		_childBlocks = new ArrayList<>();
+		_iterPredVar = iterPredVar;
 	}
 	
 	public ArrayList<Instruction> getFromInstructions() {
@@ -81,11 +74,7 @@ public class ForProgramBlock extends ProgramBlock
 	public void setIncrementInstructions(ArrayList<Instruction> instructions) {
 		_incrementInstructions = instructions;
 	}
-	
-	public void addExitInstruction(Instruction inst) {
-		_exitInstructions.add(inst);
-	}
-	
+
 	public ArrayList<Instruction> getExitInstructions() {
 		return _exitInstructions;
 	}
@@ -106,30 +95,22 @@ public class ForProgramBlock extends ProgramBlock
 		_childBlocks = pbs;
 	}
 	
-	public String[] getIterablePredicateVars() {
-		return _iterablePredicateVars;
-	}
-	
-	public void setIterablePredicateVars(String[] iterPredVars) {
-		_iterablePredicateVars = iterPredVars;
+	public String getIterVar() {
+		return _iterPredVar;
 	}
 	
 	@Override	
-	public void execute(ExecutionContext ec) 
-		throws DMLRuntimeException
-	{
-		// add the iterable predicate variable to the variable set
-		String iterVarName = _iterablePredicateVars[0];
-
+	public void execute(ExecutionContext ec) {
 		// evaluate from, to, incr only once (assumption: known at for entry)
 		IntObject from = executePredicateInstructions( 1, _fromInstructions, ec );
 		IntObject to   = executePredicateInstructions( 2, _toInstructions, ec );
-		IntObject incr = (_incrementInstructions == null || _incrementInstructions.isEmpty()) && _iterablePredicateVars[3]==null ? 
-				new IntObject((from.getLongValue()<=to.getLongValue()) ? 1 : -1) :
-				executePredicateInstructions( 3, _incrementInstructions, ec );
+		IntObject incr = (_incrementInstructions == null || _incrementInstructions.isEmpty()) ? 
+			new IntObject((from.getLongValue()<=to.getLongValue()) ? 1 : -1) :
+			executePredicateInstructions( 3, _incrementInstructions, ec );
 		
 		if ( incr.getLongValue() == 0 ) //would produce infinite loop
-			throw new DMLRuntimeException(this.printBlockErrorLocation() + "Expression for increment of variable '" + iterVarName + "' must evaluate to a non-zero value.");
+			throw new DMLRuntimeException(printBlockErrorLocation() +  "Expression for increment "
+				+ "of variable '" + _iterPredVar + "' must evaluate to a non-zero value.");
 		
 		// execute for loop
 		try 
@@ -138,17 +119,17 @@ public class ForProgramBlock extends ProgramBlock
 			UpdateType[] flags = prepareUpdateInPlaceVariables(ec, _tid);
 			
 			// run for loop body for each instance of predicate sequence 
-			SequenceIterator seqIter = new SequenceIterator(iterVarName, from, to, incr);
+			SequenceIterator seqIter = new SequenceIterator(from, to, incr);
 			for( IntObject iterVar : seqIter ) 
 			{
 				//set iteration variable
-				ec.setVariable(iterVarName, iterVar); 
+				ec.setVariable(_iterPredVar, iterVar); 
 				
 				//execute all child blocks
 				for(int i=0 ; i < this._childBlocks.size() ; i++) {
 					ec.updateDebugState( i );
 					_childBlocks.get(i).execute(ec);
-				}				
+				}
 			}
 			
 			// reset update-in-place variables
@@ -171,58 +152,37 @@ public class ForProgramBlock extends ProgramBlock
 		}
 	}
 
-	/**
-	 * 
-	 * @param pos
-	 * @param instructions
-	 * @param ec
-	 * @return
-	 * @throws DMLRuntimeException
-	 */
 	protected IntObject executePredicateInstructions( int pos, ArrayList<Instruction> instructions, ExecutionContext ec ) 
-		throws DMLRuntimeException
 	{
 		ScalarObject tmp = null;
 		IntObject ret = null;
 		
 		try
 		{
-			if( _iterablePredicateVars[pos] != null )
+			if( _sb != null )
 			{
-				//probe for scalar variables
-				Data ldat = ec.getVariable( _iterablePredicateVars[pos] );
-				if( ldat != null && ldat instanceof ScalarObject )
-					tmp = (ScalarObject)ldat;
-				else //handle literals
-					tmp = new IntObject( UtilFunctions.parseToLong(_iterablePredicateVars[pos]) );
-			}		
-			else
-			{
-				if( _sb!=null )
-				{
-					if( DMLScript.isActiveAM() ) //set program block specific remote memory
-						DMLAppMasterUtils.setupProgramBlockRemoteMaxMemory(this);
-					
-					ForStatementBlock fsb = (ForStatementBlock)_sb;
-					Hop predHops = null;
-					boolean recompile = false;
-					if (pos == 1){ 
-						predHops = fsb.getFromHops();
-						recompile = fsb.requiresFromRecompilation();
-					}
-					else if (pos == 2) {
-						predHops = fsb.getToHops();
-						recompile = fsb.requiresToRecompilation();
-					}
-					else if (pos == 3){
-						predHops = fsb.getIncrementHops();
-						recompile = fsb.requiresIncrementRecompilation();
-					}
-					tmp = (IntObject) executePredicate(instructions, predHops, recompile, ValueType.INT, ec);
+				if( DMLScript.isActiveAM() ) //set program block specific remote memory
+					DMLAppMasterUtils.setupProgramBlockRemoteMaxMemory(this);
+				
+				ForStatementBlock fsb = (ForStatementBlock)_sb;
+				Hop predHops = null;
+				boolean recompile = false;
+				if (pos == 1){ 
+					predHops = fsb.getFromHops();
+					recompile = fsb.requiresFromRecompilation();
 				}
-				else
-					tmp = (IntObject) executePredicate(instructions, null, false, ValueType.INT, ec);
+				else if (pos == 2) {
+					predHops = fsb.getToHops();
+					recompile = fsb.requiresToRecompilation();
+				}
+				else if (pos == 3){
+					predHops = fsb.getIncrementHops();
+					recompile = fsb.requiresIncrementRecompilation();
+				}
+				tmp = (IntObject) executePredicate(instructions, predHops, recompile, ValueType.INT, ec);
 			}
+			else
+				tmp = (IntObject) executePredicate(instructions, null, false, ValueType.INT, ec);
 		}
 		catch(Exception ex)
 		{
@@ -238,11 +198,12 @@ public class ForProgramBlock extends ProgramBlock
 		if( tmp instanceof IntObject )
 			ret = (IntObject)tmp;
 		else //downcast to int if necessary
-			ret = new IntObject(tmp.getName(),tmp.getLongValue()); 
+			ret = new IntObject(tmp.getLongValue()); 
 		
 		return ret;
 	}
 	
+	@Override
 	public String printBlockErrorLocation(){
 		return "ERROR: Runtime error in for program block generated from for statement block between lines " + _beginLine + " and " + _endLine + " -- ";
 	}
@@ -252,14 +213,12 @@ public class ForProgramBlock extends ProgramBlock
 	 */
 	protected class SequenceIterator implements Iterator<IntObject>, Iterable<IntObject>
 	{
-		private String _varName = null;
 		private long _cur = -1;
 		private long _to = -1;
 		private long _incr = -1;
 		private boolean _inuse = false;
 		
-		protected SequenceIterator(String varName, IntObject from, IntObject to, IntObject incr) {
-			_varName = varName;
+		protected SequenceIterator(IntObject from, IntObject to, IntObject incr) {
 			_cur = from.getLongValue();
 			_to = to.getLongValue();
 			_incr = incr.getLongValue();
@@ -272,7 +231,7 @@ public class ForProgramBlock extends ProgramBlock
 
 		@Override
 		public IntObject next() {
-			IntObject ret = new IntObject( _varName, _cur );
+			IntObject ret = new IntObject(_cur);
 			_cur += _incr; //update current val
 			return ret;
 		}

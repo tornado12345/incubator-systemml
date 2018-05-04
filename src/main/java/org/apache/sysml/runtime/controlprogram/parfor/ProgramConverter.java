@@ -31,9 +31,11 @@ import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.mapred.JobConf;
 import org.apache.sysml.api.DMLScript;
 import org.apache.sysml.conf.CompilerConfig.ConfigType;
+import org.apache.sysml.conf.CompilerConfig;
 import org.apache.sysml.conf.ConfigurationManager;
 import org.apache.sysml.conf.DMLConfig;
 import org.apache.sysml.hops.Hop;
+import org.apache.sysml.hops.OptimizerUtils;
 import org.apache.sysml.hops.recompile.Recompiler;
 import org.apache.sysml.parser.DMLProgram;
 import org.apache.sysml.parser.DataIdentifier;
@@ -43,8 +45,10 @@ import org.apache.sysml.parser.ParForStatementBlock;
 import org.apache.sysml.parser.StatementBlock;
 import org.apache.sysml.parser.Expression.DataType;
 import org.apache.sysml.parser.Expression.ValueType;
+import org.apache.sysml.parser.ParForStatementBlock.ResultVar;
 import org.apache.sysml.parser.WhileStatementBlock;
 import org.apache.sysml.runtime.DMLRuntimeException;
+import org.apache.sysml.runtime.codegen.CodegenUtils;
 import org.apache.sysml.runtime.controlprogram.ExternalFunctionProgramBlock;
 import org.apache.sysml.runtime.controlprogram.ExternalFunctionProgramBlockCP;
 import org.apache.sysml.runtime.controlprogram.ForProgramBlock;
@@ -57,6 +61,7 @@ import org.apache.sysml.runtime.controlprogram.ProgramBlock;
 import org.apache.sysml.runtime.controlprogram.WhileProgramBlock;
 import org.apache.sysml.runtime.controlprogram.ParForProgramBlock.PDataPartitionFormat;
 import org.apache.sysml.runtime.controlprogram.ParForProgramBlock.PExecMode;
+import org.apache.sysml.runtime.controlprogram.ParForProgramBlock.PartitionFormat;
 import org.apache.sysml.runtime.controlprogram.caching.MatrixObject;
 import org.apache.sysml.runtime.controlprogram.caching.MatrixObject.UpdateType;
 import org.apache.sysml.runtime.controlprogram.context.ExecutionContext;
@@ -73,29 +78,28 @@ import org.apache.sysml.runtime.instructions.cp.DoubleObject;
 import org.apache.sysml.runtime.instructions.cp.FunctionCallCPInstruction;
 import org.apache.sysml.runtime.instructions.cp.IntObject;
 import org.apache.sysml.runtime.instructions.cp.ScalarObject;
+import org.apache.sysml.runtime.instructions.cp.SpoofCPInstruction;
 import org.apache.sysml.runtime.instructions.cp.StringObject;
 import org.apache.sysml.runtime.instructions.cp.VariableCPInstruction;
+import org.apache.sysml.runtime.instructions.gpu.GPUInstruction;
 import org.apache.sysml.runtime.instructions.mr.MRInstruction;
 import org.apache.sysml.runtime.instructions.spark.SPInstruction;
 import org.apache.sysml.runtime.matrix.MatrixCharacteristics;
-import org.apache.sysml.runtime.matrix.MatrixFormatMetaData;
+import org.apache.sysml.runtime.matrix.MetaDataFormat;
 import org.apache.sysml.runtime.matrix.data.InputInfo;
 import org.apache.sysml.runtime.matrix.data.MatrixBlock;
 import org.apache.sysml.runtime.matrix.data.OutputInfo;
 import org.apache.sysml.udf.ExternalFunctionInvocationInstruction;
 
 /**
- * Static functionalities for 
- *   * creating deep copies of program blocks, instructions, function program blocks
- *   * serializing and parsing of programs, program blocks, functions program blocks
+ * Program converter functionalities for 
+ *   (1) creating deep copies of program blocks, instructions, function program blocks, and 
+ *   (2) serializing and parsing of programs, program blocks, functions program blocks.
  * 
- * TODO: CV, EL, ELUse program blocks not considered so far (not for BI 2.0 release)
- * TODO: rewrite class to instance-based invocation (grown gradually and now inappropriate design)
- *
  */
+//TODO: rewrite class to instance-based invocation (grown gradually and now inappropriate design)
 public class ProgramConverter 
 {
-	
 	protected static final Log LOG = LogFactory.getLog(ProgramConverter.class.getName());
     
 	//use escaped unicodes for separators in order to prevent string conflict
@@ -107,7 +111,6 @@ public class ProgramConverter
 	public static final String LEVELIN           = "\u23a8"; //variant of left curly bracket; "\u007b"; //"{";
 	public static final String LEVELOUT          = "\u23ac"; //variant of right curly bracket; "\u007d"; //"}";	
 	public static final String EMPTY             = "null";
-	public static final String EXT_FUNCTION      = "extfunct";
 	
 	//public static final String CP_ROOT_THREAD_SEPARATOR = "/";//File.separator;
 	public static final String CP_ROOT_THREAD_ID = "_t0";       
@@ -147,8 +150,6 @@ public class ProgramConverter
 	public static final String NOT_SUPPORTED_MR_PARFOR           = "Not supported: Nested ParFOR REMOTE_MR due to possible deadlocks." +
 			                                                       "(LOCAL can be used for innner ParFOR)";
 	public static final String NOT_SUPPORTED_PB                  = "Not supported: type of program block";
-	public static final String NOT_SUPPORTED_EXECUTION_CONTEXT   = "Parsing of external system execution context not supported yet.";
-	
 	
 	////////////////////////////////
 	// CREATION of DEEP COPIES
@@ -158,11 +159,12 @@ public class ProgramConverter
 	 * Creates a deep copy of the given execution context.
 	 * For rt_platform=Hadoop, execution context has a symbol table.
 	 * 
-	 * @throws CloneNotSupportedException 
-	 * @throws DMLRuntimeException 
+	 * @param ec execution context
+	 * @return execution context
+	 * @throws CloneNotSupportedException if CloneNotSupportedException occurs
 	 */
 	public static ExecutionContext createDeepCopyExecutionContext(ExecutionContext ec) 
-		throws CloneNotSupportedException, DMLRuntimeException 
+		throws CloneNotSupportedException
 	{
 		ExecutionContext cpec = ExecutionContextFactory.createContext(false, ec.getProgram());
 		cpec.setVariables((LocalVariableMap) ec.getVariables().clone());
@@ -199,18 +201,18 @@ public class ProgramConverter
 	 * specified parallel worker in order to avoid conflicts between parworkers. This happens recursively in order
 	 * to support arbitrary control-flow constructs within a parfor. 
 	 * 
-	 * @param childBlocks
-	 * @param pid
-	 * @param plain full deep copy without id replacement 
-	 * @param forceDeepCopy 
-	 * 
-	 * @return
-	 * @throws DMLRuntimeException 
+	 * @param childBlocks child program blocks
+	 * @param pid ?
+	 * @param IDPrefix ?
+	 * @param fnStack ?
+	 * @param fnCreated ?
+	 * @param plain if true, full deep copy without id replacement
+	 * @param forceDeepCopy if true, force deep copy
+	 * @return list of program blocks
 	 */
 	public static ArrayList<ProgramBlock> rcreateDeepCopyProgramBlocks(ArrayList<ProgramBlock> childBlocks, long pid, int IDPrefix, HashSet<String> fnStack, HashSet<String> fnCreated, boolean plain, boolean forceDeepCopy) 
-		throws DMLRuntimeException 
 	{
-		ArrayList<ProgramBlock> tmp = new ArrayList<ProgramBlock>();
+		ArrayList<ProgramBlock> tmp = new ArrayList<>();
 		
 		for( ProgramBlock pb : childBlocks )
 		{
@@ -258,22 +260,10 @@ public class ProgramConverter
 		
 		return tmp;
 	}
-	
-	/**
-	 * 
-	 * @param wpb
-	 * @param pid
-	 * @param IDPrefix
-	 * @param prog
-	 * @return
-	 * @throws DMLRuntimeException 
-	 */
-	public static WhileProgramBlock createDeepCopyWhileProgramBlock(WhileProgramBlock wpb, long pid, int IDPrefix, Program prog, HashSet<String> fnStack, HashSet<String> fnCreated, boolean plain, boolean forceDeepCopy) 
-		throws DMLRuntimeException
-	{
+
+	public static WhileProgramBlock createDeepCopyWhileProgramBlock(WhileProgramBlock wpb, long pid, int IDPrefix, Program prog, HashSet<String> fnStack, HashSet<String> fnCreated, boolean plain, boolean forceDeepCopy) {
 		ArrayList<Instruction> predinst = createDeepCopyInstructionSet(wpb.getPredicate(), pid, IDPrefix, prog, fnStack, fnCreated, plain, true);
 		WhileProgramBlock tmpPB = new WhileProgramBlock(prog, predinst);
-		tmpPB.setPredicateResultVar( wpb.getPredicateResultVar() );
 		tmpPB.setStatementBlock( createWhileStatementBlockCopy((WhileStatementBlock) wpb.getStatementBlock(), pid, plain, forceDeepCopy) );
 		tmpPB.setThreadID(pid);
 		
@@ -282,22 +272,10 @@ public class ProgramConverter
 		
 		return tmpPB;
 	}
-	
-	/**
-	 * 
-	 * @param ipb
-	 * @param pid
-	 * @param IDPrefix
-	 * @param prog
-	 * @return
-	 * @throws DMLRuntimeException 
-	 */
-	public static IfProgramBlock createDeepCopyIfProgramBlock(IfProgramBlock ipb, long pid, int IDPrefix, Program prog, HashSet<String> fnStack, HashSet<String> fnCreated, boolean plain, boolean forceDeepCopy) 
-		throws DMLRuntimeException 
-	{
+
+	public static IfProgramBlock createDeepCopyIfProgramBlock(IfProgramBlock ipb, long pid, int IDPrefix, Program prog, HashSet<String> fnStack, HashSet<String> fnCreated, boolean plain, boolean forceDeepCopy) {
 		ArrayList<Instruction> predinst = createDeepCopyInstructionSet(ipb.getPredicate(), pid, IDPrefix, prog, fnStack, fnCreated, plain, true);
 		IfProgramBlock tmpPB = new IfProgramBlock(prog, predinst);
-		tmpPB.setPredicateResultVar( ipb.getPredicateResultVar() );
 		tmpPB.setStatementBlock( createIfStatementBlockCopy((IfStatementBlock)ipb.getStatementBlock(), pid, plain, forceDeepCopy ) );
 		tmpPB.setThreadID(pid);
 		
@@ -307,20 +285,9 @@ public class ProgramConverter
 		
 		return tmpPB;
 	}
-	
-	/**
-	 * 
-	 * @param fpb
-	 * @param pid
-	 * @param IDPrefix
-	 * @param prog
-	 * @return
-	 * @throws DMLRuntimeException
-	 */
-	public static ForProgramBlock createDeepCopyForProgramBlock(ForProgramBlock fpb, long pid, int IDPrefix, Program prog, HashSet<String> fnStack, HashSet<String> fnCreated, boolean plain, boolean forceDeepCopy) 
-		throws DMLRuntimeException
-	{
-		ForProgramBlock tmpPB = new ForProgramBlock(prog,fpb.getIterablePredicateVars());
+
+	public static ForProgramBlock createDeepCopyForProgramBlock(ForProgramBlock fpb, long pid, int IDPrefix, Program prog, HashSet<String> fnStack, HashSet<String> fnCreated, boolean plain, boolean forceDeepCopy) {
+		ForProgramBlock tmpPB = new ForProgramBlock(prog,fpb.getIterVar());
 		tmpPB.setStatementBlock( createForStatementBlockCopy((ForStatementBlock)fpb.getStatementBlock(), pid, plain, forceDeepCopy));
 		tmpPB.setThreadID(pid);
 		
@@ -332,18 +299,9 @@ public class ProgramConverter
 		
 		return tmpPB;
 	}
-	
-	/**
-	 * 
-	 * @param fpb
-	 * @param prog
-	 * @return
-	 * @throws DMLRuntimeException
-	 */
-	public static ForProgramBlock createShallowCopyForProgramBlock(ForProgramBlock fpb, Program prog ) 
-		throws DMLRuntimeException
-	{
-		ForProgramBlock tmpPB = new ForProgramBlock(prog,fpb.getIterablePredicateVars());
+
+	public static ForProgramBlock createShallowCopyForProgramBlock(ForProgramBlock fpb, Program prog ) {
+		ForProgramBlock tmpPB = new ForProgramBlock(prog,fpb.getIterVar());
 		
 		tmpPB.setFromInstructions( fpb.getFromInstructions() );
 		tmpPB.setToInstructions( fpb.getToInstructions() );
@@ -353,56 +311,20 @@ public class ProgramConverter
 		
 		return tmpPB;
 	}
-	
-	/**
-	 * 
-	 * @param pfpb
-	 * @param prog
-	 * @return
-	 * @throws DMLRuntimeException
-	 */
-	public static ForProgramBlock createShallowCopyParForProgramBlock(ParForProgramBlock pfpb, Program prog ) 
-		throws DMLRuntimeException
-	{
-		ParForProgramBlock tmpPB = new ParForProgramBlock(prog,pfpb.getIterablePredicateVars(),pfpb.getParForParams());
-		
-		tmpPB.setStatementBlock( pfpb.getStatementBlock() );
-		tmpPB.setResultVariables( pfpb.getResultVariables() );
-		
-		tmpPB.setFromInstructions( pfpb.getFromInstructions() );
-		tmpPB.setToInstructions( pfpb.getToInstructions() );
-		tmpPB.setIncrementInstructions( pfpb.getIncrementInstructions() );
-		tmpPB.setExitInstructions( pfpb.getExitInstructions() );
-		tmpPB.setChildBlocks( pfpb.getChildBlocks() );
-		
-		return tmpPB;
-	}
-	
-	/**
-	 * 
-	 * @param pfpb
-	 * @param pid
-	 * @param IDPrefix
-	 * @param prog
-	 * @return
-	 * @throws DMLRuntimeException 
-	 */
-	public static ParForProgramBlock createDeepCopyParForProgramBlock(ParForProgramBlock pfpb, long pid, int IDPrefix, Program prog, HashSet<String> fnStack, HashSet<String> fnCreated, boolean plain, boolean forceDeepCopy) 
-		throws DMLRuntimeException
-	{
+
+	public static ParForProgramBlock createDeepCopyParForProgramBlock(ParForProgramBlock pfpb, long pid, int IDPrefix, Program prog, HashSet<String> fnStack, HashSet<String> fnCreated, boolean plain, boolean forceDeepCopy) {
 		ParForProgramBlock tmpPB = null;
 		
 		if( IDPrefix == -1 ) //still on master node
-			tmpPB = new ParForProgramBlock(prog,pfpb.getIterablePredicateVars(),pfpb.getParForParams()); 
+			tmpPB = new ParForProgramBlock(prog,pfpb.getIterVar(), pfpb.getParForParams(), pfpb.getResultVariables());
 		else //child of remote ParWorker at any level
-			tmpPB = new ParForProgramBlock(IDPrefix, prog, pfpb.getIterablePredicateVars(),pfpb.getParForParams());
+			tmpPB = new ParForProgramBlock(IDPrefix, prog, pfpb.getIterVar(), pfpb.getParForParams(), pfpb.getResultVariables());
 		
 		tmpPB.setStatementBlock( createForStatementBlockCopy( (ForStatementBlock) pfpb.getStatementBlock(), pid, plain, forceDeepCopy) );
 		tmpPB.setThreadID(pid);
 		
 		tmpPB.disableOptimization(); //already done in top-level parfor
 		tmpPB.disableMonitorReport(); //already done in top-level parfor
-		tmpPB.setResultVariables( pfpb.getResultVariables() );
 		
 		tmpPB.setFromInstructions( createDeepCopyInstructionSet(pfpb.getFromInstructions(), pid, IDPrefix, prog, fnStack, fnCreated, plain, true) );
 		tmpPB.setToInstructions( createDeepCopyInstructionSet(pfpb.getToInstructions(), pid, IDPrefix, prog, fnStack, fnCreated, plain, true) );
@@ -423,12 +345,16 @@ public class ProgramConverter
 	 * This creates a deep copy of a function program block. The central reference to singletons of function program blocks
 	 * poses the need for explicit copies in order to prevent conflicting writes of temporary variables (see ExternalFunctionProgramBlock.
 	 * 
-	 * @param oldName
-	 * @param pid
-	 * @throws DMLRuntimeException  
+	 * @param namespace function namespace
+	 * @param oldName ?
+	 * @param pid ?
+	 * @param IDPrefix ?
+	 * @param prog runtime program
+	 * @param fnStack ?
+	 * @param fnCreated ?
+	 * @param plain ?
 	 */
 	public static void createDeepCopyFunctionProgramBlock(String namespace, String oldName, long pid, int IDPrefix, Program prog, HashSet<String> fnStack, HashSet<String> fnCreated, boolean plain) 
-		throws DMLRuntimeException 
 	{
 		//fpb guaranteed to be non-null (checked inside getFunctionProgramBlock)
 		FunctionProgramBlock fpb = prog.getFunctionProgramBlock(namespace, oldName);
@@ -440,8 +366,8 @@ public class ProgramConverter
 		
 		//create deep copy
 		FunctionProgramBlock copy = null;
-		ArrayList<DataIdentifier> tmp1 = new ArrayList<DataIdentifier>(); 
-		ArrayList<DataIdentifier> tmp2 = new ArrayList<DataIdentifier>(); 
+		ArrayList<DataIdentifier> tmp1 = new ArrayList<>(); 
+		ArrayList<DataIdentifier> tmp2 = new ArrayList<>(); 
 		if( fpb.getInputParams()!= null )
 			tmp1.addAll(fpb.getInputParams());
 		if( fpb.getOutputParams()!= null )
@@ -486,23 +412,16 @@ public class ProgramConverter
 		prog.addFunctionProgramBlock(namespace, fnameNew, copy);
 		fnCreated.add(DMLProgram.constructFunctionKey(namespace, fnameNew));
 	}
-	
-	/**
-	 * 
-	 * @param fpb
-	 * @return
-	 * @throws DMLRuntimeException
-	 */
+
 	public static FunctionProgramBlock createDeepCopyFunctionProgramBlock(FunctionProgramBlock fpb, HashSet<String> fnStack, HashSet<String> fnCreated) 
-		throws DMLRuntimeException 
 	{
 		if( fpb == null )
 			throw new DMLRuntimeException("Unable to create a deep copy of a non-existing FunctionProgramBlock.");
 	
 		//create deep copy
 		FunctionProgramBlock copy = null;
-		ArrayList<DataIdentifier> tmp1 = new ArrayList<DataIdentifier>(); 
-		ArrayList<DataIdentifier> tmp2 = new ArrayList<DataIdentifier>(); 
+		ArrayList<DataIdentifier> tmp1 = new ArrayList<>(); 
+		ArrayList<DataIdentifier> tmp2 = new ArrayList<>(); 
 		if( fpb.getInputParams()!= null )
 			tmp1.addAll(fpb.getInputParams());
 		if( fpb.getOutputParams()!= null )
@@ -524,15 +443,19 @@ public class ProgramConverter
 	 * IDs with the concrete IDs of this parfor instance. This is a helper method uses for generating
 	 * deep copies of program blocks.
 	 * 
-	 * @param instSet
-	 * @param pid
-	 * @return
-	 * @throws DMLRuntimeException 
+	 * @param instSet list of instructions
+	 * @param pid ?
+	 * @param IDPrefix ?
+	 * @param prog runtime program
+	 * @param fnStack ?
+	 * @param fnCreated ?
+	 * @param plain ?
+	 * @param cpFunctions ?
+	 * @return list of instructions
 	 */
 	public static ArrayList<Instruction> createDeepCopyInstructionSet(ArrayList<Instruction> instSet, long pid, int IDPrefix, Program prog, HashSet<String> fnStack, HashSet<String> fnCreated, boolean plain, boolean cpFunctions) 
-		throws DMLRuntimeException
 	{
-		ArrayList<Instruction> tmp = new ArrayList<Instruction>();
+		ArrayList<Instruction> tmp = new ArrayList<>();
 		for( Instruction inst : instSet )
 		{
 			if( inst instanceof FunctionCallCPInstruction && cpFunctions )
@@ -548,23 +471,16 @@ public class ProgramConverter
 		
 		return tmp;
 	}
-	
-	
-	/**
-	 * 
-	 * @param pid
-	 * @return
-	 * @throws DMLRuntimeException 
-	 */
+
 	public static Instruction cloneInstruction( Instruction oInst, long pid, boolean plain, boolean cpFunctions ) 
-		throws DMLRuntimeException
 	{
 		Instruction inst = null;
 		String tmpString = oInst.toString();
 		
 		try
 		{
-			if( oInst instanceof CPInstruction || oInst instanceof SPInstruction || oInst instanceof MRInstruction )
+			if( oInst instanceof CPInstruction || oInst instanceof SPInstruction || oInst instanceof MRInstruction 
+					|| oInst instanceof GPUInstruction )
 			{
 				if( oInst instanceof FunctionCallCPInstruction && cpFunctions )
 				{
@@ -599,15 +515,8 @@ public class ProgramConverter
 		
 		return inst;
 	}
-	
-	/**
-	 * 
-	 * @param sb
-	 * @return
-	 * @throws DMLRuntimeException
-	 */
+
 	public static StatementBlock createStatementBlockCopy( StatementBlock sb, long pid, boolean plain, boolean forceDeepCopy ) 
-		throws DMLRuntimeException
 	{
 		StatementBlock ret = null;
 		
@@ -615,22 +524,22 @@ public class ProgramConverter
 		{
 			if( ConfigurationManager.getCompilerConfigFlag(ConfigType.ALLOW_PARALLEL_DYN_RECOMPILATION) 
 				&& sb != null  //forced deep copy for function recompilation
-				&& (Recompiler.requiresRecompilation( sb.get_hops() ) || forceDeepCopy)  )
+				&& (Recompiler.requiresRecompilation( sb.getHops() ) || forceDeepCopy)  )
 			{
 				//create new statement (shallow copy livein/liveout for recompile, line numbers for explain)
 				ret = new StatementBlock();
 				ret.setDMLProg(sb.getDMLProg());
-				ret.setAllPositions(sb.getFilename(), sb.getBeginLine(), sb.getBeginColumn(), sb.getEndLine(), sb.getEndColumn());
+				ret.setParseInfo(sb);
 				ret.setLiveIn( sb.liveIn() ); 
 				ret.setLiveOut( sb.liveOut() ); 
 				ret.setUpdatedVariables( sb.variablesUpdated() );
 				ret.setReadVariables( sb.variablesRead() );
 				
 				//deep copy hops dag for concurrent recompile
-				ArrayList<Hop> hops = Recompiler.deepCopyHopsDag( sb.get_hops() );
+				ArrayList<Hop> hops = Recompiler.deepCopyHopsDag( sb.getHops() );
 				if( !plain )
 					Recompiler.updateFunctionNames( hops, pid );
-				ret.set_hops( hops );
+				ret.setHops( hops );
 				ret.updateRecompilationFlag();
 			}
 			else
@@ -645,30 +554,21 @@ public class ProgramConverter
 		
 		return ret;
 	}
-	
-	/**
-	 * 
-	 * @param sb
-	 * @param pid
-	 * @param plain
-	 * @return
-	 * @throws DMLRuntimeException
-	 */
+
 	public static IfStatementBlock createIfStatementBlockCopy( IfStatementBlock sb, long pid, boolean plain, boolean forceDeepCopy ) 
-		throws DMLRuntimeException
 	{
 		IfStatementBlock ret = null;
 		
 		try
 		{
-			if(    ConfigurationManager.getCompilerConfigFlag(ConfigType.ALLOW_PARALLEL_DYN_RECOMPILATION) 
+			if( ConfigurationManager.getCompilerConfigFlag(ConfigType.ALLOW_PARALLEL_DYN_RECOMPILATION) 
 				&& sb != null //forced deep copy for function recompile
 				&& (Recompiler.requiresRecompilation( sb.getPredicateHops() ) || forceDeepCopy)  )
 			{
 				//create new statement (shallow copy livein/liveout for recompile, line numbers for explain)
 				ret = new IfStatementBlock();
 				ret.setDMLProg(sb.getDMLProg());
-				ret.setAllPositions(sb.getFilename(), sb.getBeginLine(), sb.getBeginColumn(), sb.getEndLine(), sb.getEndColumn());
+				ret.setParseInfo(sb);
 				ret.setLiveIn( sb.liveIn() );
 				ret.setLiveOut( sb.liveOut() );
 				ret.setUpdatedVariables( sb.variablesUpdated() );
@@ -694,17 +594,8 @@ public class ProgramConverter
 		
 		return ret;
 	}
-	
-	/**
-	 * 
-	 * @param sb
-	 * @param pid
-	 * @param plain
-	 * @return
-	 * @throws DMLRuntimeException
-	 */
+
 	public static WhileStatementBlock createWhileStatementBlockCopy( WhileStatementBlock sb, long pid, boolean plain, boolean forceDeepCopy ) 
-		throws DMLRuntimeException
 	{
 		WhileStatementBlock ret = null;
 		
@@ -717,7 +608,7 @@ public class ProgramConverter
 				//create new statement (shallow copy livein/liveout for recompile, line numbers for explain)
 				ret = new WhileStatementBlock();
 				ret.setDMLProg(sb.getDMLProg());
-				ret.setAllPositions(sb.getFilename(), sb.getBeginLine(), sb.getBeginColumn(), sb.getEndLine(), sb.getEndColumn());
+				ret.setParseInfo(sb);
 				ret.setLiveIn( sb.liveIn() );
 				ret.setLiveOut( sb.liveOut() );
 				ret.setUpdatedVariables( sb.variablesUpdated() );
@@ -744,17 +635,8 @@ public class ProgramConverter
 		
 		return ret;
 	}
-	
-	/**
-	 * 
-	 * @param sb
-	 * @param pid
-	 * @param plain
-	 * @return
-	 * @throws DMLRuntimeException
-	 */
+
 	public static ForStatementBlock createForStatementBlockCopy( ForStatementBlock sb, long pid, boolean plain, boolean forceDeepCopy ) 
-		throws DMLRuntimeException
 	{
 		ForStatementBlock ret = null;
 		
@@ -771,7 +653,7 @@ public class ProgramConverter
 				
 				//create new statement (shallow copy livein/liveout for recompile, line numbers for explain)
 				ret.setDMLProg(sb.getDMLProg());
-				ret.setAllPositions(sb.getFilename(), sb.getBeginLine(), sb.getBeginColumn(), sb.getEndLine(), sb.getEndColumn());
+				ret.setParseInfo(sb);
 				ret.setLiveIn( sb.liveIn() );
 				ret.setLiveOut( sb.liveOut() );
 				ret.setUpdatedVariables( sb.variablesUpdated() );
@@ -813,18 +695,16 @@ public class ProgramConverter
 	////////////////////////////////
 	// SERIALIZATION 
 	////////////////////////////////	
+
+	public static String serializeParForBody( ParForBody body ) {
+		return serializeParForBody(body, new HashMap<String, byte[]>());
+	}	
 	
-	/**
-	 * @param body
-	 * @return
-	 * @throws DMLRuntimeException 
-	 */
-	public static String serializeParForBody( ParForBody body ) 
-		throws DMLRuntimeException
+	public static String serializeParForBody( ParForBody body, HashMap<String,byte[]> clsMap ) 
 	{
 		ArrayList<ProgramBlock> pbs = body.getChildBlocks();
-		ArrayList<String> rVnames   = body.getResultVarNames();
-		ExecutionContext ec         = body.getEc();
+		ArrayList<ResultVar> rVnames = body.getResultVariables();
+		ExecutionContext ec = body.getEc();
 		
 		if( pbs.isEmpty() )
 			return PARFORBODY_BEGIN + PARFORBODY_END;
@@ -838,7 +718,7 @@ public class ProgramConverter
 		//handle DMLScript UUID (propagate original uuid for writing to scratch space)
 		sb.append( DMLScript.getUUID() );
 		sb.append( COMPONENTS_DELIM );
-		sb.append( NEWLINE );		
+		sb.append( NEWLINE );
 		
 		//handle DML config
 		sb.append( ConfigurationManager.getDMLConfig().serializeDMLConfig() );
@@ -853,14 +733,14 @@ public class ProgramConverter
 		//handle program
 		sb.append( PARFOR_PROG_BEGIN );
 		sb.append( NEWLINE );
-		sb.append( serializeProgram(prog, pbs) );
+		sb.append( serializeProgram(prog, pbs, clsMap) );
 		sb.append( PARFOR_PROG_END );
 		sb.append( NEWLINE );
 		sb.append( COMPONENTS_DELIM );
 		sb.append( NEWLINE );
 		
 		//handle result variable names
-		sb.append( serializeStringArrayList( rVnames ) );
+		sb.append( serializeResultVariables(rVnames) );
 		sb.append( COMPONENTS_DELIM );
 		
 		//handle execution context
@@ -876,49 +756,32 @@ public class ProgramConverter
 		//handle program blocks -- ONLY instructions, not variables.
 		sb.append( PARFOR_PBS_BEGIN );
 		sb.append( NEWLINE );
-		sb.append( rSerializeProgramBlocks(pbs) );
+		sb.append( rSerializeProgramBlocks(pbs, clsMap) );
 		sb.append( PARFOR_PBS_END );
 		sb.append( NEWLINE );
 		
 		sb.append( PARFORBODY_END );
 		
-		return sb.toString();		
+		return sb.toString();
 	}
-	
-	/**
-	 * 
-	 * @param prog
-	 * @return
-	 * @throws DMLRuntimeException
-	 */
-	public static String serializeProgram( Program prog, ArrayList<ProgramBlock> pbs ) 
-		throws DMLRuntimeException
-	{
+
+	private static String serializeProgram( Program prog, ArrayList<ProgramBlock> pbs, HashMap<String, byte[]> clsMap ) {
 		//note program contains variables, programblocks and function program blocks 
 		//but in order to avoid redundancy, we only serialize function program blocks
-		
-		HashMap<String, FunctionProgramBlock> fpb = prog.getFunctionProgramBlocks();		
-		HashSet<String> cand = new HashSet<String>();
+		HashMap<String, FunctionProgramBlock> fpb = prog.getFunctionProgramBlocks();
+		HashSet<String> cand = new HashSet<>();
 		rFindSerializationCandidates(pbs, cand);
-		
-		return rSerializeFunctionProgramBlocks( fpb, cand );
+		return rSerializeFunctionProgramBlocks( fpb, cand, clsMap );
 	}
-	
-	/**
-	 * 
-	 * @param pbs
-	 * @param cand
-	 * @throws DMLRuntimeException
-	 */
-	public static void rFindSerializationCandidates( ArrayList<ProgramBlock> pbs, HashSet<String> cand ) 
-		throws DMLRuntimeException
+
+	private static void rFindSerializationCandidates( ArrayList<ProgramBlock> pbs, HashSet<String> cand ) 
 	{
 		for( ProgramBlock pb : pbs )
 		{
 			if( pb instanceof WhileProgramBlock )
 			{
 				WhileProgramBlock wpb = (WhileProgramBlock) pb;
-				rFindSerializationCandidates(wpb.getChildBlocks(), cand );			
+				rFindSerializationCandidates(wpb.getChildBlocks(), cand );
 			}
 			else if ( pb instanceof ForProgramBlock || pb instanceof ParForProgramBlock )
 			{
@@ -951,47 +814,26 @@ public class ProgramConverter
 			}
 		}
 	}
-	
-	
-	/**
-	 * 
-	 * @param vars
-	 * @return
-	 * @throws DMLRuntimeException
-	 */
-	public static String serializeVariables (LocalVariableMap vars) 
-		throws DMLRuntimeException
-	{
+
+	private static String serializeVariables (LocalVariableMap vars) {
 		StringBuilder sb = new StringBuilder();
 		sb.append( PARFOR_VARS_BEGIN );
 		sb.append( vars.serialize() );
 		sb.append( PARFOR_VARS_END );
-		
 		return sb.toString();
 	}
-	
-	/**
-	 * 
-	 * @param key
-	 * @param dat
-	 * @return
-	 * @throws DMLRuntimeException
-	 */
+
 	public static String serializeDataObject(String key, Data dat) 
-		throws DMLRuntimeException
 	{
 		// SCHEMA: <name>|<datatype>|<valuetype>|value
 		// (scalars are serialize by value, matrices by filename)
-		
 		StringBuilder sb = new StringBuilder();
-	
 		//prepare data for serialization
 		String name = key;
 		DataType datatype = dat.getDataType();
 		ValueType valuetype = dat.getValueType();
 		String value = null;
-		String[] matrixMetaData = null; 
-		
+		String[] matrixMetaData = null;
 		switch( datatype )
 		{
 			case SCALAR:
@@ -1001,10 +843,11 @@ public class ProgramConverter
 				break;
 			case MATRIX:
 				MatrixObject mo = (MatrixObject) dat;
-				MatrixFormatMetaData md = (MatrixFormatMetaData) dat.getMetaData();
+				MetaDataFormat md = (MetaDataFormat) dat.getMetaData();
 				MatrixCharacteristics mc = md.getMatrixCharacteristics();
 				value = mo.getFileName();
-				PDataPartitionFormat partFormat = (mo.getPartitionFormat()!=null) ? mo.getPartitionFormat() : PDataPartitionFormat.NONE;
+				PartitionFormat partFormat = (mo.getPartitionFormat()!=null) ? new PartitionFormat(
+						mo.getPartitionFormat(),mo.getPartitionSize()) : PartitionFormat.NONE;
 				matrixMetaData = new String[9];
 				matrixMetaData[0] = String.valueOf( mc.getRows() );
 				matrixMetaData[1] = String.valueOf( mc.getCols() );
@@ -1037,51 +880,26 @@ public class ProgramConverter
 		
 		return sb.toString();
 	}
-	
-	/**
-	 * 
-	 * @param ec
-	 * @return
-	 * @throws DMLRuntimeException
-	 */
-	public static String serializeExecutionContext( ExecutionContext ec ) 
-		throws DMLRuntimeException
-	{
-		String ret = null;
-		
-		if( ec != null )
-		{
-			LocalVariableMap vars = ec.getVariables();
-			ret = serializeVariables( vars );	
-		}
-		else
-		{
-			ret = EMPTY;
-		}
-		
-		return ret;
+
+	private static String serializeExecutionContext( ExecutionContext ec ) {
+		return (ec != null) ? serializeVariables( ec.getVariables() ) : EMPTY;
 	}
-	
-	/**
-	 * 
-	 * @param inst
-	 * @return
-	 * @throws DMLRuntimeException
-	 */
+
 	@SuppressWarnings("all")
-	public static String serializeInstructions( ArrayList<Instruction> inst ) 
-		throws DMLRuntimeException
-	{	
+	private static String serializeInstructions( ArrayList<Instruction> inst, HashMap<String, byte[]> clsMap ) 
+	{
 		StringBuilder sb = new StringBuilder();
 		int count = 0;
 		for( Instruction linst : inst )
 		{
 			//check that only cp instruction are transmitted 
-			if( !(   linst instanceof CPInstruction
-				  || linst instanceof SPInstruction
-				  || linst instanceof ExternalFunctionInvocationInstruction ) )
-			{
+			if( !( linst instanceof CPInstruction || linst instanceof ExternalFunctionInvocationInstruction ) )
 				throw new DMLRuntimeException( NOT_SUPPORTED_MR_INSTRUCTION + " " +linst.getClass().getName()+"\n"+linst );
+			
+			//obtain serialized version of generated classes
+			if( linst instanceof SpoofCPInstruction ) {
+				Class<?> cla = ((SpoofCPInstruction) linst).getOperatorClass();
+				clsMap.put(cla.getName(), CodegenUtils.getClassData(cla.getName()));
 			}
 			
 			if( count > 0 )
@@ -1100,10 +918,10 @@ public class ProgramConverter
 	 * (e.g. print( "a,b" ) would break the parsing of instruction that internally
 	 * are separated with a "," )
 	 * 
-	 * @param instStr
-	 * @return
+	 * @param instStr instruction string
+	 * @return instruction string with replacements
 	 */
-	public static String checkAndReplaceLiterals( String instStr )
+	private static String checkAndReplaceLiterals( String instStr )
 	{
 		String tmp = instStr;
 		
@@ -1139,14 +957,8 @@ public class ProgramConverter
 		
 		return tmp;
 	}
-	
-	
-	/**
-	 * 
-	 * @param vars
-	 * @return
-	 */
-	public static String serializeStringHashMap( HashMap<String,String> vars)
+
+	private static String serializeStringHashMap( HashMap<String,String> vars)
 	{
 		StringBuilder sb = new StringBuilder();
 		int count=0;
@@ -1161,12 +973,7 @@ public class ProgramConverter
 		}
 		return sb.toString();
 	}
-	
-	/**
-	 * 
-	 * @param vars
-	 * @return
-	 */
+
 	public static String serializeStringCollection( Collection<String> set)
 	{
 		StringBuilder sb = new StringBuilder();
@@ -1180,13 +987,19 @@ public class ProgramConverter
 		}
 		return sb.toString();
 	}
+
+	public static String serializeResultVariables( ArrayList<ResultVar> vars) {
+		StringBuilder sb = new StringBuilder();
+		int count=0;
+		for( ResultVar var : vars ) {
+			if(count>0)
+				sb.append( ELEMENT_DELIM );
+			sb.append( var._isAccum ? var._name+"+" : var._name );
+			count++;
+		}
+		return sb.toString();
+	}
 	
-	
-	/**
-	 * 
-	 * @param vars
-	 * @return
-	 */
 	public static String serializeStringArrayList( ArrayList<String> vars)
 	{
 		StringBuilder sb = new StringBuilder();
@@ -1200,36 +1013,8 @@ public class ProgramConverter
 		}
 		return sb.toString();
 	}
-	
-	/**
-	 * 
-	 * @param vars
-	 * @return
-	 */
-	public static String serializeStringArray( String[] vars)
-	{
-		StringBuilder sb = new StringBuilder();
-		int count=0;
-		for( String s : vars )
-		{
-			if(count>0)
-				sb.append( ELEMENT_DELIM );
-			if( s != null )
-				sb.append( s );
-			else
-				sb.append( "null" );
-			
-			count++;
-		}
-		return sb.toString();
-	}
 
-	/**
-	 * 
-	 * @param var
-	 * @return
-	 */
-	public static String serializeDataIdentifiers( ArrayList<DataIdentifier> var)
+	private static String serializeDataIdentifiers( ArrayList<DataIdentifier> var)
 	{
 		StringBuilder sb = new StringBuilder();
 		int count=0;
@@ -1242,16 +1027,9 @@ public class ProgramConverter
 		}
 		return sb.toString();
 	}
-	
-	/**
-	 * 
-	 * @param dat
-	 * @return
-	 */
-	public static String serializeDataIdentifier( DataIdentifier dat )
-	{
+
+	private static String serializeDataIdentifier( DataIdentifier dat ) {
 		// SCHEMA: <name>|<datatype>|<valuetype>
-		
 		StringBuilder sb = new StringBuilder();
 		sb.append(dat.getName());
 		sb.append(DATA_FIELD_DELIM);
@@ -1261,15 +1039,8 @@ public class ProgramConverter
 		
 		return sb.toString();
 	}
-	
-	/**
-	 * 
-	 * @param pbs
-	 * @return
-	 * @throws DMLRuntimeException
-	 */
-	public static String rSerializeFunctionProgramBlocks(HashMap<String,FunctionProgramBlock> pbs, HashSet<String> cand) 
-		throws DMLRuntimeException
+
+	private static String rSerializeFunctionProgramBlocks(HashMap<String,FunctionProgramBlock> pbs, HashSet<String> cand, HashMap<String, byte[]> clsMap) 
 	{
 		StringBuilder sb = new StringBuilder();
 		
@@ -1279,30 +1050,20 @@ public class ProgramConverter
 			if( !cand.contains(pb.getKey()) ) //skip function not included in the parfor body
 				continue;
 				
-			if( count>0 )
-			{
+			if( count>0 ) {
 			   sb.append( ELEMENT_DELIM );
 			   sb.append( NEWLINE );
 			}
 			sb.append( pb.getKey() );
 			sb.append( KEY_VALUE_DELIM );
-			sb.append( rSerializeProgramBlock( pb.getValue() ) );
-			
+			sb.append( rSerializeProgramBlock(pb.getValue(), clsMap) );
 			count++;
 		}
 		sb.append(NEWLINE);
 		return sb.toString();
 	}
-	
-	/**
-	 * 
-	 * @param pbs
-	 * @return
-	 * @throws DMLRuntimeException
-	 */
-	public static String rSerializeProgramBlocks(ArrayList<ProgramBlock> pbs) 
-		throws DMLRuntimeException
-	{
+
+	private static String rSerializeProgramBlocks(ArrayList<ProgramBlock> pbs, HashMap<String, byte[]> clsMap) {
 		StringBuilder sb = new StringBuilder();
 		int count = 0;
 		for( ProgramBlock pb : pbs )
@@ -1312,22 +1073,14 @@ public class ProgramConverter
 			   sb.append( ELEMENT_DELIM );
 			   sb.append(NEWLINE);
 			}
-			sb.append( rSerializeProgramBlock(pb) );
+			sb.append( rSerializeProgramBlock(pb, clsMap) );
 			count++;
 		}
 
 		return sb.toString();
 	}
-	
-	/**
-	 * 
-	 * @param pb
-	 * @return
-	 * @throws DMLRuntimeException
-	 */
-	public static String rSerializeProgramBlock( ProgramBlock pb) 
-		throws DMLRuntimeException
-	{
+
+	private static String rSerializeProgramBlock( ProgramBlock pb, HashMap<String, byte[]> clsMap ) {
 		StringBuilder sb = new StringBuilder();
 		
 		//handle header
@@ -1346,54 +1099,45 @@ public class ProgramConverter
 		else //all generic program blocks
 			sb.append( PARFOR_PB_BEGIN );
 		
-		//handle variables (not required only on top level)
-		/*sb.append( PARFOR_VARS_BEGIN );
-		sb.append( serializeVariables( ) ); 
-		sb.append( PARFOR_VARS_END );
-		sb.append( COMPONENTS_DELIM );
-		*/
-		
 		//handle body
 		if( pb instanceof WhileProgramBlock )
 		{
 			WhileProgramBlock wpb = (WhileProgramBlock) pb;
 			sb.append( PARFOR_INST_BEGIN );
-			sb.append( serializeInstructions( wpb.getPredicate() ) );
+			sb.append( serializeInstructions( wpb.getPredicate(), clsMap ) );
 			sb.append( PARFOR_INST_END );
 			sb.append( COMPONENTS_DELIM );
-			sb.append( wpb.getPredicateResultVar() );
-			sb.append( COMPONENTS_DELIM );
 			sb.append( PARFOR_INST_BEGIN );
-			sb.append( serializeInstructions( wpb.getExitInstructions() ) );
+			sb.append( serializeInstructions( wpb.getExitInstructions(), clsMap ) );
 			sb.append( PARFOR_INST_END );
 			sb.append( COMPONENTS_DELIM );
 			sb.append( PARFOR_PBS_BEGIN );
-			sb.append( rSerializeProgramBlocks( wpb.getChildBlocks()) );
+			sb.append( rSerializeProgramBlocks( wpb.getChildBlocks(), clsMap) );
 			sb.append( PARFOR_PBS_END );
 		}
 		else if ( pb instanceof ForProgramBlock && !(pb instanceof ParForProgramBlock ) )
 		{
 			ForProgramBlock fpb = (ForProgramBlock) pb; 
-			sb.append( serializeStringArray(fpb.getIterablePredicateVars()) );
+			sb.append( fpb.getIterVar() );
 			sb.append( COMPONENTS_DELIM );
 			sb.append( PARFOR_INST_BEGIN );
-			sb.append( serializeInstructions( fpb.getFromInstructions() ) );
+			sb.append( serializeInstructions( fpb.getFromInstructions(), clsMap ) );
 			sb.append( PARFOR_INST_END );	
 			sb.append( COMPONENTS_DELIM );
 			sb.append( PARFOR_INST_BEGIN );
-			sb.append( serializeInstructions( fpb.getToInstructions() ) );
+			sb.append( serializeInstructions(fpb.getToInstructions(), clsMap) );
 			sb.append( PARFOR_INST_END );	
 			sb.append( COMPONENTS_DELIM );
 			sb.append( PARFOR_INST_BEGIN );
-			sb.append( serializeInstructions( fpb.getIncrementInstructions() ) );
+			sb.append( serializeInstructions(fpb.getIncrementInstructions(), clsMap) );
 			sb.append( PARFOR_INST_END );
 			sb.append( COMPONENTS_DELIM );
 			sb.append( PARFOR_INST_BEGIN );
-			sb.append( serializeInstructions( fpb.getExitInstructions() ) );
+			sb.append( serializeInstructions(fpb.getExitInstructions(), clsMap) );
 			sb.append( PARFOR_INST_END );
 			sb.append( COMPONENTS_DELIM );
 			sb.append( PARFOR_PBS_BEGIN );
-			sb.append( rSerializeProgramBlocks( fpb.getChildBlocks()) );
+			sb.append( rSerializeProgramBlocks(fpb.getChildBlocks(), clsMap) );
 			sb.append( PARFOR_PBS_END );
 		}
 		else if ( pb instanceof ParForProgramBlock )
@@ -1404,51 +1148,49 @@ public class ProgramConverter
 			if( PExecMode.valueOf( pfpb.getParForParams().get( ParForStatementBlock.EXEC_MODE )) == PExecMode.REMOTE_MR )
 				throw new DMLRuntimeException( NOT_SUPPORTED_MR_PARFOR );
 			
-			sb.append( serializeStringArray(pfpb.getIterablePredicateVars()) );
+			sb.append( pfpb.getIterVar() );
 			sb.append( COMPONENTS_DELIM );
-			sb.append( serializeStringArrayList( pfpb.getResultVariables()) );
+			sb.append( serializeResultVariables( pfpb.getResultVariables()) );
 			sb.append( COMPONENTS_DELIM );
 			sb.append( serializeStringHashMap( pfpb.getParForParams()) ); //parameters of nested parfor
 			sb.append( COMPONENTS_DELIM );
 			sb.append( PARFOR_INST_BEGIN );
-			sb.append( serializeInstructions( pfpb.getFromInstructions() ) );
+			sb.append( serializeInstructions(pfpb.getFromInstructions(), clsMap) );
 			sb.append( PARFOR_INST_END );	
 			sb.append( COMPONENTS_DELIM );
 			sb.append( PARFOR_INST_BEGIN );
-			sb.append( serializeInstructions( pfpb.getToInstructions() ) );
+			sb.append( serializeInstructions(pfpb.getToInstructions(), clsMap) );
 			sb.append( PARFOR_INST_END );	
 			sb.append( COMPONENTS_DELIM );
 			sb.append( PARFOR_INST_BEGIN );
-			sb.append( serializeInstructions( pfpb.getIncrementInstructions() ) );
+			sb.append( serializeInstructions(pfpb.getIncrementInstructions(), clsMap) );
 			sb.append( PARFOR_INST_END );	
 			sb.append( COMPONENTS_DELIM );	
 			sb.append( PARFOR_INST_BEGIN );
-			sb.append( serializeInstructions( pfpb.getExitInstructions() ) );
+			sb.append( serializeInstructions(pfpb.getExitInstructions(), clsMap) );
 			sb.append( PARFOR_INST_END );
 			sb.append( COMPONENTS_DELIM );
 			sb.append( PARFOR_PBS_BEGIN );
-			sb.append( rSerializeProgramBlocks( pfpb.getChildBlocks() ) );
+			sb.append( rSerializeProgramBlocks( pfpb.getChildBlocks(), clsMap ) );
 			sb.append( PARFOR_PBS_END );
 		}				
 		else if ( pb instanceof IfProgramBlock )
 		{
 			IfProgramBlock ipb = (IfProgramBlock) pb;
 			sb.append( PARFOR_INST_BEGIN );
-			sb.append( serializeInstructions( ipb.getPredicate() ) );
-			sb.append( PARFOR_INST_END );	
-			sb.append( COMPONENTS_DELIM );
-			sb.append( ipb.getPredicateResultVar() );
+			sb.append( serializeInstructions(ipb.getPredicate(), clsMap) );
+			sb.append( PARFOR_INST_END );
 			sb.append( COMPONENTS_DELIM );
 			sb.append( PARFOR_INST_BEGIN );
-			sb.append( serializeInstructions( ipb.getExitInstructions() ) );
+			sb.append( serializeInstructions(ipb.getExitInstructions(), clsMap) );
 			sb.append( PARFOR_INST_END );
 			sb.append( COMPONENTS_DELIM );
 			sb.append( PARFOR_PBS_BEGIN );
-			sb.append( rSerializeProgramBlocks( ipb.getChildBlocksIfBody() ) );
+			sb.append( rSerializeProgramBlocks(ipb.getChildBlocksIfBody(), clsMap) );
 			sb.append( PARFOR_PBS_END );
 			sb.append( COMPONENTS_DELIM );
 			sb.append( PARFOR_PBS_BEGIN );
-			sb.append( rSerializeProgramBlocks( ipb.getChildBlocksElseBody() ) );
+			sb.append( rSerializeProgramBlocks(ipb.getChildBlocksElseBody(), clsMap) );
 			sb.append( PARFOR_PBS_END );
 		}
 		else if( pb instanceof FunctionProgramBlock && !(pb instanceof ExternalFunctionProgramBlock) )
@@ -1460,11 +1202,11 @@ public class ProgramConverter
 			sb.append( serializeDataIdentifiers( fpb.getOutputParams() ) );
 			sb.append( COMPONENTS_DELIM );
 			sb.append( PARFOR_INST_BEGIN );
-			sb.append( serializeInstructions( fpb.getInstructions() ) );
+			sb.append( serializeInstructions(fpb.getInstructions(), clsMap) );
 			sb.append( PARFOR_INST_END );	
 			sb.append( COMPONENTS_DELIM );
 			sb.append( PARFOR_PBS_BEGIN );
-			sb.append( rSerializeProgramBlocks( fpb.getChildBlocks() ) );
+			sb.append( rSerializeProgramBlocks(fpb.getChildBlocks(), clsMap) );
 			sb.append( PARFOR_PBS_END );
 			sb.append( COMPONENTS_DELIM );
 		}
@@ -1488,17 +1230,16 @@ public class ProgramConverter
 			
 			sb.append( PARFOR_INST_BEGIN );
 			//create on construction anyway 
-			//sb.append( serializeInstructions( fpb.getInstructions() ) ); 
 			sb.append( PARFOR_INST_END );	
 			sb.append( COMPONENTS_DELIM );
 			sb.append( PARFOR_PBS_BEGIN );
-			sb.append( rSerializeProgramBlocks( fpb.getChildBlocks() ) );
+			sb.append( rSerializeProgramBlocks(fpb.getChildBlocks(), clsMap) );
 			sb.append( PARFOR_PBS_END );
 		}
 		else //all generic program blocks
 		{
 			sb.append( PARFOR_INST_BEGIN );
-			sb.append( serializeInstructions( pb.getInstructions() ) );
+			sb.append( serializeInstructions(pb.getInstructions(), clsMap) );
 			sb.append( PARFOR_INST_END );
 		}
 		
@@ -1513,18 +1254,11 @@ public class ProgramConverter
 	////////////////////////////////
 	// PARSING 
 	////////////////////////////////
+	public static ParForBody parseParForBody( String in, int id ) {
+		return parseParForBody(in, id, false);
+	}
 	
-	
-	/**
-	 * 
-	 * @param in
-	 * @param id
-	 * @return
-	 * @throws DMLRuntimeException
-	 */
-	public static ParForBody parseParForBody( String in, int id ) 
-		throws DMLRuntimeException
-	{
+	public static ParForBody parseParForBody( String in, int id, boolean inSpark ) {
 		ParForBody body = new ParForBody();
 		
 		//header elimination
@@ -1541,8 +1275,10 @@ public class ProgramConverter
 		JobConf job = ConfigurationManager.getCachedJobConf();
 		if( !InfrastructureAnalyzer.isLocalMode(job) ) {
 			if( confStr != null && !confStr.trim().isEmpty() ) {
-				DMLConfig config = DMLConfig.parseDMLConfig(confStr);
-				ConfigurationManager.setLocalConfig(config);
+				DMLConfig dmlconf = DMLConfig.parseDMLConfig(confStr);
+				CompilerConfig cconf = OptimizerUtils.constructCompilerConfig(dmlconf);
+				ConfigurationManager.setLocalConfig(dmlconf);
+				ConfigurationManager.setLocalConfig(cconf);
 			}
 			//init internal configuration w/ parsed or default config
 			ParForProgramBlock.initInternalConfigurations(
@@ -1551,7 +1287,8 @@ public class ProgramConverter
 		
 		//handle additional configs
 		String aconfs = st.nextToken();
-		parseAndSetAdditionalConfigurations( aconfs );
+		if( !inSpark )
+			parseAndSetAdditionalConfigurations( aconfs );
 		
 		//handle program
 		String progStr = st.nextToken();
@@ -1559,13 +1296,13 @@ public class ProgramConverter
 		
 		//handle result variable names
 		String rvarStr = st.nextToken();
-		ArrayList<String> rvars = parseStringArrayList(rvarStr);
-		body.setResultVarNames(rvars);
+		ArrayList<ResultVar> rvars = parseResultVariables(rvarStr);
+		body.setResultVariables(rvars);
 		
 		//handle execution context
 		String ecStr = st.nextToken();
 		ExecutionContext ec = parseExecutionContext( ecStr, prog );
-			
+		
 		//handle program blocks
 		String spbs = st.nextToken();
 		ArrayList<ProgramBlock> pbs = rParseProgramBlocks(spbs, prog, id);
@@ -1573,19 +1310,10 @@ public class ProgramConverter
 		body.setChildBlocks( pbs );
 		body.setEc( ec );
 		
-		return body;		
+		return body;
 	}
-	
-	/**
-	 * 
-	 * @param in
-	 * @param id
-	 * @return
-	 * @throws DMLRuntimeException
-	 */
-	public static Program parseProgram( String in, int id ) 
-		throws DMLRuntimeException
-	{
+
+	public static Program parseProgram( String in, int id ) {
 		String lin = in.substring( PARFOR_PROG_BEGIN.length(),in.length()-PARFOR_PROG_END.length()).trim(); 
 		
 		Program prog = new Program();
@@ -1602,16 +1330,8 @@ public class ProgramConverter
 		
 		return prog;
 	}
-	
-	/**
-	 * 
-	 * @param in
-	 * @return
-	 * @throws DMLRuntimeException
-	 */
-	public static LocalVariableMap parseVariables(String in) 
-		throws DMLRuntimeException
-	{
+
+	private static LocalVariableMap parseVariables(String in) {
 		LocalVariableMap ret = null;
 		
 		if( in.length()> PARFOR_VARS_BEGIN.length() + PARFOR_VARS_END.length())
@@ -1626,19 +1346,9 @@ public class ProgramConverter
 
 		return ret;
 	}
-	
-	/**
-	 * 
-	 * @param in
-	 * @param prog
-	 * @param id
-	 * @return
-	 * @throws DMLRuntimeException
-	 */
-	public static HashMap<String,FunctionProgramBlock> parseFunctionProgramBlocks( String in, Program prog, int id ) 
-		throws DMLRuntimeException
-	{
-		HashMap<String,FunctionProgramBlock> ret = new HashMap<String, FunctionProgramBlock>();
+
+	private static HashMap<String,FunctionProgramBlock> parseFunctionProgramBlocks( String in, Program prog, int id ) {
+		HashMap<String,FunctionProgramBlock> ret = new HashMap<>();
 		HierarchyAwareStringTokenizer st = new HierarchyAwareStringTokenizer( in, ELEMENT_DELIM );
 		
 		while( st.hasMoreTokens() )
@@ -1650,30 +1360,14 @@ public class ProgramConverter
 			String tmp1 = lvar.substring(0, index); // + CP_CHILD_THREAD+id;
 			String tmp2 = lvar.substring(index + 1);
 			ret.put(tmp1, (FunctionProgramBlock)rParseProgramBlock(tmp2, prog, id));
-			
-			//put first copy into prog (for future deep copies)
-			//index = lvar2.indexOf("=");
-			//tmp1 = lvar2.substring(0, index);
-			//tmp2 = lvar2.substring(index + 1);
-			//ret.put(tmp1, (FunctionProgramBlock)rParseProgramBlock(tmp2, prog, id));
 		}
 
 		return ret;
 	}
-	
-	/**
-	 * 
-	 * @param in
-	 * @param prog
-	 * @param id
-	 * @return
-	 * @throws DMLRuntimeException 
-	 */
-	public static ArrayList<ProgramBlock> rParseProgramBlocks(String in, Program prog, int id) 
-		throws DMLRuntimeException
-	{
-		ArrayList<ProgramBlock> pbs = new ArrayList<ProgramBlock>();
-		String tmpdata = in.substring(PARFOR_PBS_BEGIN.length(),in.length()-PARFOR_PBS_END.length()); ;
+
+	private static ArrayList<ProgramBlock> rParseProgramBlocks(String in, Program prog, int id) {
+		ArrayList<ProgramBlock> pbs = new ArrayList<>();
+		String tmpdata = in.substring(PARFOR_PBS_BEGIN.length(),in.length()-PARFOR_PBS_END.length());
 		HierarchyAwareStringTokenizer st = new HierarchyAwareStringTokenizer(tmpdata, ELEMENT_DELIM);
 		
 		while( st.hasMoreTokens() )
@@ -1684,18 +1378,8 @@ public class ProgramConverter
 		
 		return pbs;
 	}
-	
-	/**
-	 * 
-	 * @param in
-	 * @param prog
-	 * @param id
-	 * @return
-	 * @throws DMLRuntimeException
-	 */
-	public static ProgramBlock rParseProgramBlock( String in, Program prog, int id )
-		throws DMLRuntimeException
-	{
+
+	private static ProgramBlock rParseProgramBlock( String in, Program prog, int id ) {
 		ProgramBlock pb = null;
 		
 		if( in.startsWith( PARFOR_PB_WHILE ) )
@@ -1718,25 +1402,12 @@ public class ProgramConverter
 		return pb;
 	}
 
-	/**
-	 * 
-	 * @param in
-	 * @param prog
-	 * @param id
-	 * @return
-	 * @throws DMLRuntimeException
-	 */
-	public static WhileProgramBlock rParseWhileProgramBlock( String in, Program prog, int id ) 
-		throws DMLRuntimeException
-	{
+	private static WhileProgramBlock rParseWhileProgramBlock( String in, Program prog, int id ) {
 		String lin = in.substring( PARFOR_PB_WHILE.length(),in.length()-PARFOR_PB_END.length()); 
 		HierarchyAwareStringTokenizer st = new HierarchyAwareStringTokenizer(lin, COMPONENTS_DELIM);
 		
-		//LocalVariableMap vars = parseVariables(st.nextToken());
-		
 		//predicate instructions
 		ArrayList<Instruction> inst = parseInstructions(st.nextToken(),id);
-		String var = st.nextToken();
 		
 		//exit instructions
 		ArrayList<Instruction> exit = parseInstructions(st.nextToken(),id);
@@ -1745,32 +1416,18 @@ public class ProgramConverter
 		ArrayList<ProgramBlock> pbs = rParseProgramBlocks(st.nextToken(), prog, id);
 		
 		WhileProgramBlock wpb = new WhileProgramBlock(prog,inst);
-		wpb.setPredicateResultVar(var);
 		wpb.setExitInstructions2(exit);
 		wpb.setChildBlocks(pbs);
-		//wpb.setVariables(vars);
 		
 		return wpb;
 	}
-	
-	/**
-	 * 
-	 * @param in
-	 * @param prog
-	 * @param id
-	 * @return
-	 * @throws DMLRuntimeException
-	 */
-	public static ForProgramBlock rParseForProgramBlock( String in, Program prog, int id ) 
-		throws DMLRuntimeException
-	{
+
+	private static ForProgramBlock rParseForProgramBlock( String in, Program prog, int id ) {
 		String lin = in.substring( PARFOR_PB_FOR.length(),in.length()-PARFOR_PB_END.length()); 
 		HierarchyAwareStringTokenizer st = new HierarchyAwareStringTokenizer(lin, COMPONENTS_DELIM);
 		
-		//LocalVariableMap vars = parseVariables(st.nextToken());
-		
 		//inputs
-		String[] iterPredVars = parseStringArray(st.nextToken());
+		String iterVar = st.nextToken();
 		
 		//instructions
 		ArrayList<Instruction> from = parseInstructions(st.nextToken(),id);
@@ -1779,40 +1436,27 @@ public class ProgramConverter
 		
 		//exit instructions
 		ArrayList<Instruction> exit = parseInstructions(st.nextToken(),id);
-
+		
 		//program blocks
 		ArrayList<ProgramBlock> pbs = rParseProgramBlocks(st.nextToken(), prog, id);
-
-		ForProgramBlock fpb = new ForProgramBlock(prog, iterPredVars);
+		
+		ForProgramBlock fpb = new ForProgramBlock(prog, iterVar);
 		fpb.setFromInstructions(from);
 		fpb.setToInstructions(to);
 		fpb.setIncrementInstructions(incr);
 		fpb.setExitInstructions(exit);
 		fpb.setChildBlocks(pbs);
-		//fpb.setVariables(vars);
 		
 		return fpb;
 	}
-	
-	/**
-	 * 
-	 * @param in
-	 * @param prog
-	 * @param id
-	 * @return
-	 * @throws DMLRuntimeException
-	 */
-	public static ParForProgramBlock rParseParForProgramBlock( String in, Program prog, int id ) 
-		throws DMLRuntimeException
-	{
+
+	private static ParForProgramBlock rParseParForProgramBlock( String in, Program prog, int id ) {
 		String lin = in.substring( PARFOR_PB_PARFOR.length(),in.length()-PARFOR_PB_END.length()); 
 		HierarchyAwareStringTokenizer st = new HierarchyAwareStringTokenizer(lin, COMPONENTS_DELIM);
 		
-		//LocalVariableMap vars = parseVariables(st.nextToken());
-		
 		//inputs
-		String[] iterPredVars = parseStringArray(st.nextToken());
-		ArrayList<String> resultVars = parseStringArrayList(st.nextToken());
+		String iterVar = st.nextToken();
+		ArrayList<ResultVar> resultVars = parseResultVariables(st.nextToken());
 		HashMap<String,String> params = parseStringHashMap(st.nextToken());
 		
 		//instructions 
@@ -1822,42 +1466,27 @@ public class ProgramConverter
 		
 		//exit instructions
 		ArrayList<Instruction> exit = parseInstructions(st.nextToken(), 0);
-
+		
 		//program blocks //reset id to preinit state, replaced during exec
 		ArrayList<ProgramBlock> pbs = rParseProgramBlocks(st.nextToken(), prog, 0); 
-
-		ParForProgramBlock pfpb = new ParForProgramBlock(id, prog, iterPredVars, params);
+		
+		ParForProgramBlock pfpb = new ParForProgramBlock(id, prog, iterVar, params, resultVars);
 		pfpb.disableOptimization(); //already done in top-level parfor
-		pfpb.setResultVariables(resultVars);		
 		pfpb.setFromInstructions(from);
 		pfpb.setToInstructions(to);
 		pfpb.setIncrementInstructions(incr);
 		pfpb.setExitInstructions(exit);
 		pfpb.setChildBlocks(pbs);
-		//pfpb.setVariables(vars);
 		
 		return pfpb;
 	}
-	
-	/**
-	 * 
-	 * @param in
-	 * @param prog
-	 * @param id
-	 * @return
-	 * @throws DMLRuntimeException
-	 */
-	public static IfProgramBlock rParseIfProgramBlock( String in, Program prog, int id ) 
-		throws DMLRuntimeException
-	{
-		String lin = in.substring( PARFOR_PB_IF.length(),in.length()-PARFOR_PB_END.length()); 
+
+	private static IfProgramBlock rParseIfProgramBlock( String in, Program prog, int id ) {
+		String lin = in.substring( PARFOR_PB_IF.length(),in.length()-PARFOR_PB_END.length());
 		HierarchyAwareStringTokenizer st = new HierarchyAwareStringTokenizer(lin, COMPONENTS_DELIM);
-		
-		//LocalVariableMap vars = parseVariables(st.nextToken());
 		
 		//predicate instructions
 		ArrayList<Instruction> inst = parseInstructions(st.nextToken(),id);
-		String var = st.nextToken();
 		
 		//exit instructions
 		ArrayList<Instruction> exit = parseInstructions(st.nextToken(),id);
@@ -1867,30 +1496,16 @@ public class ProgramConverter
 		ArrayList<ProgramBlock> pbs2 = rParseProgramBlocks(st.nextToken(), prog, id);
 		
 		IfProgramBlock ipb = new IfProgramBlock(prog,inst);
-		ipb.setPredicateResultVar(var);
 		ipb.setExitInstructions2(exit);
 		ipb.setChildBlocksIfBody(pbs1);
 		ipb.setChildBlocksElseBody(pbs2);
-		//ipb.setVariables(vars);
 		
 		return ipb;
 	}
-	
-	/**
-	 * 
-	 * @param in
-	 * @param prog
-	 * @param id
-	 * @return
-	 * @throws DMLRuntimeException
-	 */
-	public static FunctionProgramBlock rParseFunctionProgramBlock( String in, Program prog, int id ) 
-		throws DMLRuntimeException
-	{
-		String lin = in.substring( PARFOR_PB_FC.length(),in.length()-PARFOR_PB_END.length()); 
+
+	private static FunctionProgramBlock rParseFunctionProgramBlock( String in, Program prog, int id ) {
+		String lin = in.substring( PARFOR_PB_FC.length(),in.length()-PARFOR_PB_END.length());
 		HierarchyAwareStringTokenizer st = new HierarchyAwareStringTokenizer(lin, COMPONENTS_DELIM);
-		
-		//LocalVariableMap vars = parseVariables(st.nextToken());
 		
 		//inputs and outputs
 		ArrayList<DataIdentifier> dat1 = parseDataIdentifiers(st.nextToken());
@@ -1902,27 +1517,16 @@ public class ProgramConverter
 		//program blocks
 		ArrayList<ProgramBlock> pbs = rParseProgramBlocks(st.nextToken(), prog, id);
 
-		ArrayList<DataIdentifier> tmp1 = new ArrayList<DataIdentifier>(dat1);
-		ArrayList<DataIdentifier> tmp2 = new ArrayList<DataIdentifier>(dat2);
+		ArrayList<DataIdentifier> tmp1 = new ArrayList<>(dat1);
+		ArrayList<DataIdentifier> tmp2 = new ArrayList<>(dat2);
 		FunctionProgramBlock fpb = new FunctionProgramBlock(prog, tmp1, tmp2);
 		fpb.setInstructions(inst);
 		fpb.setChildBlocks(pbs);
-		//fpb.setVariables(vars);
 		
 		return fpb;
 	}
-	
-	/**
-	 * 
-	 * @param in
-	 * @param prog
-	 * @param id
-	 * @return
-	 * @throws DMLRuntimeException 
-	 */
-	public static ExternalFunctionProgramBlock rParseExternalFunctionProgramBlock( String in, Program prog, int id ) 
-		throws DMLRuntimeException
-	{
+
+	private static ExternalFunctionProgramBlock rParseExternalFunctionProgramBlock( String in, Program prog, int id ) {
 		String lin = in.substring( PARFOR_PB_EFC.length(),in.length()-PARFOR_PB_END.length()); 
 		HierarchyAwareStringTokenizer st = new HierarchyAwareStringTokenizer(lin, COMPONENTS_DELIM);
 		
@@ -1942,29 +1546,17 @@ public class ProgramConverter
 		//program blocks
 		ArrayList<ProgramBlock> pbs = rParseProgramBlocks(st.nextToken(), prog, id);
 
-		ArrayList<DataIdentifier> tmp1 = new ArrayList<DataIdentifier>(dat1);
-		ArrayList<DataIdentifier> tmp2 = new ArrayList<DataIdentifier>(dat2);
+		ArrayList<DataIdentifier> tmp1 = new ArrayList<>(dat1);
+		ArrayList<DataIdentifier> tmp2 = new ArrayList<>(dat2);
 		
 		//only CP external functions, because no nested MR jobs for reblocks
 		ExternalFunctionProgramBlockCP efpb = new ExternalFunctionProgramBlockCP(prog, tmp1, tmp2, dat3, basedir);
-		//efpb.setInstructions(inst);
 		efpb.setChildBlocks(pbs);
-		//efpb.setVariables(vars);
 		
 		return efpb;
 	}
-	
-	/**
-	 * 
-	 * @param in
-	 * @param prog
-	 * @param id
-	 * @return
-	 * @throws DMLRuntimeException
-	 */
-	public static ProgramBlock rParseGenericProgramBlock( String in, Program prog, int id ) 
-		throws DMLRuntimeException
-	{
+
+	private static ProgramBlock rParseGenericProgramBlock( String in, Program prog, int id ) {
 		String lin = in.substring( PARFOR_PB_BEGIN.length(),in.length()-PARFOR_PB_END.length()); 
 		StringTokenizer st = new StringTokenizer(lin,COMPONENTS_DELIM);
 		
@@ -1975,111 +1567,65 @@ public class ProgramConverter
 		
 		return pb;
 	}
-	
-	/**
-	 * 
-	 * @param in
-	 * @return
-	 * @throws DMLRuntimeException 
-	 */
-	public static ArrayList<Instruction> parseInstructions( String in, int id ) 
-		throws DMLRuntimeException
-	{
-		ArrayList<Instruction> insts = new ArrayList<Instruction>();  
 
+	private static ArrayList<Instruction> parseInstructions( String in, int id ) {
+		ArrayList<Instruction> insts = new ArrayList<>();
 		String lin = in.substring( PARFOR_INST_BEGIN.length(),in.length()-PARFOR_INST_END.length()); 
 		StringTokenizer st = new StringTokenizer(lin, ELEMENT_DELIM);
-		while(st.hasMoreTokens())
-		{
+		while(st.hasMoreTokens()) {
 			//Note that at this point only CP instructions and External function instruction can occur
 			String instStr = st.nextToken(); 
-			
-			try
-			{
+			try {
 				Instruction tmpinst = CPInstructionParser.parseSingleInstruction(instStr);
 				tmpinst = saveReplaceThreadID(tmpinst, CP_ROOT_THREAD_ID, CP_CHILD_THREAD+id );
 				insts.add( tmpinst );
 			}
-			catch(Exception ex)
-			{
+			catch(Exception ex) {
 				throw new DMLRuntimeException("Failed to parse instruction: " + instStr, ex);
 			}
 		}
-		
 		return insts;
 	}
 	
-	/**
-	 * 
-	 * @param in
-	 * @return
-	 */
-	public static HashMap<String,String> parseStringHashMap( String in )
-	{
-		HashMap<String,String> vars = new HashMap<String, String>();
+	private static ArrayList<ResultVar> parseResultVariables(String in) {
+		ArrayList<ResultVar> ret = new ArrayList<>();
+		for(String var : parseStringArrayList(in)) {
+			boolean accum = var.endsWith("+");
+			ret.add(new ResultVar(accum ? var.substring(0, var.length()-1) : var, accum));
+		}
+		return ret;
+	}
+
+	private static HashMap<String,String> parseStringHashMap( String in ) {
+		HashMap<String,String> vars = new HashMap<>();
 		StringTokenizer st = new StringTokenizer(in,ELEMENT_DELIM);
-		while( st.hasMoreTokens() )
-		{
+		while( st.hasMoreTokens() ) {
 			String lin = st.nextToken();
 			int index = lin.indexOf( KEY_VALUE_DELIM );
 			String tmp1 = lin.substring(0, index);
-			String tmp2 = lin.substring(index + 1);			
+			String tmp2 = lin.substring(index + 1);
 			vars.put(tmp1, tmp2);
 		}
-		
 		return vars;
 	}
-	
-	/**
-	 * 
-	 * @param in
-	 * @return
-	 */
-	public static ArrayList<String> parseStringArrayList( String in )
+
+	private static ArrayList<String> parseStringArrayList( String in )
 	{
-		ArrayList<String> vars = new ArrayList<String>();
+		ArrayList<String> vars = new ArrayList<>();
 		StringTokenizer st = new StringTokenizer(in,ELEMENT_DELIM);
-		while( st.hasMoreTokens() )
-		{
-			String tmp = st.nextToken();			
+		while( st.hasMoreTokens() ) {
+			String tmp = st.nextToken();
 			vars.add(tmp);
 		}
 		
 		return vars;
 	}
-	
-	/**
-	 * 
-	 * @param in
-	 * @return
-	 */
-	public static String[] parseStringArray( String in )
-	{
-		StringTokenizer st = new StringTokenizer(in, ELEMENT_DELIM);
-		int len = st.countTokens();
-		String[] a = new String[len];
-		for( int i=0; i<len; i++ )
-		{
-			String tmp = st.nextToken();
-			if( tmp.equals("null") )
-				a[i] = null;
-			else
-				a[i] = tmp;
-		}
-		return a;
-	}
 
-	/**
-	 * 
-	 * @param in
-	 * @return
-	 */
-	public static ArrayList<DataIdentifier> parseDataIdentifiers( String in )
+	private static ArrayList<DataIdentifier> parseDataIdentifiers( String in )
 	{
-		ArrayList<DataIdentifier> vars = new ArrayList<DataIdentifier>();
+		ArrayList<DataIdentifier> vars = new ArrayList<>();
 		StringTokenizer st = new StringTokenizer(in, ELEMENT_DELIM);
-		while( st.hasMoreTokens() )
-		{
+		while( st.hasMoreTokens() ) {
 			String tmp = st.nextToken();
 			DataIdentifier dat = parseDataIdentifier( tmp );
 			vars.add(dat);
@@ -2087,13 +1633,8 @@ public class ProgramConverter
 
 		return vars;
 	}
-	
-	/**
-	 * 
-	 * @param in
-	 * @return
-	 */
-	public static DataIdentifier parseDataIdentifier( String in )
+
+	private static DataIdentifier parseDataIdentifier( String in )
 	{
 		StringTokenizer st = new StringTokenizer(in, DATA_FIELD_DELIM);
 		String name = st.nextToken();
@@ -2111,13 +1652,10 @@ public class ProgramConverter
 	 * NOTE: MRJobConfiguration cannot be used for the general case because program blocks and
 	 * related symbol tables can be hierarchically structured.
 	 * 
-	 * @param in
-	 * @return
-	 * @throws DMLRuntimeException
+	 * @param in data object as string
+	 * @return array of objects
 	 */
-	public static Object[] parseDataObject(String in) 
-		throws DMLRuntimeException
-	{
+	public static Object[] parseDataObject(String in) {
 		Object[] ret = new Object[2];
 	
 		StringTokenizer st = new StringTokenizer(in, DATA_FIELD_DELIM );
@@ -2133,22 +1671,19 @@ public class ProgramConverter
 				switch ( valuetype )
 				{
 					case INT:
-						long value1 = Long.parseLong(valString);
-						dat = new IntObject(name,value1);
+						dat = new IntObject(Long.parseLong(valString));
 						break;
 					case DOUBLE:
-						double value2 = Double.parseDouble(valString);
-						dat = new DoubleObject(name,value2);
+						dat = new DoubleObject(Double.parseDouble(valString));
 						break;
 					case BOOLEAN:
-						boolean value3 = Boolean.parseBoolean(valString);
-						dat = new BooleanObject(name,value3);
+						dat = new BooleanObject(Boolean.parseBoolean(valString));
 						break;
 					case STRING:
-						dat = new StringObject(name,valString);
+						dat = new StringObject(valString);
 						break;
 					default:
-						throw new DMLRuntimeException("Unable to parse valuetype "+valuetype);		
+						throw new DMLRuntimeException("Unable to parse valuetype "+valuetype);
 				}
 				break;
 		    }
@@ -2161,15 +1696,14 @@ public class ProgramConverter
 				int bcols = Integer.parseInt( st.nextToken() );
 				long nnz = Long.parseLong( st.nextToken() );
 				InputInfo iin = InputInfo.stringToInputInfo( st.nextToken() );
-				OutputInfo oin = OutputInfo.stringToOutputInfo( st.nextToken() );		
-				PDataPartitionFormat partFormat = PDataPartitionFormat.valueOf( st.nextToken() );
+				OutputInfo oin = OutputInfo.stringToOutputInfo( st.nextToken() );
+				PartitionFormat partFormat = PartitionFormat.valueOf( st.nextToken() );
 				UpdateType inplace = UpdateType.valueOf( st.nextToken() );
 				MatrixCharacteristics mc = new MatrixCharacteristics(rows, cols, brows, bcols, nnz); 
-				MatrixFormatMetaData md = new MatrixFormatMetaData( mc, oin, iin );
+				MetaDataFormat md = new MetaDataFormat( mc, oin, iin );
 				mo.setMetaData( md );
-				mo.setVarName( name );
-				if( partFormat!=PDataPartitionFormat.NONE )
-					mo.setPartitioned( partFormat, -1 ); //TODO once we support BLOCKWISE_N we should support it here as well
+				if( partFormat._dpf != PDataPartitionFormat.NONE )
+					mo.setPartitioned( partFormat._dpf, partFormat._N );
 				mo.setUpdateType(inplace);
 				dat = mo;
 				break;
@@ -2182,15 +1716,8 @@ public class ProgramConverter
 		ret[1] = dat;
 		return ret;
 	}
-	
-	/**
-	 * 
-	 * @param in
-	 * @return
-	 * @throws DMLRuntimeException
-	 */
-	public static ExecutionContext parseExecutionContext(String in, Program prog) 
-		throws DMLRuntimeException
+
+	private static ExecutionContext parseExecutionContext(String in, Program prog) 
 	{
 		ExecutionContext ec = null;
 		
@@ -2206,9 +1733,7 @@ public class ProgramConverter
 		return ec;
 	}
 	
-	public static void parseAndSetAdditionalConfigurations(String conf)
-	{
-		//set statistics flag
+	private static void parseAndSetAdditionalConfigurations(String conf) {
 		String[] statsFlag = conf.split("=");
 		DMLScript.STATISTICS = Boolean.parseBoolean(statsFlag[1]);
 	}
@@ -2219,14 +1744,12 @@ public class ProgramConverter
 	/**
 	 * In-place replacement of thread ids in filenames, functions names etc
 	 * 
-	 * @param instInst
-	 * @param pattern
-	 * @param replacement
-	 * @return
-	 * @throws DMLRuntimeException 
+	 * @param inst instruction
+	 * @param pattern ?
+	 * @param replacement string replacement
+	 * @return instruction
 	 */
-	public static Instruction saveReplaceThreadID( Instruction inst, String pattern, String replacement ) 
-		throws DMLRuntimeException
+	private static Instruction saveReplaceThreadID( Instruction inst, String pattern, String replacement ) 
 	{
 		//currently known, relevant instructions: createvar, rand, seq, extfunct, 
 		if( inst instanceof MRJobInstruction )
@@ -2289,7 +1812,7 @@ public class ProgramConverter
 
 		public String nextToken() 
 		{
-			int nextDelim = determineNextSameLevelIndexOf(_str, _del);		
+			int nextDelim = determineNextSameLevelIndexOf(_str, _del);
 			String token = null;
 			if(nextDelim < 0) 
 			{
@@ -2301,7 +1824,7 @@ public class ProgramConverter
 			return token;
 		}
 				
-		private int determineNextSameLevelIndexOf( String data, String pattern  )
+		private static int determineNextSameLevelIndexOf( String data, String pattern  )
 		{
 			String tmpdata = data;
 			int index      = 0;
@@ -2314,7 +1837,7 @@ public class ProgramConverter
 				i2 = tmpdata.indexOf(LEVELIN);
 				i3 = tmpdata.indexOf(LEVELOUT);
 				
-				if( i1 < 0 ) return i1; //no pattern found at all			
+				if( i1 < 0 ) return i1; //no pattern found at all
 				
 				min = i1; //min >= 0 by definition
 				if( i2 >= 0 ) min = Math.min(min, i2);

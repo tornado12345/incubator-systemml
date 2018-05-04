@@ -41,9 +41,11 @@ import org.junit.runners.Suite;
 	FrameMatrixWriteTest.class,
 	FrameMetaReadWriteTest.class,
 	FrameReadWriteTest.class,
+	FrameScalarCastingIntegratedTest.class,
 	FrameScalarCastingTest.class,
 	FrameSchemaReadTest.class,
 	FrameSerializationTest.class,
+	ParforFrameIntermediateTest.class,
 })
 
 

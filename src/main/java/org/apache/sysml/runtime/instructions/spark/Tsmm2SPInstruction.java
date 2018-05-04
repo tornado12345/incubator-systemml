@@ -21,6 +21,7 @@ package org.apache.sysml.runtime.instructions.spark;
 
 
 import java.util.ArrayList;
+import java.util.Iterator;
 import java.util.List;
 
 import org.apache.spark.api.java.JavaPairRDD;
@@ -52,48 +53,28 @@ import org.apache.sysml.runtime.matrix.operators.Operator;
 
 import scala.Tuple2;
 
-/**
- * 
- */
-public class Tsmm2SPInstruction extends UnarySPInstruction 
-{
+public class Tsmm2SPInstruction extends UnarySPInstruction {
 	private MMTSJType _type = null;
-	
-	public Tsmm2SPInstruction(Operator op, CPOperand in1, CPOperand out, MMTSJType type, String opcode, String istr )
-	{
-		super(op, in1, out, opcode, istr);
-		_sptype = SPINSTRUCTION_TYPE.TSMM2;		
+
+	private Tsmm2SPInstruction(Operator op, CPOperand in1, CPOperand out, MMTSJType type, String opcode, String istr) {
+		super(SPType.TSMM2, op, in1, out, opcode, istr);
 		_type = type;
 	}
 
-	/**
-	 * 
-	 * @param str
-	 * @return
-	 * @throws DMLRuntimeException
-	 */
-	public static Tsmm2SPInstruction parseInstruction( String str ) 
-		throws DMLRuntimeException 
-	{
+	public static Tsmm2SPInstruction parseInstruction( String str ) {
 		String parts[] = InstructionUtils.getInstructionPartsWithValueType(str);
 		String opcode = parts[0];
-		
 		//check supported opcode 
-		if ( !opcode.equalsIgnoreCase("tsmm2") ) {
-			throw new DMLRuntimeException("Tsmm2SPInstruction.parseInstruction():: Unknown opcode " + opcode);			
-		}
-			
+		if ( !opcode.equalsIgnoreCase("tsmm2") )
+			throw new DMLRuntimeException("Tsmm2SPInstruction.parseInstruction():: Unknown opcode " + opcode);
 		CPOperand in1 = new CPOperand(parts[1]);
 		CPOperand out = new CPOperand(parts[2]);
 		MMTSJType type = MMTSJType.valueOf(parts[3]);
-		
 		return new Tsmm2SPInstruction(null, in1, out, type, opcode, str);
 	}
 	
 	@Override
-	public void processInstruction(ExecutionContext ec) 
-		throws DMLRuntimeException
-	{	
+	public void processInstruction(ExecutionContext ec) {
 		SparkExecutionContext sec = (SparkExecutionContext)ec;
 		
 		//get input
@@ -122,12 +103,12 @@ public class Tsmm2SPInstruction extends UnarySPInstruction
 		      
 			//put output block into symbol table (no lineage because single block)
 			//this also includes implicit maintenance of matrix characteristics
-			sec.setMatrixOutput(output.getName(), out);
+			sec.setMatrixOutput(output.getName(), out, getExtendedOpcode());
 		}
 		else {
 			//output individual output blocks and aggregate by key (no action)
 			JavaPairRDD<MatrixIndexes,MatrixBlock> tmp2 = in.flatMapToPair(new RDDTSMM2Function(bpmb, _type));
-			JavaPairRDD<MatrixIndexes,MatrixBlock> out = RDDAggregateUtils.sumByKeyStable(tmp2);
+			JavaPairRDD<MatrixIndexes,MatrixBlock> out = RDDAggregateUtils.sumByKeyStable(tmp2, false);
 			
 			//put output RDD handle into symbol table
 			sec.getMatrixCharacteristics(output.getName()).set(outputDim, outputDim, mc.getRowsPerBlock(), mc.getColsPerBlock());
@@ -135,10 +116,7 @@ public class Tsmm2SPInstruction extends UnarySPInstruction
 			sec.addLineageRDD(output.getName(), input1.getName());	
 		}
 	}
-	
-	/**
-	 * 
-	 */
+
 	private static class RDDTSMM2Function implements PairFlatMapFunction<Tuple2<MatrixIndexes, MatrixBlock>, MatrixIndexes, MatrixBlock> 
 	{
 		private static final long serialVersionUID = 2935770425858019666L;
@@ -157,17 +135,17 @@ public class Tsmm2SPInstruction extends UnarySPInstruction
 		}
 
 		@Override
-		public Iterable<Tuple2<MatrixIndexes, MatrixBlock>> call(Tuple2<MatrixIndexes, MatrixBlock> arg0)
+		public Iterator<Tuple2<MatrixIndexes, MatrixBlock>> call(Tuple2<MatrixIndexes, MatrixBlock> arg0)
 			throws Exception 
 		{
-			List<Tuple2<MatrixIndexes,MatrixBlock>> ret = new ArrayList<Tuple2<MatrixIndexes,MatrixBlock>>();
+			List<Tuple2<MatrixIndexes,MatrixBlock>> ret = new ArrayList<>();
 			MatrixIndexes ixin = arg0._1();
 			MatrixBlock mbin = arg0._2();
 			
 			//execute block tsmm operation
 			MatrixBlock out1 = mbin.transposeSelfMatrixMultOperations(new MatrixBlock(), _type);
 			long ixout = _type.isLeft() ? ixin.getColumnIndex() : ixin.getRowIndex();
-			ret.add(new Tuple2<MatrixIndexes, MatrixBlock>(new MatrixIndexes(ixout, ixout), out1));
+			ret.add(new Tuple2<>(new MatrixIndexes(ixout, ixout), out1));
 			
 			if( _type.isLeft() ? ixin.getColumnIndex() == 1 : ixin.getRowIndex() == 1 ) {
 				//execute block mapmm operation for full block only (output two blocks, due to symmetry)
@@ -176,17 +154,17 @@ public class Tsmm2SPInstruction extends UnarySPInstruction
 						(int)(_type.isLeft()?1:ixin.getColumnIndex()));
 				MatrixBlock mbin2t = transpose(mbin2, new MatrixBlock()); //prep for transpose rewrite mm
 				
-				MatrixBlock out2 = (MatrixBlock) OperationsOnMatrixValues.performAggregateBinaryIgnoreIndexes( //mm
+				MatrixBlock out2 = (MatrixBlock) OperationsOnMatrixValues.matMult( //mm
 						_type.isLeft() ? mbin2t : mbin, _type.isLeft() ? mbin : mbin2t, new MatrixBlock(), _op);
 				MatrixIndexes ixout2 = _type.isLeft() ? new MatrixIndexes(2,1) : new MatrixIndexes(1,2);
-				ret.add(new Tuple2<MatrixIndexes,MatrixBlock>(ixout2, out2));
+				ret.add(new Tuple2<>(ixout2, out2));
 				
 				MatrixBlock out3 = transpose(out2, new MatrixBlock()); 
 				MatrixIndexes ixout3 = _type.isLeft() ? new MatrixIndexes(1,2) : new MatrixIndexes(2,1);
-				ret.add(new Tuple2<MatrixIndexes,MatrixBlock>(ixout3, out3));
+				ret.add(new Tuple2<>(ixout3, out3));
 			}
 			
-			return ret;
+			return ret.iterator();
 		}
 	}
 
@@ -223,8 +201,7 @@ public class Tsmm2SPInstruction extends UnarySPInstruction
 			MatrixBlock mbin = arg0._2();
 			
 			boolean fullBlock = _type.isLeft() ? ixin.getColumnIndex() == 1 : ixin.getRowIndex() == 1;
-			MatrixBlock out = new MatrixBlock(_outputDim, _outputDim, !fullBlock);
-			out.allocateDenseOrSparseBlock();
+			MatrixBlock out = new MatrixBlock(_outputDim, _outputDim, !fullBlock).allocateBlock();
 			
 			//execute block tsmm operation
 			MatrixBlock out1 = mbin.transposeSelfMatrixMultOperations(new MatrixBlock(), _type);
@@ -238,7 +215,7 @@ public class Tsmm2SPInstruction extends UnarySPInstruction
 						(int)(_type.isLeft()?1:ixin.getColumnIndex()));
 				MatrixBlock mbin2t = transpose(mbin2, new MatrixBlock()); //prep for transpose rewrite mm
 				
-				MatrixBlock out2 = (MatrixBlock) OperationsOnMatrixValues.performAggregateBinaryIgnoreIndexes( //mm
+				MatrixBlock out2 = OperationsOnMatrixValues.matMult( //mm
 						_type.isLeft() ? mbin2t : mbin, _type.isLeft() ? mbin : mbin2t, new MatrixBlock(), _op);
 				
 				MatrixIndexes ixout2 = _type.isLeft() ? new MatrixIndexes(2,1) : new MatrixIndexes(1,2);
@@ -252,10 +229,7 @@ public class Tsmm2SPInstruction extends UnarySPInstruction
 			return out;
 		}
 	}
-	
-	/**
-	 * 
-	 */
+
 	private static class ShiftTSMMIndexesFunction implements PairFunction<Tuple2<MatrixIndexes, MatrixBlock>, MatrixIndexes, MatrixBlock> 
 	{
 		private static final long serialVersionUID = -3858454295795680100L;
@@ -271,20 +245,20 @@ public class Tsmm2SPInstruction extends UnarySPInstruction
 			throws Exception 
 		{
 			if( _type.isLeft() )
-				return new Tuple2<MatrixIndexes,MatrixBlock>(new MatrixIndexes(arg0._1().getRowIndex(), 1), arg0._2());
+				return new Tuple2<>(new MatrixIndexes(arg0._1().getRowIndex(), 1), arg0._2());
 			else
-				return new Tuple2<MatrixIndexes,MatrixBlock>(new MatrixIndexes(1, arg0._1().getColumnIndex()), arg0._2());	
+				return new Tuple2<>(new MatrixIndexes(1, arg0._1().getColumnIndex()), arg0._2());	
 		}
 	}	
 	
 	/**
 	 * Helper function to setup output dimensions.
 	 * 
-	 * @param in
-	 * @return
-	 * @throws DMLRuntimeException 
+	 * @param in input matrix block
+	 * @param out output matrix block
+	 * @return matrix block
 	 */
-	private static MatrixBlock transpose(MatrixBlock in, MatrixBlock out) throws DMLRuntimeException {
+	private static MatrixBlock transpose(MatrixBlock in, MatrixBlock out) {
 		if( out == null )
 			out = new MatrixBlock(in.getNumColumns(), in.getNumRows(), in.getNonZeros());
 		else

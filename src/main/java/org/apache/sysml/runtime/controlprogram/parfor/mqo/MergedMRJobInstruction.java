@@ -41,9 +41,9 @@ public class MergedMRJobInstruction
 	
 	public MergedMRJobInstruction()
 	{
-		ids = new LinkedList<Long>();
-		outIxOffs = new HashMap<Long,Integer>();
-		outIxLens = new HashMap<Long,Integer>();
+		ids = new LinkedList<>();
+		outIxOffs = new HashMap<>();
+		outIxLens = new HashMap<>();
 	}
 	
 	public void addInstructionMetaData(long instID, int outIxOffset, int outIxLen)
@@ -52,13 +52,7 @@ public class MergedMRJobInstruction
 		outIxOffs.put(instID, outIxOffset);
 		outIxLens.put(instID, outIxLen);
 	}
-	
-	/**
-	 * 
-	 * @param instID
-	 * @param allRet
-	 * @return
-	 */
+
 	public JobReturn constructJobReturn( long instID, JobReturn retAll )
 	{
 		//get output offset and len

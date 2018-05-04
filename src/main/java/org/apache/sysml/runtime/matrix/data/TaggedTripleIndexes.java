@@ -24,11 +24,6 @@ import java.io.DataInput;
 import java.io.DataOutput;
 import java.io.IOException;
 
-import org.apache.hadoop.io.RawComparator;
-import org.apache.hadoop.io.WritableComparator;
-import org.apache.hadoop.mapred.JobConf;
-import org.apache.hadoop.mapred.Partitioner;
-
 import org.apache.sysml.runtime.util.UtilFunctions;
 
 
@@ -56,22 +51,21 @@ public class TaggedTripleIndexes extends TaggedFirstSecondIndexes
 		this.tag=that.tag;
 	}
 	
-	public String toString()
-	{
+	@Override
+	public String toString() {
 		return "("+first+", "+second+") k: "+third+", tag: "+tag;
 	}
 	
-	public long getThirdIndex()
-	{
+	public long getThirdIndex() {
 		return third;
 	}
 	
-	public void setIndexes(long i1, long i2, long i3)
-	{
+	public void setIndexes(long i1, long i2, long i3) {
 		super.setIndexes(i1, i2);
 		third=i3;
 	}
 	
+	@Override
 	public void readFields(DataInput in) throws IOException {
 		first=in.readLong();
 		second=in.readLong();
@@ -79,6 +73,7 @@ public class TaggedTripleIndexes extends TaggedFirstSecondIndexes
 		tag=in.readByte();
 	}
 	
+	@Override
 	public void write(DataOutput out) throws IOException {
 		out.writeLong(first);
 		out.writeLong(second);
@@ -114,37 +109,5 @@ public class TaggedTripleIndexes extends TaggedFirstSecondIndexes
 	public int hashCode() {
 		 return UtilFunctions.longHashCode((first<<32)+(second<<16)+third+tag+UtilFunctions.ADD_PRIME1)%UtilFunctions.DIVIDE_PRIME;
 	}
-	
-	public static class Comparator implements RawComparator<TaggedTripleIndexes>
-	{
-		@Override
-		public int compare(byte[] b1, int s1, int l1,
-                byte[] b2, int s2, int l2)
-		{
-			return WritableComparator.compareBytes(b1, s1, l1, b2, s2, l2);
-		}
-
-		@Override
-		public int compare(TaggedTripleIndexes m1, TaggedTripleIndexes m2) {
-			return m1.compareTo(m2);
-		}	
-	}
-	
-	 /**
-	   * Partition based on the first and second index.
-	   */
-	  public static class FirstTwoIndexesPartitioner implements Partitioner<TaggedTripleIndexes, MatrixBlock>{
-	    @Override
-	    public int getPartition(TaggedTripleIndexes key, MatrixBlock value, int numPartitions) {	   
-	    	return UtilFunctions.longHashCode((key.getFirstIndex()*127)
-	    			+key.getSecondIndex()+UtilFunctions.ADD_PRIME1)
-	    			%UtilFunctions.DIVIDE_PRIME%numPartitions;
-	    }
-
-		@Override
-		public void configure(JobConf arg0) {
-			
-		}
-	  }
 
 }

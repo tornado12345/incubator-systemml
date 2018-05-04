@@ -24,7 +24,6 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 
 import org.apache.hadoop.fs.FileSystem;
@@ -36,21 +35,12 @@ import org.apache.sysml.hops.OptimizerUtils;
 import org.apache.sysml.runtime.controlprogram.parfor.stat.InfrastructureAnalyzer;
 import org.apache.sysml.runtime.matrix.data.MatrixBlock;
 import org.apache.sysml.runtime.matrix.data.OutputInfo;
+import org.apache.sysml.runtime.util.CommonThreadPool;
 import org.apache.sysml.runtime.util.MapReduceTool;
 
 public class WriterTextCellParallel extends WriterTextCell
 {
-	/**
-	 * 
-	 * @param path
-	 * @param job
-	 * @param src
-	 * @param rlen
-	 * @param clen
-	 * @param brlen
-	 * @param bclen
-	 * @throws IOException
-	 */
+
 	@Override
 	protected void writeTextCellMatrixToHDFS( Path path, JobConf job, FileSystem fs, MatrixBlock src, long rlen, long clen )
 		throws IOException
@@ -71,16 +61,16 @@ public class WriterTextCellParallel extends WriterTextCell
 		}
 		
 		//create directory for concurrent tasks
-		MapReduceTool.createDirIfNotExistOnHDFS(path.toString(), DMLConfig.DEFAULT_SHARED_DIR_PERMISSION);
+		MapReduceTool.createDirIfNotExistOnHDFS(path, DMLConfig.DEFAULT_SHARED_DIR_PERMISSION);
 
 		//create and execute tasks
 		try 
 		{
-			ExecutorService pool = Executors.newFixedThreadPool(numThreads);
-			ArrayList<WriteTextTask> tasks = new ArrayList<WriteTextTask>();
+			ExecutorService pool = CommonThreadPool.get(numThreads);
+			ArrayList<WriteTextTask> tasks = new ArrayList<>();
 			int blklen = (int)Math.ceil((double)rlen / numThreads);
 			for(int i=0; i<numThreads & i*blklen<rlen; i++) {
-				Path newPath = new Path(path, String.format("0-m-%05d",i));
+				Path newPath = new Path(path, IOUtilFunctions.getPartFileName(i));
 				tasks.add(new WriteTextTask(newPath, job, fs, src, i*blklen, (int)Math.min((i+1)*blklen, rlen)));
 			}
 
@@ -91,26 +81,19 @@ public class WriterTextCellParallel extends WriterTextCell
 			//check for exceptions 
 			for( Future<Object> task : rt )
 				task.get();
+			
+			// delete crc files if written to local file system
+			if (fs instanceof LocalFileSystem) {
+				for(int i=0; i<numThreads & i*blklen<rlen; i++) 
+					IOUtilFunctions.deleteCrcFilesFromLocalFileSystem(fs,
+						new Path(path, IOUtilFunctions.getPartFileName(i)));
+			}
 		} 
 		catch (Exception e) {
 			throw new IOException("Failed parallel write of text output.", e);
 		}
-
-		// delete crc files if written to local file system
-		if (fs instanceof LocalFileSystem) {
-			int blklen = (int)Math.ceil((double)rlen / numThreads);
-			for(int i=0; i<numThreads & i*blklen<rlen; i++) {
-				Path newPath = new Path(path, String.format("0-m-%05d",i));
-				IOUtilFunctions.deleteCrcFilesFromLocalFileSystem(fs, newPath);
-			}
-		}
 	}
 
-	
-	/**
-	 * 
-	 * 
-	 */
 	private class WriteTextTask implements Callable<Object> 
 	{
 		private JobConf _job = null;

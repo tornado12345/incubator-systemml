@@ -43,17 +43,13 @@ public class ReaderColumnSelectionDense extends ReaderColumnSelection
 	public DblArray nextRow() {
 		if( _skipZeros) {
 			while ((nonZeroReturn = getNextRow()) != null
-				&& DblArray.isZero(nonZeroReturn)); 
+				&& DblArray.isZero(nonZeroReturn)){} 
 			return nonZeroReturn;
 		} else {
 			return getNextRow();
 		}
 	}
 
-	/**
-	 * 
-	 * @return
-	 */
 	private DblArray getNextRow() {
 		if(_lastRow == _numRows-1)
 			return null;

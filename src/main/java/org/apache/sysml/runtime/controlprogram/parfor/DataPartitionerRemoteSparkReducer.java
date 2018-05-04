@@ -30,33 +30,29 @@ import org.apache.hadoop.io.Writable;
 import org.apache.spark.api.java.function.VoidFunction;
 
 import org.apache.sysml.conf.ConfigurationManager;
-import org.apache.sysml.runtime.DMLRuntimeException;
 import org.apache.sysml.runtime.controlprogram.parfor.util.PairWritableBlock;
+import org.apache.sysml.runtime.io.IOUtilFunctions;
 import org.apache.sysml.runtime.matrix.data.MatrixBlock;
 import org.apache.sysml.runtime.matrix.data.MatrixIndexes;
 import org.apache.sysml.runtime.matrix.data.OutputInfo;
+import org.apache.sysml.runtime.matrix.mapred.MRConfigurationNames;
 
 import scala.Tuple2;
 
-/**
- * 
- */
 public class DataPartitionerRemoteSparkReducer implements VoidFunction<Tuple2<Long, Iterable<Writable>>> 
 {
-	
 	private static final long serialVersionUID = -7149865018683261964L;
 	
-	private String _fnameNew = null;
+	private final String _fnameNew;
+	private final int _replication;
 	
-	public DataPartitionerRemoteSparkReducer(String fnameNew, OutputInfo oi) 
-		throws DMLRuntimeException
-	{
+	public DataPartitionerRemoteSparkReducer(String fnameNew, OutputInfo oi, int replication) {
 		_fnameNew = fnameNew;
-		//_oi = oi;
+		_replication = replication;
 	}
 
 	@Override
-	@SuppressWarnings("deprecation")	
+	@SuppressWarnings("deprecation")
 	public void call(Tuple2<Long, Iterable<Writable>> arg0)
 		throws Exception 
 	{
@@ -66,23 +62,23 @@ public class DataPartitionerRemoteSparkReducer implements VoidFunction<Tuple2<Lo
 		
 		//write entire partition to binary block sequence file
 		SequenceFile.Writer writer = null;
-		try
-		{			
+		try {
+			//create sequence file writer
 			Configuration job = new Configuration(ConfigurationManager.getCachedJobConf());
-			FileSystem fs = FileSystem.get(job);
+			job.setInt(MRConfigurationNames.DFS_REPLICATION, _replication);
+			
 			Path path = new Path(_fnameNew + File.separator + key);
+			FileSystem fs = IOUtilFunctions.getFileSystem(path, job);
 			writer = new SequenceFile.Writer(fs, job, path, MatrixIndexes.class, MatrixBlock.class);
-			while( valueList.hasNext() )
-			{
+			
+			//write individual blocks unordered to output
+			while( valueList.hasNext() ) {
 				PairWritableBlock pair = (PairWritableBlock) valueList.next();
 				writer.append(pair.indexes, pair.block);
 			}
-		} 
-		finally
-		{
-			if( writer != null )
-				writer.close();
-		}	
+		}
+		finally {
+			IOUtilFunctions.closeSilently(writer);
+		}
 	}
-	
 }

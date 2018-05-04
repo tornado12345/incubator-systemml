@@ -21,7 +21,6 @@ package org.apache.sysml.runtime.instructions.spark;
 
 import org.apache.spark.api.java.JavaPairRDD;
 import org.apache.spark.api.java.function.Function;
-import org.apache.sysml.runtime.DMLRuntimeException;
 import org.apache.sysml.runtime.compress.CompressedMatrixBlock;
 import org.apache.sysml.runtime.controlprogram.context.ExecutionContext;
 import org.apache.sysml.runtime.controlprogram.context.SparkExecutionContext;
@@ -31,67 +30,41 @@ import org.apache.sysml.runtime.matrix.data.MatrixBlock;
 import org.apache.sysml.runtime.matrix.data.MatrixIndexes;
 import org.apache.sysml.runtime.matrix.operators.Operator;
 
+public class CompressionSPInstruction extends UnarySPInstruction {
 
-public class CompressionSPInstruction extends UnarySPInstruction
-{
-	public CompressionSPInstruction(Operator op, CPOperand in, CPOperand out, String opcode, String istr){
-		super(op, in, out, opcode, istr);
-		_sptype = SPINSTRUCTION_TYPE.Reorg;
+	private CompressionSPInstruction(Operator op, CPOperand in, CPOperand out, String opcode, String istr) {
+		super(SPType.Compression, op, in, out, opcode, istr);
 	}
-	
-	/**
-	 * 
-	 * @param str
-	 * @return
-	 * @throws DMLRuntimeException
-	 */
-	public static CompressionSPInstruction parseInstruction ( String str ) 
-		throws DMLRuntimeException 
-	{
+
+	public static CompressionSPInstruction parseInstruction ( String str ) {
 		InstructionUtils.checkNumFields(str, 2);
 		String[] parts = InstructionUtils.getInstructionPartsWithValueType(str);
-		
-		String opcode = parts[0];
-		CPOperand in = new CPOperand(parts[1]);
-		CPOperand out = new CPOperand(parts[2]);
-
-		return new CompressionSPInstruction(null, in, out, opcode, str);
+		return new CompressionSPInstruction(null,
+			new CPOperand(parts[1]), new CPOperand(parts[2]), parts[0], str);
 	}
 	
 	@Override
-	public void processInstruction(ExecutionContext ec)
-			throws DMLRuntimeException 
-	{
+	public void processInstruction(ExecutionContext ec) {
 		SparkExecutionContext sec = (SparkExecutionContext)ec;
-	
+		
 		//get input rdd handle
-		JavaPairRDD<MatrixIndexes,MatrixBlock> in = 
-				sec.getBinaryBlockRDDHandleForVariable( input1.getName() );
-	
+		JavaPairRDD<MatrixIndexes,MatrixBlock> in =
+			sec.getBinaryBlockRDDHandleForVariable( input1.getName() );
+		
 		//execute compression
-		JavaPairRDD<MatrixIndexes,MatrixBlock> out = 
-				in.mapValues(new CompressionFunction());
-			
+		JavaPairRDD<MatrixIndexes,MatrixBlock> out =
+			in.mapValues(new CompressionFunction());
+		
 		//set outputs
 		sec.setRDDHandleForVariable(output.getName(), out);
 		sec.addLineageRDD(input1.getName(), output.getName());
 	}
-	
-	/**
-	 * 
-	 */
-	public static class CompressionFunction implements Function<MatrixBlock,MatrixBlock> 
-	{	
-		private static final long serialVersionUID = -6528833083609423922L;
 
+	public static class CompressionFunction implements Function<MatrixBlock,MatrixBlock> {
+		private static final long serialVersionUID = -6528833083609423922L;
 		@Override
-		public MatrixBlock call(MatrixBlock arg0) 
-			throws Exception 
-		{
-			CompressedMatrixBlock cmb = new CompressedMatrixBlock(arg0);
-			cmb.compress();
-			
-			return cmb;
+		public MatrixBlock call(MatrixBlock arg0) throws Exception {
+			return new CompressedMatrixBlock(arg0).compress();
 		}
 	}
 }

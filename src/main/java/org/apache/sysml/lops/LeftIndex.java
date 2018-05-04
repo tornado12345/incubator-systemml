@@ -28,9 +28,32 @@ import org.apache.sysml.parser.Expression.ValueType;
 
 public class LeftIndex extends Lop 
 {
+	public enum LixCacheType {
+		RIGHT,
+		LEFT,
+		NONE
+	}
+	
+	public static final String OPCODE = "leftIndex";
+	
+	private LixCacheType _type;
+
+	public LeftIndex(
+			Lop lhsInput, Lop rhsInput, Lop rowL, Lop rowU, Lop colL, Lop colU, DataType dt, ValueType vt, ExecType et) {
+		super(Lop.Type.LeftIndex, dt, vt);
+		_type = LixCacheType.NONE;
+		init(lhsInput, rhsInput, rowL, rowU, colL, colU, et);
+	}
+	
+	public LeftIndex(
+			Lop lhsInput, Lop rhsInput, Lop rowL, Lop rowU, Lop colL, Lop colU, DataType dt, ValueType vt, ExecType et, LixCacheType type) {
+		super(Lop.Type.LeftIndex, dt, vt);
+		_type = type;
+		init(lhsInput, rhsInput, rowL, rowU, colL, colU, et);
+	}
 	
 	/**
-	 * Constructor to setup a LeftIndexing operation.
+	 * Setup a LeftIndexing operation.
 	 * Example: A[i:j, k:l] = B;
 	 * 
 	 * @param lhsMatrix left matrix lop
@@ -40,9 +63,8 @@ public class LeftIndex extends Lop
 	 * @param colL column lower lop
 	 * @param colU column upper lop
 	 * @param et execution type
-	 * @throws LopsException if LopsException occurs
 	 */
-	private void init(Lop lhsMatrix, Lop rhsMatrix, Lop rowL, Lop rowU, Lop colL, Lop colU, ExecType et) throws LopsException {
+	private void init(Lop lhsMatrix, Lop rhsMatrix, Lop rowL, Lop rowU, Lop colL, Lop colU, ExecType et) {
 		/*
 		 * A[i:j, k:l] = B;
 		 * B -> rhsMatrix
@@ -77,32 +99,15 @@ public class LeftIndex extends Lop
 		}
 	}
 	
-	public LeftIndex(
-			Lop lhsInput, Lop rhsInput, Lop rowL, Lop rowU, Lop colL, Lop colU, DataType dt, ValueType vt, ExecType et)
-			throws LopsException {
-		super(Lop.Type.LeftIndex, dt, vt);
-		init(lhsInput, rhsInput, rowL, rowU, colL, colU, et);
-	}
-	
-	boolean isBroadcast = false;
-	public LeftIndex(
-			Lop lhsInput, Lop rhsInput, Lop rowL, Lop rowU, Lop colL, Lop colU, DataType dt, ValueType vt, ExecType et, boolean isBroadcast)
-			throws LopsException {
-		super(Lop.Type.LeftIndex, dt, vt);
-		this.isBroadcast = isBroadcast;
-		init(lhsInput, rhsInput, rowL, rowU, colL, colU, et);
-	}
-
 	private String getOpcode() {
-		if(isBroadcast)
+		if( _type != LixCacheType.NONE )
 			return "mapLeftIndex";
 		else
-			return "leftIndex";
+			return OPCODE;
 	}
 	
 	@Override
-	public String getInstructions(String lhsInput, String rhsInput, String rowl, String rowu, String coll, String colu, String output) 
-		throws LopsException 
+	public String getInstructions(String lhsInput, String rhsInput, String rowl, String rowu, String coll, String colu, String output)
 	{
 		StringBuilder sb = new StringBuilder();
 		sb.append( getExecType() );
@@ -135,13 +140,17 @@ public class LeftIndex extends Lop
 		sb.append( OPERAND_DELIMITOR );	
 		
 		sb.append( this.prepOutputOperand(output));
+
+		if( getExecType() == ExecType.SPARK ) {
+			sb.append( OPERAND_DELIMITOR );	
+			sb.append(_type.toString());
+		}
 		
 		return sb.toString();
 	}
 
 	@Override
 	public String toString() {
-		return "leftIndex";
+		return getOpcode();
 	}
-
 }

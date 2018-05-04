@@ -39,32 +39,17 @@ import org.apache.sysml.runtime.matrix.data.MatrixBlock;
 import org.apache.sysml.runtime.matrix.data.MatrixIndexes;
 import org.apache.sysml.runtime.matrix.operators.COVOperator;
 
-/**
- * 
- */
-public class CovarianceSPInstruction extends BinarySPInstruction
-{
-	
-	public CovarianceSPInstruction(COVOperator op, CPOperand in, CPOperand in2, CPOperand out, 
-			                      String opcode, String istr)
-	{
-		super(op, in, in2, out, opcode, istr);
+public class CovarianceSPInstruction extends BinarySPInstruction {
+
+	private CovarianceSPInstruction(COVOperator op, CPOperand in, CPOperand in2, CPOperand out, String opcode, String istr) {
+		super(SPType.Covariance, op, in, in2, out, opcode, istr);
 	}
-	
-	public CovarianceSPInstruction(COVOperator op, CPOperand in, CPOperand in2, CPOperand in3, CPOperand out, 
-            String opcode, String istr)
-	{
-		super(op, in, in2, out, opcode, istr);
+
+	private CovarianceSPInstruction(COVOperator op, CPOperand in, CPOperand in2, CPOperand in3, CPOperand out, String opcode, String istr) {
+		super(SPType.Covariance, op, in, in2, out, opcode, istr);
 	}
-	
-	/**
-	 * 
-	 * @param str
-	 * @return
-	 * @throws DMLRuntimeException
-	 */
+
 	public static CovarianceSPInstruction parseInstruction(String str)
-		throws DMLRuntimeException 
 	{
 		CPOperand in1 = new CPOperand("", ValueType.UNKNOWN, DataType.UNKNOWN);
 		CPOperand in2 = new CPOperand("", ValueType.UNKNOWN, DataType.UNKNOWN);
@@ -95,42 +80,33 @@ public class CovarianceSPInstruction extends BinarySPInstruction
 	}
 	
 	@Override
-	public void processInstruction( ExecutionContext ec )
-		throws DMLRuntimeException
-	{
+	public void processInstruction( ExecutionContext ec ) {
 		SparkExecutionContext sec = (SparkExecutionContext)ec;
 		COVOperator cop = ((COVOperator)_optr); 
 		
 		//get input
 		JavaPairRDD<MatrixIndexes,MatrixBlock> in1 = sec.getBinaryBlockRDDHandleForVariable( input1.getName() );
 		JavaPairRDD<MatrixIndexes,MatrixBlock> in2 = sec.getBinaryBlockRDDHandleForVariable( input2.getName() );
-				
+		
 		//process central moment instruction
 		CM_COV_Object cmobj = null; 
-		if( input3 == null ) //w/o weights
-		{
+		if( input3 == null ) { //w/o weights
 			cmobj = in1.join( in2 )
-					   .values().map(new RDDCOVFunction(cop))
-			           .fold(new CM_COV_Object(), new RDDCOVReduceFunction(cop));
+				.values().map(new RDDCOVFunction(cop))
+				.fold(new CM_COV_Object(), new RDDCOVReduceFunction(cop));
 		}
-		else //with weights
-		{
+		else { //with weights
 			JavaPairRDD<MatrixIndexes,MatrixBlock> in3 = sec.getBinaryBlockRDDHandleForVariable( input3.getName() );
-			cmobj = in1.join( in2 )
-					   .join( in3 )
-					   .values().map(new RDDCOVWeightsFunction(cop))
-			           .fold(new CM_COV_Object(), new RDDCOVReduceFunction(cop));
+			cmobj = in1.join( in2 ).join( in3 )
+				.values().map(new RDDCOVWeightsFunction(cop))
+				.fold(new CM_COV_Object(), new RDDCOVReduceFunction(cop));
 		}
 
 		//create scalar output (no lineage information required)
 		double val = cmobj.getRequiredResult(_optr);
-		DoubleObject ret = new DoubleObject(output.getName(), val);
-		ec.setScalarOutput(output.getName(), ret);
+		ec.setScalarOutput(output.getName(), new DoubleObject(val));
 	}
 
-	/**
-	 * 
-	 */
 	private static class RDDCOVFunction implements Function<Tuple2<MatrixBlock,MatrixBlock>, CM_COV_Object>
 	{
 		private static final long serialVersionUID = -9088449969750217519L;
@@ -152,10 +128,7 @@ public class CovarianceSPInstruction extends BinarySPInstruction
 			return input1.covOperations(_op, input2);
 		}
 	}
-	
-	/**
-	 * 
-	 */
+
 	private static class RDDCOVWeightsFunction implements Function<Tuple2<Tuple2<MatrixBlock,MatrixBlock>,MatrixBlock>, CM_COV_Object> 
 	{
 		private static final long serialVersionUID = 1945166819152577077L;
@@ -178,10 +151,7 @@ public class CovarianceSPInstruction extends BinarySPInstruction
 			return input1.covOperations(_op, input2, weights);
 		}
 	}
-	
-	/**
-	 * 
-	 */
+
 	private static class RDDCOVReduceFunction implements Function2<CM_COV_Object, CM_COV_Object, CM_COV_Object>
 	{
 		private static final long serialVersionUID = 1118102911706607118L;

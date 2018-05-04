@@ -25,7 +25,6 @@ import org.junit.Assert;
 import org.junit.Test;
 import org.apache.sysml.conf.CompilerConfig;
 import org.apache.sysml.parser.Expression.ValueType;
-import org.apache.sysml.runtime.DMLRuntimeException;
 import org.apache.sysml.runtime.matrix.MatrixCharacteristics;
 import org.apache.sysml.runtime.matrix.data.MatrixBlock;
 import org.apache.sysml.runtime.matrix.data.OutputInfo;
@@ -254,25 +253,10 @@ public class SeqParReadTest extends AutomatedTestBase {
 		}
 	}
 	
-	
-	/**
-	 * 
-	 * @param A
-	 * @param dir
-	 * @param oi
-	 * @param rows
-	 * @param cols
-	 * @param brows
-	 * @param bcols
-	 * @throws DMLRuntimeException
-	 * @throws IOException
-	 */
-	private void writeMatrix( double[][] A, String fname, OutputInfo oi, long rows, long cols, int brows, int bcols, long nnz ) 
-		throws DMLRuntimeException, IOException
+	private static void writeMatrix( double[][] A, String fname, OutputInfo oi, long rows, long cols, int brows, int bcols, long nnz ) 
+		throws IOException
 	{
-		MapReduceTool.deleteFileIfExistOnHDFS(fname);
-		MapReduceTool.deleteFileIfExistOnHDFS(fname+".mtd");
-		
+		MapReduceTool.deleteFileWithMTDIfExistOnHDFS(fname);
 		MatrixCharacteristics mc = new MatrixCharacteristics(rows, cols, brows, bcols, nnz);
 		MatrixBlock mb = DataConverter.convertToMatrixBlock(A);
 		DataConverter.writeMatrixToHDFS(mb, fname, oi, mc);

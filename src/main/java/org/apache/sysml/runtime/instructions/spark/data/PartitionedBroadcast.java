@@ -20,103 +20,140 @@
 package org.apache.sysml.runtime.instructions.spark.data;
 
 import java.io.Serializable;
+import java.lang.reflect.Constructor;
+import java.util.ArrayList;
 
 import org.apache.spark.broadcast.Broadcast;
 import org.apache.sysml.runtime.DMLRuntimeException;
 import org.apache.sysml.runtime.controlprogram.caching.CacheBlock;
+import org.apache.sysml.runtime.controlprogram.caching.CacheBlockFactory;
+import org.apache.sysml.runtime.controlprogram.context.SparkExecutionContext;
+import org.apache.sysml.runtime.matrix.MatrixCharacteristics;
+import org.apache.sysml.runtime.matrix.data.OperationsOnMatrixValues;
+import org.apache.sysml.runtime.matrix.data.Pair;
+import org.apache.sysml.runtime.util.IndexRange;
 
 /**
  * This class is a wrapper around an array of broadcasts of partitioned matrix/frame blocks,
  * which is required due to 2GB limitations of Spark's broadcast handling. Without this
- * partitioning of Broadcast<PartitionedBlock> into Broadcast<PartitionedBlock>[],
+ * partitioning of {@code Broadcast<PartitionedBlock>} into {@code Broadcast<PartitionedBlock>[]},
  * we got java.lang.IllegalArgumentException: Size exceeds Integer.MAX_VALUE issue.
- * Despite various jiras, this issue still showed up in Spark 1.4/1.5. 
+ * Despite various jiras, this issue still showed up in Spark 2.1. 
  * 
  */
 public class PartitionedBroadcast<T extends CacheBlock> implements Serializable
 {
 	private static final long serialVersionUID = 7041959166079438401L;
 
-	protected static final long BROADCAST_PARTSIZE = 200L*1024*1024; //200M cells ~ 1.6GB 
+	//note: that each block (max 240 * 1024) also requires some header space
+	protected static final long BROADCAST_PARTSIZE = 240L*1024*1024; //250M cells > 1.875GB 
 	
 	private Broadcast<PartitionedBlock<T>>[] _pbc = null;
+	private MatrixCharacteristics _mc;
 	
 	public PartitionedBroadcast() {
 		//do nothing (required for Externalizable)
 	}
 	
-	public PartitionedBroadcast(Broadcast<PartitionedBlock<T>>[] broadcasts)
-	{
+	public PartitionedBroadcast(Broadcast<PartitionedBlock<T>>[] broadcasts, MatrixCharacteristics mc) {
 		_pbc = broadcasts;
+		_mc = mc;
 	}
 	
 	public Broadcast<PartitionedBlock<T>>[] getBroadcasts() {
 		return _pbc;
 	}
 	
-	/**
-	 * 
-	 * @return
-	 */
+	public long getNumRows() {
+		return _mc.getRows();
+	}
+	
+	public long getNumCols() {
+		return _mc.getCols();
+	}
+
 	public int getNumRowBlocks() {
-		return _pbc[0].value().getNumRowBlocks();
+		return (int)_mc.getNumRowBlocks();
 	}
 	
 	public int getNumColumnBlocks() {
-		return _pbc[0].value().getNumColumnBlocks();
+		return (int)_mc.getNumColBlocks();
 	}
-	
-	/**
-	 * 
-	 * @param rlen
-	 * @param clen
-	 * @param brlen
-	 * @param bclen
-	 * @return
-	 */
+
 	public static int computeBlocksPerPartition(long rlen, long clen, long brlen, long bclen) {
-		return (int) Math.floor( BROADCAST_PARTSIZE /  
-				Math.min(rlen, brlen) / Math.min(clen, bclen));
+		return (int) Math.floor( BROADCAST_PARTSIZE /
+			Math.min(rlen, brlen) / Math.min(clen, bclen));
 	}
-	/**
-	 * 
-	 * @param rowIndex
-	 * @param colIndex
-	 * @return
-	 * @throws DMLRuntimeException 
-	 */
-	public T getBlock(int rowIndex, int colIndex) 
-		throws DMLRuntimeException 
-	{
+
+	public T getBlock(int rowIndex, int colIndex) {
 		int pix = 0;
-		
-		if( _pbc.length > 1 ) { 
-			//compute partition index
-			PartitionedBlock<T> tmp = _pbc[0].value();
-			int numPerPart = computeBlocksPerPartition(tmp.getNumRows(), tmp.getNumCols(), 
-					tmp.getNumRowsPerBlock(), tmp.getNumColumnsPerBlock());
-			int ix = (rowIndex-1)*tmp.getNumColumnBlocks()+(colIndex-1);
+		if( _pbc.length > 1 ) { //compute partition index
+			int numPerPart = computeBlocksPerPartition(_mc.getRows(),
+				_mc.getCols(),_mc.getRowsPerBlock(), _mc.getColsPerBlock());
+			int ix = (rowIndex-1)*getNumColumnBlocks()+(colIndex-1);
 			pix = ix / numPerPart;
 		}
-			
+		
 		return _pbc[pix].value().getBlock(rowIndex, colIndex);
 	}
 	
-	public T sliceOperations(long rl, long ru, long cl, long cu, T block) 
-			throws DMLRuntimeException 
-	{
-		T ret = null;
+	/**
+	 * Utility for slice operations over partitioned matrices, where the index range can cover
+	 * multiple blocks. The result is always a single result matrix block. All semantics are 
+	 * equivalent to the core matrix block slice operations. 
+	 * 
+	 * @param rl row lower bound
+	 * @param ru row upper bound
+	 * @param cl column lower bound
+	 * @param cu column upper bound
+	 * @param block block object
+	 * @return block object
+	 */
+	@SuppressWarnings("unchecked")
+	public T slice(long rl, long ru, long cl, long cu, T block) {
+		int lrl = (int) rl;
+		int lru = (int) ru;
+		int lcl = (int) cl;
+		int lcu = (int) cu;
 		
-		for( Broadcast<PartitionedBlock<T>> bc : _pbc ) {
-			PartitionedBlock<T> pm = bc.value();
-			T tmp = pm.sliceOperations(rl, ru, cl, cu, block);
-			if( ret != null )
-				ret.merge(tmp, false);
-			else
-				ret = tmp;
+		ArrayList<Pair<?, ?>> allBlks = (ArrayList<Pair<?, ?>>) CacheBlockFactory.getPairList(block);
+		int start_iix = (lrl-1)/_mc.getRowsPerBlock()+1;
+		int end_iix = (lru-1)/_mc.getRowsPerBlock()+1;
+		int start_jix = (lcl-1)/_mc.getColsPerBlock()+1;
+		int end_jix = (lcu-1)/_mc.getColsPerBlock()+1;
+				
+		for( int iix = start_iix; iix <= end_iix; iix++ )
+			for(int jix = start_jix; jix <= end_jix; jix++) {
+				IndexRange ixrange = new IndexRange(rl, ru, cl, cu);
+				allBlks.addAll(OperationsOnMatrixValues.performSlice(
+					ixrange, _mc.getRowsPerBlock(), _mc.getColsPerBlock(), iix, jix, getBlock(iix, jix)));
+			}
+		
+		if(allBlks.size() == 1) {
+			return (T) allBlks.get(0).getValue();
 		}
-		
-		return ret;
+		else {
+			//allocate output matrix
+			Constructor<?> constr;
+			try {
+				constr = block.getClass().getConstructor(int.class, int.class, boolean.class);
+				T ret = (T) constr.newInstance(lru-lrl+1, lcu-lcl+1, false);
+				for(Pair<?, ?> kv : allBlks) {
+					ret.merge((T)kv.getValue(), false);
+				}
+				return ret;
+			} catch (Exception e) {
+				throw new DMLRuntimeException(e);
+			}
+		}
 	}
-
+	
+	/**
+	 * This method cleanups all underlying broadcasts of a partitioned broadcast,
+	 * by forward the calls to SparkExecutionContext.cleanupBroadcastVariable.
+	 */
+	public void destroy() {
+		for( Broadcast<PartitionedBlock<T>> bvar : _pbc )
+			SparkExecutionContext.cleanupBroadcastVariable(bvar);
+	}
 }

@@ -40,10 +40,10 @@ import org.apache.hadoop.mapred.InputSplit;
 import org.apache.hadoop.mapred.JobConf;
 import org.apache.hadoop.mapred.RecordReader;
 import org.apache.hadoop.mapred.Reporter;
-
+import org.apache.sysml.runtime.io.IOUtilFunctions;
+import org.apache.sysml.runtime.matrix.MetaDataNumItemsByEachReducer;
 import org.apache.sysml.runtime.matrix.data.MatrixCell;
 import org.apache.sysml.runtime.matrix.data.MatrixIndexes;
-import org.apache.sysml.runtime.matrix.data.NumItemsByEachReducerMetaData;
 import org.apache.sysml.runtime.matrix.data.Pair;
 
 //key class to read has to be DoubleWritable
@@ -57,11 +57,12 @@ public class PickFromCompactInputFormat extends FileInputFormat<MatrixIndexes, M
 	public static final String PARTITION_OF_ZERO="partition.of.zero";
 	public static final String NUMBER_OF_ZERO="number.of.zero";
 	
+	@Override
 	protected  boolean isSplitable(FileSystem fs, Path filename) {
 		return false;
 	}
 	
-	public static void setZeroValues(JobConf job, NumItemsByEachReducerMetaData metadata)
+	public static void setZeroValues(JobConf job, MetaDataNumItemsByEachReducer metadata)
 	{
 		job.setInt(PARTITION_OF_ZERO, metadata.getPartitionOfZero());
 		job.setLong(NUMBER_OF_ZERO, metadata.getNumberOfZero());
@@ -128,23 +129,21 @@ public class PickFromCompactInputFormat extends FileInputFormat<MatrixIndexes, M
 			ArrayList<Pair<Integer, Integer>> vec=posMap.get(currentPart);
 			if(vec==null)
 			{
-				vec=new ArrayList<Pair<Integer, Integer>>();
+				vec=new ArrayList<>();
 				posMap.put(currentPart, vec);
 			}
 			
 			//set the actual position starting from 0
 			if(currentPart>0)
-				vec.add( new Pair<Integer, Integer>( (int)(pos-ranges[currentPart-1]-1), e.index));
+				vec.add( new Pair<>( (int)(pos-ranges[currentPart-1]-1), e.index));
 			else
-				vec.add( new Pair<Integer, Integer>( (int)pos-1,  e.index));
+				vec.add( new Pair<>( (int)pos-1,  e.index));
 		}
 	}
 	
-	public static Set<Integer> setPickRecordsInEachPartFile(JobConf job, NumItemsByEachReducerMetaData metadata, double[] probs)
+	public static Set<Integer> setPickRecordsInEachPartFile(JobConf job, MetaDataNumItemsByEachReducer metadata, double[] probs)
 	{
-		HashMap<Integer, ArrayList<Pair<Integer, Integer>>> posMap
-		=new HashMap<Integer, ArrayList<Pair<Integer, Integer>>>();
-		
+		HashMap<Integer, ArrayList<Pair<Integer, Integer>>> posMap = new HashMap<>();
 		getPointsInEachPartFile(metadata.getNumItemsArray(), probs, posMap);
 		
 		for(Entry<Integer, ArrayList<Pair<Integer, Integer>>> e: posMap.entrySet())
@@ -156,7 +155,7 @@ public class PickFromCompactInputFormat extends FileInputFormat<MatrixIndexes, M
 		return posMap.keySet();
 	}
 	
-	public static void setRangePickPartFiles(JobConf job, NumItemsByEachReducerMetaData metadata, double lbound, double ubound) {
+	public static void setRangePickPartFiles(JobConf job, MetaDataNumItemsByEachReducer metadata, double lbound, double ubound) {
 		
 		if(lbound<0 || lbound > 1 || ubound <0 || ubound >1 || lbound >= ubound ) {
 			throw new RuntimeException("Invalid ranges for range pick: [" + lbound + "," + ubound + "]");
@@ -209,6 +208,7 @@ public class PickFromCompactInputFormat extends FileInputFormat<MatrixIndexes, M
 		return sb.substring(0, sb.length()-1);
 	}
 
+	@Override
 	public RecordReader<MatrixIndexes, MatrixCell> getRecordReader(InputSplit split
 			, JobConf job, Reporter reporter) throws IOException {
 		if(job.getBoolean(INPUT_IS_VECTOR, true))
@@ -242,7 +242,7 @@ public class PickFromCompactInputFormat extends FileInputFormat<MatrixIndexes, M
 			// check if the current part file needs to be processed
 	    	path = split.getPath();
 	    	totLength = split.getLength();
-	    	currentStream = FileSystem.get(job).open(path);
+	    	currentStream = IOUtilFunctions.getFileSystem(path, job).open(path);
 	    	currPart = getIndexInTheArray(path.getName());
 	    	
 	    	if ( currPart < beginPart || currPart > endPart ) {
@@ -260,9 +260,8 @@ public class PickFromCompactInputFormat extends FileInputFormat<MatrixIndexes, M
 	    	reader=new ReadWithZeros(currentStream, contain0s, numZeros);
 		}
 		
-		private int getIndexInTheArray(String name) {
-			int i=name.indexOf("part-");
-			return Integer.parseInt(name.substring(i+5));
+		private static int getIndexInTheArray(String name) {
+			return Integer.parseInt(name.substring(name.indexOf("part-")+5));
 		}
 		
 		private void parseSelectedRangeString(String str) {
@@ -270,7 +269,7 @@ public class PickFromCompactInputFormat extends FileInputFormat<MatrixIndexes, M
 			String[] f2 = null;
 			
 			// Each field of the form: "pid,wt" where wt is the total wt until the part pid
-			partWeights = new HashMap<Integer,Double>();
+			partWeights = new HashMap<>();
 			for(int i=0; i < f1.length-1; i++) {
 				f2 = f1[i].split(",");
 				if(i==0) {
@@ -342,7 +341,7 @@ public class PickFromCompactInputFormat extends FileInputFormat<MatrixIndexes, M
 		
 		@Override
 		public void close() throws IOException {
-			currentStream.close();
+			IOUtilFunctions.closeSilently(currentStream);
 		}
 
 		@Override
@@ -367,10 +366,7 @@ public class PickFromCompactInputFormat extends FileInputFormat<MatrixIndexes, M
 			return (progress>=0 && progress<=1) ? progress : 1.0f;
 		}
 	}
-	
-	/**
-	 * 
-	 */
+
 	public static class PickRecordReader implements RecordReader<MatrixIndexes, MatrixCell>
 	{
 		private boolean valueIsWeight=true;
@@ -388,18 +384,17 @@ public class PickFromCompactInputFormat extends FileInputFormat<MatrixIndexes, M
 		private boolean noRecordsNeeded=false;
 		ReadWithZeros reader=null;
 		
-		private int getIndexInTheArray(String name)
-		{
-			int i=name.indexOf("part-");
-			return Integer.parseInt(name.substring(i+5));
+		private static int getIndexInTheArray(String name) {
+			return Integer.parseInt(
+				name.substring(name.indexOf("part-")+5));
 		}
 		
 		public PickRecordReader(JobConf job, FileSplit split)
 			throws IOException
 		{
-			fs = FileSystem.get(job);
-	    	path = split.getPath();
-	    	currentStream = fs.open(path);
+			path = split.getPath();
+			fs = IOUtilFunctions.getFileSystem(path, job);
+			currentStream = fs.open(path);
 	    	int partIndex=getIndexInTheArray(path.getName());
 	    	String arrStr=job.get(SELECTED_POINTS_PREFIX+partIndex);
 	    	if(arrStr==null || arrStr.isEmpty()) {
@@ -452,7 +447,7 @@ public class PickFromCompactInputFormat extends FileInputFormat<MatrixIndexes, M
 
 		@Override
 		public void close() throws IOException {
-			currentStream.close();			
+			IOUtilFunctions.closeSilently(currentStream);			
 		}
 
 		@Override

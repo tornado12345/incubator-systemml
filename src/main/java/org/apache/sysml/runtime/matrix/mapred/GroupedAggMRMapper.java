@@ -42,7 +42,7 @@ public class GroupedAggMRMapper extends MapperBase
 {
 		
 	//block instructions that need to be performed in part by mapper
-	protected ArrayList<ArrayList<GroupedAggregateInstruction>> groupAgg_instructions=new ArrayList<ArrayList<GroupedAggregateInstruction>>();
+	protected ArrayList<ArrayList<GroupedAggregateInstruction>> groupAgg_instructions=new ArrayList<>();
 	private MatrixIndexes outKeyValue=new MatrixIndexes();
 	private TaggedMatrixIndexes outKey=new TaggedMatrixIndexes(outKeyValue, (byte)0);
 	private WeightedCell outValue=new WeightedCell();
@@ -74,9 +74,9 @@ public class GroupedAggMRMapper extends MapperBase
 					{
 						try 
 						{
-							MatrixBlock group = block.sliceOperations(0, block.getNumRows()-1, 
+							MatrixBlock group = block.slice(0, block.getNumRows()-1, 
 									block.getNumColumns()-1, block.getNumColumns()-1, new MatrixBlock());
-							MatrixBlock target = block.sliceOperations(0, block.getNumRows()-1, 
+							MatrixBlock target = block.slice(0, block.getNumRows()-1, 
 									0, block.getNumColumns()-2, new MatrixBlock());
 								
 							MatrixBlock tmp = group.groupedAggOperations(target, null, new MatrixBlock(), ins.getNGroups(), ins.getOperator());
@@ -142,8 +142,7 @@ public class GroupedAggMRMapper extends MapperBase
 			GroupedAggregateInstruction[] grpaggIns = MRJobConfiguration.getGroupedAggregateInstructions(job);
 			if( grpaggIns == null )
 				throw new RuntimeException("no GroupAggregate Instructions found!");
-			
-			ArrayList<GroupedAggregateInstruction> vec = new ArrayList<GroupedAggregateInstruction>();
+			ArrayList<GroupedAggregateInstruction> vec = new ArrayList<>();
 			for(int i=0; i<representativeMatrixes.size(); i++)
 			{
 				byte input=representativeMatrixes.get(i);

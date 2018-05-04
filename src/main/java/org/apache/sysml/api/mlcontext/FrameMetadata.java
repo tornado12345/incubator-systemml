@@ -6,9 +6,9 @@
  * to you under the Apache License, Version 2.0 (the
  * "License"); you may not use this file except in compliance
  * with the License.  You may obtain a copy of the License at
- * 
+ *
  *   http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing,
  * software distributed under the License is distributed on an
  * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
@@ -19,7 +19,6 @@
 
 package org.apache.sysml.api.mlcontext;
 
-import org.apache.sysml.conf.ConfigurationManager;
 import org.apache.sysml.runtime.matrix.MatrixCharacteristics;
 
 /**
@@ -30,11 +29,6 @@ import org.apache.sysml.runtime.matrix.MatrixCharacteristics;
  */
 public class FrameMetadata extends Metadata {
 
-	private Long numRows = null;
-	private Long numColumns = null;
-	private Long numNonZeros = null;
-	private Integer numRowsPerBlock = null;
-	private Integer numColumnsPerBlock = null;
 	private FrameFormat frameFormat;
 	private FrameSchema frameSchema;
 
@@ -44,7 +38,7 @@ public class FrameMetadata extends Metadata {
 	/**
 	 * Constructor to create a FrameMetadata object based on a string
 	 * representation of a frame schema.
-	 * 
+	 *
 	 * @param schema
 	 *            String representation of the frame schema.
 	 */
@@ -54,7 +48,7 @@ public class FrameMetadata extends Metadata {
 
 	/**
 	 * Constructor to create a FrameMetadata object based on frame format.
-	 * 
+	 *
 	 * @param frameFormat
 	 *            The frame format.
 	 */
@@ -64,7 +58,7 @@ public class FrameMetadata extends Metadata {
 
 	/**
 	 * Constructor to create a FrameMetadata object based on frame schema.
-	 * 
+	 *
 	 * @param frameSchema
 	 *            The frame schema.
 	 */
@@ -75,7 +69,7 @@ public class FrameMetadata extends Metadata {
 	/**
 	 * Constructor to create a FrameMetadata object based on frame format and
 	 * frame schema.
-	 * 
+	 *
 	 * @param frameFormat
 	 *            The frame format.
 	 * @param frameSchema
@@ -89,7 +83,7 @@ public class FrameMetadata extends Metadata {
 	/**
 	 * Constructor to create a FrameMetadata object based on frame format, frame
 	 * schema, the number of rows, and the number of columns in a frame.
-	 * 
+	 *
 	 * @param frameFormat
 	 *            The frame format.
 	 * @param frameSchema
@@ -109,7 +103,7 @@ public class FrameMetadata extends Metadata {
 	/**
 	 * Constructor to create a FrameMetadata object based on frame format, frame
 	 * schema, the number of rows, and the number of columns in a frame.
-	 * 
+	 *
 	 * @param frameFormat
 	 *            The frame format.
 	 * @param frameSchema
@@ -131,7 +125,7 @@ public class FrameMetadata extends Metadata {
 	 * schema, the number of rows, the number of columns, the number of non-zero
 	 * values, the number of rows per block, and the number of columns per block
 	 * in a frame.
-	 * 
+	 *
 	 * @param frameFormat
 	 *            The frame format.
 	 * @param frameSchema
@@ -163,7 +157,7 @@ public class FrameMetadata extends Metadata {
 	 * schema, the number of rows, the number of columns, the number of non-zero
 	 * values, the number of rows per block, and the number of columns per block
 	 * in a frame.
-	 * 
+	 *
 	 * @param frameFormat
 	 *            The frame format.
 	 * @param frameSchema
@@ -193,7 +187,7 @@ public class FrameMetadata extends Metadata {
 	/**
 	 * Constructor to create a FrameMetadata object based on frame format, the
 	 * number of rows, and the number of columns in a frame.
-	 * 
+	 *
 	 * @param frameFormat
 	 *            The frame format.
 	 * @param numRows
@@ -210,7 +204,7 @@ public class FrameMetadata extends Metadata {
 	/**
 	 * Constructor to create a FrameMetadata object based on frame format, the
 	 * number of rows, and the number of columns in a frame.
-	 * 
+	 *
 	 * @param frameFormat
 	 *            The frame format.
 	 * @param numRows
@@ -228,7 +222,7 @@ public class FrameMetadata extends Metadata {
 	 * Constructor to create a FrameMetadata object based on frame format, the
 	 * number of rows, the number of columns, and the number of non-zero values
 	 * in a frame.
-	 * 
+	 *
 	 * @param frameFormat
 	 *            The frame format.
 	 * @param numRows
@@ -249,7 +243,7 @@ public class FrameMetadata extends Metadata {
 	 * Constructor to create a FrameMetadata object based on frame format, the
 	 * number of rows, the number of columns, and the number of non-zero values
 	 * in a frame.
-	 * 
+	 *
 	 * @param frameFormat
 	 *            The frame format.
 	 * @param numRows
@@ -270,7 +264,7 @@ public class FrameMetadata extends Metadata {
 	 * Constructor to create a FrameMetadata object based on frame format, the
 	 * number of rows, the number of columns, the number of non-zero values, the
 	 * number of rows per block, and the number of columns per block in a frame.
-	 * 
+	 *
 	 * @param frameFormat
 	 *            The frame format.
 	 * @param numRows
@@ -298,7 +292,7 @@ public class FrameMetadata extends Metadata {
 	 * Constructor to create a FrameMetadata object based on frame format, the
 	 * number of rows, the number of columns, the number of non-zero values, the
 	 * number of rows per block, and the number of columns per block in a frame.
-	 * 
+	 *
 	 * @param frameFormat
 	 *            The frame format.
 	 * @param numRows
@@ -325,7 +319,7 @@ public class FrameMetadata extends Metadata {
 	/**
 	 * Constructor to create a FrameMetadata object based on the number of rows
 	 * and the number of columns in a frame.
-	 * 
+	 *
 	 * @param numRows
 	 *            The number of rows in the frame.
 	 * @param numColumns
@@ -339,7 +333,7 @@ public class FrameMetadata extends Metadata {
 	/**
 	 * Constructor to create a FrameMetadata object based on the number of rows
 	 * and the number of columns in a frame.
-	 * 
+	 *
 	 * @param numRows
 	 *            The number of rows in the frame.
 	 * @param numColumns
@@ -353,7 +347,7 @@ public class FrameMetadata extends Metadata {
 	/**
 	 * Constructor to create a FrameMetadata object based on the number of rows,
 	 * the number of columns, and the number of non-zero values in a frame.
-	 * 
+	 *
 	 * @param numRows
 	 *            The number of rows in the frame.
 	 * @param numColumns
@@ -370,7 +364,7 @@ public class FrameMetadata extends Metadata {
 	/**
 	 * Constructor to create a FrameMetadata object based on the number of rows,
 	 * the number of columns, and the number of non-zero values in a frame.
-	 * 
+	 *
 	 * @param numRows
 	 *            The number of rows in the frame.
 	 * @param numColumns
@@ -388,7 +382,7 @@ public class FrameMetadata extends Metadata {
 	 * Constructor to create a FrameMetadata object based on the number of rows,
 	 * the number of columns, the number of rows per block, and the number of
 	 * columns per block in a frame.
-	 * 
+	 *
 	 * @param numRows
 	 *            The number of rows in the frame.
 	 * @param numColumns
@@ -409,7 +403,7 @@ public class FrameMetadata extends Metadata {
 	 * Constructor to create a FrameMetadata object based on the number of rows,
 	 * the number of columns, the number of rows per block, and the number of
 	 * columns per block in a frame.
-	 * 
+	 *
 	 * @param numRows
 	 *            The number of rows in the frame.
 	 * @param numColumns
@@ -430,7 +424,7 @@ public class FrameMetadata extends Metadata {
 	 * Constructor to create a FrameMetadata object based on the number of rows,
 	 * the number of columns, the number of non-zero values, the number of rows
 	 * per block, and the number of columns per block in a frame.
-	 * 
+	 *
 	 * @param numRows
 	 *            The number of rows in the frame.
 	 * @param numColumns
@@ -455,7 +449,7 @@ public class FrameMetadata extends Metadata {
 	 * Constructor to create a FrameMetadata object based on the number of rows,
 	 * the number of columns, the number of non-zero values, the number of rows
 	 * per block, and the number of columns per block in a frame.
-	 * 
+	 *
 	 * @param numRows
 	 *            The number of rows in the frame.
 	 * @param numColumns
@@ -478,7 +472,7 @@ public class FrameMetadata extends Metadata {
 	/**
 	 * Constructor to create a FrameMetadata object based on a
 	 * MatrixCharacteristics object.
-	 * 
+	 *
 	 * @param matrixCharacteristics
 	 *            the frame metadata as a MatrixCharacteristics object
 	 */
@@ -493,7 +487,7 @@ public class FrameMetadata extends Metadata {
 	/**
 	 * Constructor to create a FrameMetadata object based on the frame schema
 	 * and a MatrixCharacteristics object.
-	 * 
+	 *
 	 * @param frameSchema
 	 *            The frame schema.
 	 * @param matrixCharacteristics
@@ -510,154 +504,18 @@ public class FrameMetadata extends Metadata {
 
 	/**
 	 * Set the FrameMetadata fields based on a MatrixCharacteristics object.
-	 * 
+	 *
 	 * @param matrixCharacteristics
 	 *            the frame metadata as a MatrixCharacteristics object
 	 */
-	public void setMatrixCharacteristics(MatrixCharacteristics matrixCharacteristics) {
-		this.numRows = matrixCharacteristics.getRows();
-		this.numColumns = matrixCharacteristics.getCols();
-		this.numNonZeros = matrixCharacteristics.getNonZeros();
-		this.numRowsPerBlock = matrixCharacteristics.getRowsPerBlock();
-		this.numColumnsPerBlock = matrixCharacteristics.getColsPerBlock();
-	}
-
-	/**
-	 * Obtain the number of rows
-	 * 
-	 * @return the number of rows
-	 */
-	public Long getNumRows() {
-		return numRows;
-	}
-
-	/**
-	 * Set the number of rows
-	 * 
-	 * @param numRows
-	 *            the number of rows
-	 */
-	public void setNumRows(Long numRows) {
-		this.numRows = numRows;
-	}
-
-	/**
-	 * Obtain the number of columns
-	 * 
-	 * @return the number of columns
-	 */
-	public Long getNumColumns() {
-		return numColumns;
-	}
-
-	/**
-	 * Set the number of columns
-	 * 
-	 * @param numColumns
-	 *            the number of columns
-	 */
-	public void setNumColumns(Long numColumns) {
-		this.numColumns = numColumns;
-	}
-
-	/**
-	 * Obtain the number of non-zero values
-	 * 
-	 * @return the number of non-zero values
-	 */
-	public Long getNumNonZeros() {
-		return numNonZeros;
-	}
-
-	/**
-	 * Set the number of non-zero values
-	 * 
-	 * @param numNonZeros
-	 *            the number of non-zero values
-	 */
-	public void setNumNonZeros(Long numNonZeros) {
-		this.numNonZeros = numNonZeros;
-	}
-
-	/**
-	 * Obtain the number of rows per block
-	 * 
-	 * @return the number of rows per block
-	 */
-	public Integer getNumRowsPerBlock() {
-		return numRowsPerBlock;
-	}
-
-	/**
-	 * Set the number of rows per block
-	 * 
-	 * @param numRowsPerBlock
-	 *            the number of rows per block
-	 */
-	public void setNumRowsPerBlock(Integer numRowsPerBlock) {
-		this.numRowsPerBlock = numRowsPerBlock;
-	}
-
-	/**
-	 * Obtain the number of columns per block
-	 * 
-	 * @return the number of columns per block
-	 */
-	public Integer getNumColumnsPerBlock() {
-		return numColumnsPerBlock;
-	}
-
-	/**
-	 * Set the number of columns per block
-	 * 
-	 * @param numColumnsPerBlock
-	 *            the number of columns per block
-	 */
-	public void setNumColumnsPerBlock(Integer numColumnsPerBlock) {
-		this.numColumnsPerBlock = numColumnsPerBlock;
-	}
-
-	/**
-	 * Convert the frame metadata to a MatrixCharacteristics object. If all
-	 * field values are {@code null}, {@code null} is returned.
-	 * 
-	 * @return the frame metadata as a MatrixCharacteristics object, or
-	 *         {@code null} if all field values are null
-	 */
-	public MatrixCharacteristics asMatrixCharacteristics() {
-
-		if ((numRows == null) && (numColumns == null) && (numRowsPerBlock == null) && (numColumnsPerBlock == null)
-				&& (numNonZeros == null)) {
-			return null;
-		}
-
-		long nr = (numRows == null) ? -1 : numRows;
-		long nc = (numColumns == null) ? -1 : numColumns;
-		int nrpb = (numRowsPerBlock == null) ? ConfigurationManager.getBlocksize() : numRowsPerBlock;
-		int ncpb = (numColumnsPerBlock == null) ? ConfigurationManager.getBlocksize() : numColumnsPerBlock;
-		long nnz = (numNonZeros == null) ? -1 : numNonZeros;
-		MatrixCharacteristics mc = new MatrixCharacteristics(nr, nc, nrpb, ncpb, nnz);
-		return mc;
-	}
-
 	@Override
-	public String toString() {
-		return "rows: " + fieldDisplay(numRows) + ", columns: " + fieldDisplay(numColumns) + ", non-zeros: "
-				+ fieldDisplay(numNonZeros) + ", rows per block: " + fieldDisplay(numRowsPerBlock)
-				+ ", columns per block: " + fieldDisplay(numColumnsPerBlock);
-	}
-
-	private String fieldDisplay(Object field) {
-		if (field == null) {
-			return "None";
-		} else {
-			return field.toString();
-		}
+	public void setMatrixCharacteristics(MatrixCharacteristics matrixCharacteristics) {
+		super.setMatrixCharacteristics(matrixCharacteristics);
 	}
 
 	/**
 	 * Obtain the frame format
-	 * 
+	 *
 	 * @return the frame format
 	 */
 	public FrameFormat getFrameFormat() {
@@ -666,7 +524,7 @@ public class FrameMetadata extends Metadata {
 
 	/**
 	 * Set the frame format
-	 * 
+	 *
 	 * @param frameFormat
 	 *            the frame format
 	 */
@@ -676,7 +534,7 @@ public class FrameMetadata extends Metadata {
 
 	/**
 	 * Obtain the frame schema
-	 * 
+	 *
 	 * @return the frame schema
 	 */
 	public FrameSchema getFrameSchema() {
@@ -685,7 +543,7 @@ public class FrameMetadata extends Metadata {
 
 	/**
 	 * Set the frame schema
-	 * 
+	 *
 	 * @param frameSchema
 	 *            the frame schema
 	 */

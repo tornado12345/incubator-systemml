@@ -22,16 +22,19 @@ package org.apache.sysml.test.integration.functions.ternary;
 import org.junit.runner.RunWith;
 import org.junit.runners.Suite;
 
-/** Group together the tests in this package into a single suite so that the Maven build
+/* Group together the tests in this package into a single suite so that the Maven build
  *  won't run two of them at once. */
 @RunWith(Suite.class)
 @Suite.SuiteClasses({
+	ABATernaryAggregateTest.class,
 	CentralMomentWeightsTest.class,
 	CovarianceWeightsTest.class,
 	CTableMatrixIgnoreZerosTest.class,
 	CTableSequenceTest.class,
+	FullIfElseTest.class,
 	QuantileWeightsTest.class,
-	TableOutputTest.class
+	TableOutputTest.class,
+	TernaryAggregateTest.class,
 })
 
 

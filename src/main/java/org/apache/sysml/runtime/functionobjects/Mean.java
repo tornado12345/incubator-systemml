@@ -19,14 +19,12 @@
 
 package org.apache.sysml.runtime.functionobjects;
 
-import org.apache.sysml.runtime.DMLRuntimeException;
 import org.apache.sysml.runtime.instructions.cp.Data;
 import org.apache.sysml.runtime.instructions.cp.KahanObject;
 
 
 public class Mean extends ValueFunction 
 {
-
 	private static final long serialVersionUID = 1967222020396371269L;
 
 	private static Mean singleObj = null;
@@ -43,13 +41,8 @@ public class Mean extends ValueFunction
 		return singleObj;
 	}
 	
-	public Object clone() throws CloneNotSupportedException {
-		// cloning is not supported for singleton classes
-		throw new CloneNotSupportedException();
-	}
-	
-	//overwride in1
-	public Data execute(Data in1, double in2, double count) throws DMLRuntimeException {
+	@Override
+	public Data execute(Data in1, double in2, double count) {
 		KahanObject kahanObj=(KahanObject)in1;
 		double delta = (in2-kahanObj._sum)/count;
 		_plus.execute(in1, delta);	
@@ -60,8 +53,9 @@ public class Mean extends ValueFunction
 	 * Simplified version of execute(Data in1, double in2) 
 	 * without exception handling and casts.
 	 * 
-	 * @param in1
-	 * @param in2
+	 * @param in1 Kahan object input
+	 * @param in2 double input
+	 * @param count the count to divide by
 	 */
 	public void execute2(KahanObject in1, double in2, double count) 
 	{

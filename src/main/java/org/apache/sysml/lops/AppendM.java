@@ -79,9 +79,8 @@ public class AppendM extends Lop
 	}
 
 	//called when append executes in MR
-	public String getInstructions(int input_index1, int input_index2, int input_index3, int output_index) 
-		throws LopsException
-	{
+	@Override
+	public String getInstructions(int input_index1, int input_index2, int input_index3, int output_index) {
 		return getInstructions(
 				String.valueOf(input_index1),
 				String.valueOf(input_index2),
@@ -91,9 +90,8 @@ public class AppendM extends Lop
 
 
 	//called when append executes in SP
-	public String getInstructions(String input1, String input2, String input3, String output) 
-		throws LopsException
-	{
+	@Override
+	public String getInstructions(String input1, String input2, String input3, String output) {
 		StringBuilder sb = new StringBuilder();
 		sb.append( getExecType() );
 		
@@ -124,10 +122,12 @@ public class AppendM extends Lop
 		return sb.toString();
 	}
 	
+	@Override
 	public boolean usesDistributedCache() {
 		return true;
 	}
 	
+	@Override
 	public int[] distributedCacheInputIndex() {
 		return new int[]{2}; // second input is from distributed cache
 	}

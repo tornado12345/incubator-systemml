@@ -19,23 +19,18 @@
 
 package org.apache.sysml.hops.cost;
 
-import java.io.IOException;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
-import java.util.StringTokenizer;
 import java.util.Map.Entry;
+import java.util.StringTokenizer;
 
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.sysml.conf.ConfigurationManager;
-import org.apache.sysml.hops.Hop;
-import org.apache.sysml.hops.HopsException;
-import org.apache.sysml.hops.recompile.Recompiler;
+import org.apache.sysml.hops.OptimizerUtils;
 import org.apache.sysml.lops.Lop;
-import org.apache.sysml.lops.LopsException;
 import org.apache.sysml.parser.DMLProgram;
-import org.apache.sysml.runtime.DMLRuntimeException;
 import org.apache.sysml.runtime.controlprogram.ExternalFunctionProgramBlock;
 import org.apache.sysml.runtime.controlprogram.ForProgramBlock;
 import org.apache.sysml.runtime.controlprogram.FunctionProgramBlock;
@@ -44,6 +39,7 @@ import org.apache.sysml.runtime.controlprogram.LocalVariableMap;
 import org.apache.sysml.runtime.controlprogram.Program;
 import org.apache.sysml.runtime.controlprogram.ProgramBlock;
 import org.apache.sysml.runtime.controlprogram.WhileProgramBlock;
+import org.apache.sysml.runtime.controlprogram.caching.CacheableData.CacheStatus;
 import org.apache.sysml.runtime.controlprogram.caching.MatrixObject;
 import org.apache.sysml.runtime.instructions.Instruction;
 import org.apache.sysml.runtime.instructions.InstructionUtils;
@@ -64,7 +60,6 @@ import org.apache.sysml.runtime.instructions.cp.UnaryCPInstruction;
 import org.apache.sysml.runtime.instructions.cp.VariableCPInstruction;
 import org.apache.sysml.runtime.instructions.mr.MRInstruction;
 import org.apache.sysml.runtime.matrix.MatrixCharacteristics;
-import org.apache.sysml.runtime.matrix.MatrixDimensionsMetaData;
 import org.apache.sysml.runtime.matrix.operators.CMOperator;
 import org.apache.sysml.runtime.matrix.operators.CMOperator.AggregateOperationTypes;
 import org.apache.sysml.runtime.util.UtilFunctions;
@@ -79,9 +74,7 @@ public abstract class CostEstimator
 	protected static final VarStats _unknownStats = new VarStats(1,1,-1,-1,-1,false);
 	protected static final VarStats _scalarStats = new VarStats(1,1,1,1,1,true);
 	
-	public double getTimeEstimate(Program rtprog, LocalVariableMap vars, HashMap<String,VarStats> stats) 
-		throws DMLRuntimeException
-	{
+	public double getTimeEstimate(Program rtprog, LocalVariableMap vars, HashMap<String,VarStats> stats) {
 		double costs = 0;
 
 		//obtain stats from symboltable (e.g., during recompile)
@@ -94,9 +87,7 @@ public abstract class CostEstimator
 		return costs;
 	}
 	
-	public double getTimeEstimate(ProgramBlock pb, LocalVariableMap vars, HashMap<String,VarStats> stats, boolean recursive) 
-		throws DMLRuntimeException
-	{
+	public double getTimeEstimate(ProgramBlock pb, LocalVariableMap vars, HashMap<String,VarStats> stats, boolean recursive) {
 		//obtain stats from symboltable (e.g., during recompile)
 		maintainVariableStatistics(vars, stats);
 				
@@ -104,27 +95,7 @@ public abstract class CostEstimator
 		return rGetTimeEstimate(pb, stats, new HashSet<String>(), recursive);
 	}
 
-	public double getTimeEstimate( ArrayList<Hop> hops, LocalVariableMap vars, HashMap<String,VarStats> stats ) 
-		throws DMLRuntimeException, HopsException, LopsException, IOException
-	{
-		double costs = 0;
-		
-		ArrayList<Instruction> linst = Recompiler.recompileHopsDag(null, hops, vars, null, false, 0);
-		ProgramBlock pb = new ProgramBlock(null);
-		pb.setInstructions(linst);
-		
-		//obtain stats from symboltable (e.g., during recompile)
-		maintainVariableStatistics(vars, stats);
-		
-		//get cost estimate
-		costs = rGetTimeEstimate(pb, stats, new HashSet<String>(), true);
-		
-		return costs;
-	}
-
-	private double rGetTimeEstimate(ProgramBlock pb, HashMap<String,VarStats> stats, HashSet<String> memoFunc, boolean recursive) 
-		throws DMLRuntimeException
-	{
+	private double rGetTimeEstimate(ProgramBlock pb, HashMap<String,VarStats> stats, HashSet<String> memoFunc, boolean recursive) {
 		double ret = 0;
 		
 		if (pb instanceof WhileProgramBlock)
@@ -155,7 +126,7 @@ public abstract class CostEstimator
 				for( ProgramBlock pb2 : tmp.getChildBlocks() )
 					ret += rGetTimeEstimate(pb2, stats, memoFunc, recursive);
 			
-			ret *= getNumIterations(stats, tmp.getIterablePredicateVars());			
+			ret *= getNumIterations(stats, tmp);
 		}		
 		else if ( pb instanceof FunctionProgramBlock 
 				  && !(pb instanceof ExternalFunctionProgramBlock)) //see generic
@@ -239,9 +210,7 @@ public abstract class CostEstimator
 		return ret;
 	}
 	
-	private void maintainVariableStatistics( LocalVariableMap vars, HashMap<String, VarStats> stats ) 
-		throws DMLRuntimeException
-	{
+	private static void maintainVariableStatistics( LocalVariableMap vars, HashMap<String, VarStats> stats ) {
 		for( String varname : vars.keySet() )
 		{
 			Data dat = vars.get(varname);
@@ -249,13 +218,13 @@ public abstract class CostEstimator
 			if( dat instanceof MatrixObject ) //matrix
 			{
 				MatrixObject mo = (MatrixObject) dat;
-				MatrixCharacteristics mc = ((MatrixDimensionsMetaData)mo.getMetaData()).getMatrixCharacteristics();
+				MatrixCharacteristics mc = mo.getMatrixCharacteristics();
 				long rlen = mc.getRows();
 				long clen = mc.getCols();
-				long brlen = mc.getRowsPerBlock();
-				long bclen = mc.getColsPerBlock();
+				int brlen = mc.getRowsPerBlock();
+				int bclen = mc.getColsPerBlock();
 				long nnz = mc.getNonZeros();
-				boolean inmem = mo.getStatusAsString().equals("CACHED");
+				boolean inmem = mo.getStatus()==CacheStatus.CACHED;
 				vs = new VarStats(rlen, clen, brlen, bclen, nnz, inmem);
 			}
 			else //scalar
@@ -264,11 +233,10 @@ public abstract class CostEstimator
 			}
 			
 			stats.put(varname, vs);
-			//System.out.println(varname+" "+vs);
 		}
 	}
 	
-	private void maintainCPInstVariableStatistics( CPInstruction inst, HashMap<String, VarStats> stats )
+	private static void maintainCPInstVariableStatistics( CPInstruction inst, HashMap<String, VarStats> stats )
 	{
 		if( inst instanceof VariableCPInstruction )
 		{
@@ -281,13 +249,11 @@ public abstract class CostEstimator
 				String varname = parts[1];
 				long rlen = Long.parseLong(parts[6]);
 				long clen = Long.parseLong(parts[7]);
-				long brlen = Long.parseLong(parts[8]);
-				long bclen = Long.parseLong(parts[9]);
+				int brlen = Integer.parseInt(parts[8]);
+				int bclen = Integer.parseInt(parts[9]);
 				long nnz = Long.parseLong(parts[10]);
 				VarStats vs = new VarStats(rlen, clen, brlen, bclen, nnz, false);
 				stats.put(varname, vs);
-				
-				//System.out.println(varname+" "+vs);
 			}
 			else if ( optype.equals("cpvar") ) {
 				String varname = parts[1];
@@ -311,8 +277,8 @@ public abstract class CostEstimator
 			String varname = randInst.output.getName();
 			long rlen = randInst.getRows();
 			long clen = randInst.getCols();
-			long brlen = randInst.getRowsInBlock();
-			long bclen = randInst.getColsInBlock();
+			int brlen = randInst.getRowsInBlock();
+			int bclen = randInst.getColsInBlock();
 			long nnz = (long) (randInst.getSparsity() * rlen * clen);
 			VarStats vs = new VarStats(rlen, clen, brlen, bclen, nnz, true);
 			stats.put(varname, vs);
@@ -330,16 +296,11 @@ public abstract class CostEstimator
 			FunctionCallCPInstruction finst = (FunctionCallCPInstruction) inst;
 			ArrayList<String> outVars = finst.getBoundOutputParamNames();
 			for( String varname : outVars )
-			{
 				stats.put(varname, _unknownStats);
-				//System.out.println(varname+" "+vs);
-			}
 		}
 	}
 
-	private void maintainMRJobInstVariableStatistics( Instruction inst, HashMap<String, VarStats> stats ) 
-		throws DMLRuntimeException
-	{
+	private void maintainMRJobInstVariableStatistics( Instruction inst, HashMap<String, VarStats> stats ) {
 		MRJobInstruction jobinst = (MRJobInstruction)inst;
 		
 		//input sizes (varname, index mapping)
@@ -364,16 +325,16 @@ public abstract class CostEstimator
 				byte outIndex = Byte.parseByte(parts[2]);
 				long rlen = parts[3].contains(Lop.VARIABLE_NAME_PLACEHOLDER)?-1:UtilFunctions.parseToLong(parts[3]);
 				long clen = parts[4].contains(Lop.VARIABLE_NAME_PLACEHOLDER)?-1:UtilFunctions.parseToLong(parts[4]);
-				long brlen = Long.parseLong(parts[5]);
-				long bclen = Long.parseLong(parts[6]);
+				int brlen = Integer.parseInt(parts[5]);
+				int bclen = Integer.parseInt(parts[6]);
 				long nnz = (long) (Double.parseDouble(parts[9]) * rlen * clen);
 				VarStats vs = new VarStats(rlen, clen, brlen, bclen, nnz, false);
-				stats.put(String.valueOf(outIndex), vs);	
+				stats.put(String.valueOf(outIndex), vs);
 			}
 		}
 		
 		//compute intermediate result indices
-		HashMap<Byte,MatrixCharacteristics> dims = new HashMap<Byte, MatrixCharacteristics>();
+		HashMap<Byte,MatrixCharacteristics> dims = new HashMap<>();
 		//populate input indices
 		for( Entry<String,VarStats> e : stats.entrySet() )
 		{
@@ -383,7 +344,7 @@ public abstract class CostEstimator
 				VarStats vs = e.getValue();
 				if( vs !=null )
 				{
-					MatrixCharacteristics mc = new MatrixCharacteristics(vs._rlen, vs._clen, (int)vs._brlen, (int)vs._bclen, (long)vs._nnz);
+					MatrixCharacteristics mc = new MatrixCharacteristics(vs._rlen, vs._clen, vs._brlen, vs._bclen, (long)vs._nnz);
 					dims.put(ix, mc);
 				}
 			}
@@ -449,7 +410,7 @@ public abstract class CostEstimator
 		return ret;
 	}
 	
-	private Object[] extractCPInstStatistics( Instruction inst, HashMap<String, VarStats> stats )
+	private static Object[] extractCPInstStatistics( Instruction inst, HashMap<String, VarStats> stats )
 	{		
 		Object[] ret = new Object[2]; //stats, attrs
 		VarStats[] vs = new VarStats[3];
@@ -597,13 +558,13 @@ public abstract class CostEstimator
 		return ret;
 	}
 	
-	private void setUnknownStats(VarStats[] vs) {
+	private static void setUnknownStats(VarStats[] vs) {
 		vs[0] = _unknownStats;
 		vs[1] = _unknownStats;
 		vs[2] = _unknownStats;	
 	}
 	
-	private Object[] extractMRJobInstStatistics( Instruction inst, HashMap<String, VarStats> stats )
+	private static Object[] extractMRJobInstStatistics( Instruction inst, HashMap<String, VarStats> stats )
 	{
 		Object[] ret = new Object[2]; //stats, attrs
 		VarStats[] vs = null;
@@ -636,7 +597,7 @@ public abstract class CostEstimator
 		return ret;
 	}	
 	
-	private void cleanupMRJobVariableStatistics( Instruction inst, HashMap<String, VarStats> stats )
+	private static void cleanupMRJobVariableStatistics( Instruction inst, HashMap<String, VarStats> stats )
 	{
 		MRJobInstruction jinst = (MRJobInstruction)inst;
 		
@@ -654,29 +615,13 @@ public abstract class CostEstimator
 			if( tmp!=null )
 				tmp._inmem = false; //all MR job outptus on HDFS
 		}
-	}	
+	}
 	
-	// TODO use of vars - needed for recompilation w/o exception
-	private int getNumIterations(HashMap<String,VarStats> stats, String[] pred)
-	{
-		int N = DEFAULT_NUMITER;
-		if( pred != null && pred[1]!=null && pred[2]!=null && pred[3]!=null )
-		{
-			try 
-			{
-				int from = Integer.parseInt(pred[1]);
-				int to = Integer.parseInt(pred[2]);
-				int increment = Integer.parseInt(pred[3]);
-				N = (int)Math.ceil(((double)(to-from+1))/increment);
-			}
-			catch(Exception ex){}
-		}           
-		return N;              
+	private static long getNumIterations(HashMap<String,VarStats> stats, ForProgramBlock pb) {
+		return OptimizerUtils.getNumIterations(pb, DEFAULT_NUMITER);
 	}
 
-	protected abstract double getCPInstTimeEstimate( Instruction inst, VarStats[] vs, String[] args  ) 
-		throws DMLRuntimeException;
+	protected abstract double getCPInstTimeEstimate( Instruction inst, VarStats[] vs, String[] args );
 
-	protected abstract double getMRJobInstTimeEstimate( Instruction inst, VarStats[] vs, String[] args  ) 
-		throws DMLRuntimeException;
+	protected abstract double getMRJobInstTimeEstimate( Instruction inst, VarStats[] vs, String[] args );
 }

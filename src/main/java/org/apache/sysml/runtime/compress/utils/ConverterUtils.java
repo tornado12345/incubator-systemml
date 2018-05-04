@@ -19,7 +19,6 @@
 
 package org.apache.sysml.runtime.compress.utils;
 
-import java.util.ArrayList;
 import java.util.Arrays;
 
 import org.apache.sysml.runtime.compress.ColGroup;
@@ -35,8 +34,8 @@ public class ConverterUtils
 	 * Copy col group instance with deep copy of column indices but
 	 * shallow copy of actual contents;
 	 * 
-	 * @param group
-	 * @return
+	 * @param group column group
+	 * @return column group (deep copy of indices but shallow copy of contents)
 	 */
 	public static ColGroup copyColGroup(ColGroup group)
 	{
@@ -63,37 +62,14 @@ public class ConverterUtils
 		
 		return ret;
 	}
-	
-	/**
-	 * 
-	 * @param vector
-	 * @return
-	 */
-	public static double[] getDenseVector( MatrixBlock vector )
-	{
-		if( vector.isInSparseFormat() )
-			return DataConverter.convertToDoubleVector(vector);
-		else 
-			return vector.getDenseBlock();
+
+	public static double[] getDenseVector( MatrixBlock vector ) {
+		return DataConverter.convertToDoubleVector(vector, false);
 	}
-	
-	/**
-	 * 
-	 * @param group
-	 * @return
-	 */
-	public static MatrixBlock getUncompressedColBlock( ColGroup group )
-	{
-		MatrixBlock ret = null;
-		if( group instanceof ColGroupUncompressed ) {
-			ret = ((ColGroupUncompressed) group).getData();
-		}
-		else {
-			ArrayList<ColGroup> tmpGroup = new ArrayList<ColGroup>(Arrays.asList(group));
-			ColGroupUncompressed decompressedCols = new ColGroupUncompressed(tmpGroup);
-			ret = decompressedCols.getData();
-		}
-		
-		return ret;
+
+	public static MatrixBlock getUncompressedColBlock( ColGroup group ) {
+		return (group instanceof ColGroupUncompressed) ?
+			((ColGroupUncompressed) group).getData() : 
+			new ColGroupUncompressed(Arrays.asList(group)).getData();
 	}
 }

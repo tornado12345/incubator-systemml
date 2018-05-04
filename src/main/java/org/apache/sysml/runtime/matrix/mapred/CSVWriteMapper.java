@@ -37,9 +37,7 @@ import org.apache.sysml.runtime.matrix.data.TaggedFirstSecondIndexes;
 
 public class CSVWriteMapper extends MapperBase implements Mapper<Writable, Writable, TaggedFirstSecondIndexes, MatrixBlock>
 {
-	
-	
-	HashMap<Byte, ArrayList<Byte>> inputOutputMap=new HashMap<Byte, ArrayList<Byte>>();
+	HashMap<Byte, ArrayList<Byte>> inputOutputMap=new HashMap<>();
 	TaggedFirstSecondIndexes outIndexes=new TaggedFirstSecondIndexes();
 	
 	@Override
@@ -80,6 +78,7 @@ public class CSVWriteMapper extends MapperBase implements Mapper<Writable, Writa
 		reporter.incrCounter(Counters.MAP_TIME, System.currentTimeMillis()-start);
 	}
 	
+	@Override
 	public void configure(JobConf job)
 	{
 		super.configure(job);
@@ -88,9 +87,8 @@ public class CSVWriteMapper extends MapperBase implements Mapper<Writable, Writa
 			for(CSVWriteInstruction in: ins)
 			{
 				ArrayList<Byte> outputs=inputOutputMap.get(in.input);
-				if(outputs==null)
-				{
-					outputs=new ArrayList<Byte>();
+				if(outputs==null) {
+					outputs=new ArrayList<>();
 					inputOutputMap.put(in.input, outputs);
 				}
 				outputs.add(in.output);

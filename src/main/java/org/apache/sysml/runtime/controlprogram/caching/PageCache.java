@@ -23,36 +23,20 @@ import java.lang.ref.SoftReference;
 import java.util.HashMap;
 import java.util.LinkedList;
 
-/**
- * 
- * 
- */
 public class PageCache 
 {
-	
 	private static final int CLEANUP_THRESHOLD = 128;
 	private static HashMap<Integer, LinkedList<SoftReference<byte[]>>> _pool;
-	
-	/**
-	 * 
-	 */
-	public static void init()
-	{
-		_pool = new HashMap<Integer, LinkedList<SoftReference<byte[]>>>();
+
+	public static void init() {
+		_pool = new HashMap<>();
 	}
-	
-	/**
-	 * 
-	 */
+
 	public static void clear()
 	{
 		_pool = null;
 	}
-	
-	/**
-	 *
-	 * @param data
-	 */
+
 	public static void putPage( byte[] data )
 	{
 		//cleanup if too many different size lists
@@ -61,17 +45,12 @@ public class PageCache
 		
 		LinkedList<SoftReference<byte[]>> list = _pool.get( data.length );
 		if( list==null ){
-			list = new LinkedList<SoftReference<byte[]>>();
+			list = new LinkedList<>();
 			_pool.put(data.length, list);
 		}
-		list.addLast(new SoftReference<byte[]>(data));	
+		list.addLast(new SoftReference<>(data));	
 	}
-	
-	/**
-	 * 
-	 * @param size
-	 * @return
-	 */
+
 	public static byte[] getPage( int size )
 	{
 		LinkedList<SoftReference<byte[]>> list = _pool.get( size );

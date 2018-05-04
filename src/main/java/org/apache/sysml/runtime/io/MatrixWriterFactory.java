@@ -26,35 +26,14 @@ import org.apache.sysml.runtime.matrix.data.CSVFileFormatProperties;
 import org.apache.sysml.runtime.matrix.data.FileFormatProperties;
 import org.apache.sysml.runtime.matrix.data.OutputInfo;
 
-/**
- * 
- * 
- */
 public class MatrixWriterFactory 
 {
 
-	
-	/**
-	 * 
-	 * @param oinfo
-	 * @return
-	 * @throws DMLRuntimeException
-	 */
-	public static MatrixWriter createMatrixWriter( OutputInfo oinfo ) 
-			throws DMLRuntimeException
-	{
+	public static MatrixWriter createMatrixWriter( OutputInfo oinfo ) {
 		return createMatrixWriter(oinfo, -1, null);
 	}
-	
-	/**
-	 * 
-	 * @param oinfo
-	 * @param props 
-	 * @return
-	 * @throws DMLRuntimeException
-	 */
+
 	public static MatrixWriter createMatrixWriter( OutputInfo oinfo, int replication, FileFormatProperties props ) 
-		throws DMLRuntimeException
 	{
 		MatrixWriter writer = null;
 		

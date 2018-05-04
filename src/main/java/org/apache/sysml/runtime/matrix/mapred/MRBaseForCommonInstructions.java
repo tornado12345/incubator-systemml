@@ -24,7 +24,7 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.HashMap;
 
-import org.apache.hadoop.filecache.DistributedCache;
+import org.apache.hadoop.mapreduce.filecache.DistributedCache;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.mapred.JobConf;
 import org.apache.hadoop.mapred.MapReduceBase;
@@ -67,9 +67,9 @@ public class MRBaseForCommonInstructions extends MapReduceBase
 	
 	//distributed cache data handling
 	public static boolean isJobLocal = false; //set from MapperBase
-	public static HashMap<Byte, DistributedCacheInput> dcValues = new HashMap<Byte, DistributedCacheInput>();
+	public static HashMap<Byte, DistributedCacheInput> dcValues = new HashMap<>();
  	
-	protected HashMap<Byte, MatrixCharacteristics> dimensions=new HashMap<Byte, MatrixCharacteristics>();
+	protected HashMap<Byte, MatrixCharacteristics> dimensions=new HashMap<>();
 	
 	//temporary variables
 	protected IndexedMatrixValue tempValue=null;
@@ -105,20 +105,7 @@ public class MRBaseForCommonInstructions extends MapReduceBase
 				dimensions.put(index, MRJobConfiguration.getIntermediateMatrixCharactristics(job, index));			
 		}
 	}
-	
-	/**
-	 * 
-	 * @param indexes
-	 * @param value
-	 * @param i
-	 * @param reporter
-	 * @param collectFinalMultipleOutputs
-	 * @param resultDimsUnknown
-	 * @param resultsNonZeros
-	 * @param resultsMaxRowDims
-	 * @param resultsMaxColDims
-	 * @throws IOException
-	 */
+
 	protected void collectOutput_N_Increase_Counter(MatrixIndexes indexes, MatrixValue value, 
 			int i, Reporter reporter, CollectMultipleConvertedOutputs collectFinalMultipleOutputs, 
 			byte[] resultDimsUnknown, long[] resultsNonZeros, long[] resultsMaxRowDims, 
@@ -151,32 +138,14 @@ public class MRBaseForCommonInstructions extends MapReduceBase
 		}
 	}
 
-	/**
-	 * 
-	 * @param mixed_instructions
-	 * @throws DMLRuntimeException
-	 */
-	protected void processMixedInstructions(ArrayList<MRInstruction> mixed_instructions) 
-		throws DMLRuntimeException
-	{
+	protected void processMixedInstructions(ArrayList<MRInstruction> mixed_instructions) {
 		if( mixed_instructions != null )
 			for( MRInstruction ins : mixed_instructions )
 				processOneInstruction(ins, valueClass, cachedValues, tempValue, zeroInput);
 	}
-	
-	/**
-	 * 
-	 * @param ins
-	 * @param valueClass
-	 * @param cachedValues
-	 * @param tempValue
-	 * @param zeroInput
-	 * @throws DMLRuntimeException
-	 */
+
 	protected void processOneInstruction(MRInstruction ins, Class<? extends MatrixValue> valueClass,
-			CachedValueMap cachedValues, IndexedMatrixValue tempValue, IndexedMatrixValue zeroInput) 
-		throws DMLRuntimeException
-	{
+			CachedValueMap cachedValues, IndexedMatrixValue tempValue, IndexedMatrixValue zeroInput) {
 		//Timing time = new Timing(true);
 		
 		if ( ins instanceof AggregateBinaryInstruction ) {
@@ -281,11 +250,6 @@ public class MRBaseForCommonInstructions extends MapReduceBase
 		dcValues.clear();
 	}
 
-	/**
-	 * 
-	 * @param job
-	 * @throws IOException
-	 */
 	protected void setupDistCacheFiles(JobConf job) 
 		throws IOException 
 	{
@@ -332,12 +296,12 @@ public class MRBaseForCommonInstructions extends MapReduceBase
 	/**
 	 * Returns the maximum row or column dimension of the given key and value pair. 
 	 * 
-	 * @param key
-	 * @param value
-	 * @param row
-	 * @return
+	 * @param key matrix indexes
+	 * @param value MatrixValue of either type MatrixCell or MatrixBlock
+	 * @param row if true return row dimension, else return column dimension
+	 * @return maximum row or column dimension, or 0 if MatrixValue not MatrixCell or MatrixBlock
 	 */
-	private long getMaxDimension( MatrixIndexes key, MatrixValue value, boolean row ) {
+	private static long getMaxDimension( MatrixIndexes key, MatrixValue value, boolean row ) {
 		if( value instanceof MatrixCell )
 			return row ? key.getRowIndex() : key.getColumnIndex();
 		else if( value instanceof MatrixBlock )

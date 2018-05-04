@@ -49,7 +49,7 @@ import org.apache.sysml.runtime.controlprogram.caching.MatrixObject;
 import org.apache.sysml.runtime.controlprogram.parfor.stat.InfrastructureAnalyzer;
 import org.apache.sysml.runtime.controlprogram.parfor.stat.Stat;
 import org.apache.sysml.runtime.instructions.cp.Data;
-import org.apache.sysml.runtime.io.MatrixReader;
+import org.apache.sysml.runtime.io.IOUtilFunctions;
 import org.apache.sysml.runtime.matrix.MatrixCharacteristics;
 import org.apache.sysml.runtime.matrix.mapred.MRConfigurationNames;
 import org.apache.sysml.runtime.matrix.mapred.MRJobConfiguration;
@@ -66,23 +66,9 @@ public class RemoteParForMR
 {
 	
 	protected static final Log LOG = LogFactory.getLog(RemoteParForMR.class.getName());
-	
-	/**
-	 * 
-	 * @param pfid
-	 * @param program
-	 * @param taskFile
-	 * @param resultFile
-	 * @param _enableCPCaching 
-	 * @param mode
-	 * @param numMappers
-	 * @param replication
-	 * @return
-	 * @throws DMLRuntimeException
-	 */
+
 	public static RemoteParForJobReturn runJob(long pfid, String program, String taskFile, String resultFile, MatrixObject colocatedDPMatrixObj, //inputs
 			                                   boolean enableCPCaching, int numMappers, int replication, int max_retry, long minMem, boolean jvmReuse)  //opt params
-		throws DMLRuntimeException
 	{
 		RemoteParForJobReturn ret = null;
 		String jobname = "ParFor-EMR";
@@ -258,49 +244,44 @@ public class RemoteParForMR
 	 * (the RemoteParWorkerMapper ensures uniqueness of those files independent of the 
 	 * runtime implementation). 
 	 * 
-	 * @param job 
-	 * @param fname
-	 * @return
-	 * @throws DMLRuntimeException
+	 * @param job job configuration
+	 * @param fname file name
+	 * @return array of local variable maps
+	 * @throws IOException if IOException occurs
 	 */
 	@SuppressWarnings("deprecation")
 	public static LocalVariableMap [] readResultFile( JobConf job, String fname )
-		throws DMLRuntimeException, IOException
+		throws IOException
 	{
-		HashMap<Long,LocalVariableMap> tmp = new HashMap<Long,LocalVariableMap>();
+		HashMap<Long,LocalVariableMap> tmp = new HashMap<>();
 
-		FileSystem fs = FileSystem.get(job);
 		Path path = new Path(fname);
+		FileSystem fs = IOUtilFunctions.getFileSystem(path, job);
 		LongWritable key = new LongWritable(); //workerID
 		Text value = new Text();               //serialized var header (incl filename)
 		
 		int countAll = 0;
-		for( Path lpath : MatrixReader.getSequenceFilePaths(fs, path) )
+		for( Path lpath : IOUtilFunctions.getSequenceFilePaths(fs, path) )
 		{
-			SequenceFile.Reader reader = new SequenceFile.Reader(FileSystem.get(job),lpath,job);
-			try
-			{
-				while( reader.next(key, value) )
-				{
-					//System.out.println("key="+key.get()+", value="+value.toString());
+			SequenceFile.Reader reader = new SequenceFile.Reader(fs,lpath,job);
+			try {
+				while( reader.next(key, value) ) {
 					if( !tmp.containsKey( key.get() ) )
-		        		tmp.put(key.get(), new LocalVariableMap ());	   
+						tmp.put(key.get(), new LocalVariableMap ());
 					Object[] dat = ProgramConverter.parseDataObject( value.toString() );
-		        	tmp.get( key.get() ).put((String)dat[0], (Data)dat[1]);
-		        	countAll++;
+					tmp.get( key.get() ).put((String)dat[0], (Data)dat[1]);
+					countAll++;
 				}
-			}	
-			finally
-			{
-				if( reader != null )
-					reader.close();
 			}
-		}		
+			finally {
+				IOUtilFunctions.closeSilently(reader);
+			}
+		}
 
 		LOG.debug("Num remote worker results (before deduplication): "+countAll);
 		LOG.debug("Num remote worker results: "+tmp.size());
 
 		//create return array
-		return tmp.values().toArray(new LocalVariableMap[0]);	
+		return tmp.values().toArray(new LocalVariableMap[0]);
 	}
 }

@@ -22,9 +22,7 @@ package org.apache.sysml.udf;
 import java.io.Serializable;
 import java.util.ArrayList;
 
-import org.apache.commons.logging.Log;
-import org.apache.commons.logging.LogFactory;
-
+import org.apache.sysml.runtime.controlprogram.context.ExecutionContext;
 import org.apache.sysml.runtime.controlprogram.parfor.util.IDSequence;
 
 /**
@@ -33,9 +31,7 @@ import org.apache.sysml.runtime.controlprogram.parfor.util.IDSequence;
  * 
  */
 public abstract class PackageFunction implements Serializable 
-{	
-	protected static final Log LOG = LogFactory.getLog(PackageFunction.class.getName());
-	
+{
 	private static final long serialVersionUID = 3274150928865462856L;
 	
 	private ArrayList<FunctionParameter> _function_inputs; // function inputs
@@ -45,14 +41,14 @@ public abstract class PackageFunction implements Serializable
 	private IDSequence _seq = null;
 
 	public PackageFunction() {
-		_function_inputs = new ArrayList<FunctionParameter>();
+		_function_inputs = new ArrayList<>();
 		_seq = new IDSequence();
 	}
 
 	/**
 	 * Method to get the number of inputs to this package function.
 	 * 
-	 * @return
+	 * @return number of inputs
 	 */
 	public final int getNumFunctionInputs() {
 		if (_function_inputs == null)
@@ -64,8 +60,8 @@ public abstract class PackageFunction implements Serializable
 	/**
 	 * Method to get a specific input to this package function.
 	 * 
-	 * @param pos
-	 * @return
+	 * @param pos input position
+	 * @return function parameter
 	 */
 	public final FunctionParameter getFunctionInput(int pos) {
 		if (_function_inputs == null || _function_inputs.size() <= pos)
@@ -78,23 +74,39 @@ public abstract class PackageFunction implements Serializable
 	 * Method to get the number of outputs of this package function. This method
 	 * should be implemented in the user's function.
 	 * 
-	 * @return
+	 * @return number of outputs
 	 */
 	public abstract int getNumFunctionOutputs();
 
 	/**
+	 * Indicates if the function has a variable number of outputs, that
+	 * is unknown until the function has been executed.
+	 * 
+	 * @return true if the number of outputs is unknown; otherwise false.
+	 */
+	public boolean hasVarNumFunctionOutputs() {
+		return false;
+	}
+	
+	/**
 	 * Method to get a specific output of this package function. This method
 	 * should be implemented in the user's function.
 	 * 
-	 * @param pos
-	 * @return
+	 * @param pos function position
+	 * @return function parameter
 	 */
 	public abstract FunctionParameter getFunctionOutput(int pos);
-
+	
+	public final void setFunctionInputs(ArrayList<FunctionParameter> inputs) {
+		setNumFunctionInputs(inputs.size());
+		for (int i = 0; i < inputs.size(); i++)
+			setInput(inputs.get(i), i);
+	}
+	
 	/**
 	 * Method to set the number of inputs for this package function
 	 * 
-	 * @param numInputs
+	 * @param numInputs number of inputs
 	 */
 	public final void setNumFunctionInputs(int numInputs) {
 		if (_function_inputs == null)
@@ -111,8 +123,8 @@ public abstract class PackageFunction implements Serializable
 	/**
 	 * Method to set a specific input for this package function
 	 * 
-	 * @param input
-	 * @param pos
+	 * @param input function parameter input
+	 * @param pos input position
 	 */
 	public final void setInput(FunctionParameter input, int pos) {
 		if (_function_inputs == null || _function_inputs.size() <= pos)
@@ -125,7 +137,7 @@ public abstract class PackageFunction implements Serializable
 	/**
 	 * Method to set the configuration file for this function.
 	 * 
-	 * @param fName
+	 * @param fName configuration file name
 	 */
 	public final void setConfiguration(String fName) {
 		_configurationFile = fName;
@@ -134,24 +146,16 @@ public abstract class PackageFunction implements Serializable
 	/**
 	 * Method to get the configuration file name
 	 * 
-	 * @return
+	 * @return configuration file name
 	 */
 	public final String getConfiguration() {
 		return _configurationFile;
 	}
-	
-	/**
-	 * 
-	 * @param dir
-	 */
+
 	public void setBaseDir(String dir) {
 		_baseDir = dir;
 	}
 
-	/**
-	 * 
-	 * @return
-	 */
 	public String getBaseDir() {
 		return _baseDir;
 	}
@@ -166,4 +170,14 @@ public abstract class PackageFunction implements Serializable
 	 */
 	public abstract void execute();
 	
+	/**
+	 * Method that will be executed to perform this function. The default
+	 * implementation simply forwards this call to execute.
+	 * 
+	 * @param ec execution context with access to the program
+	 *    e.g., for access to other dml-bodied or external functions.
+	 */
+	public void execute(ExecutionContext ec) {
+		execute(); //default impl
+	}
 }

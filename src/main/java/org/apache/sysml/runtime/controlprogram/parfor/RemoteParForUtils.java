@@ -37,7 +37,7 @@ import scala.Tuple2;
 import org.apache.sysml.api.DMLScript;
 import org.apache.sysml.conf.ConfigurationManager;
 import org.apache.sysml.parser.Expression.DataType;
-import org.apache.sysml.runtime.DMLRuntimeException;
+import org.apache.sysml.parser.ParForStatementBlock.ResultVar;
 import org.apache.sysml.runtime.controlprogram.LocalVariableMap;
 import org.apache.sysml.runtime.controlprogram.ParForProgramBlock;
 import org.apache.sysml.runtime.controlprogram.caching.CacheStatistics;
@@ -56,13 +56,7 @@ import org.apache.sysml.utils.Statistics;
  */
 public class RemoteParForUtils 
 {
-	
-	/**
-	 * 
-	 * @param reporter
-	 * @param deltaTasks
-	 * @param deltaIterations
-	 */
+
 	public static void incrementParForMRCounters(Reporter reporter, long deltaTasks, long deltaIterations)
 	{
 		//report parfor counters
@@ -94,45 +88,32 @@ public class RemoteParForUtils
 			CacheStatistics.reset();
 		}
 	}
-	
-	/**
-	 * 
-	 * @param workerID
-	 * @param vars
-	 * @param resultVars
-	 * @param out
-	 * @throws DMLRuntimeException
-	 * @throws IOException
-	 */
-	public static void exportResultVariables( long workerID, LocalVariableMap vars, ArrayList<String> resultVars, OutputCollector<Writable, Writable> out ) 
-			throws DMLRuntimeException, IOException
-	{
+
+	public static void exportResultVariables( long workerID, LocalVariableMap vars, ArrayList<ResultVar> resultVars, OutputCollector<Writable, Writable> out ) throws IOException {
 		exportResultVariables(workerID, vars, resultVars, null, out);
-	}	
+	}
 	
 	/**
 	 * For remote MR parfor workers.
 	 * 
-	 * @param workerID
-	 * @param vars
-	 * @param resultVars
-	 * @param rvarFnames
-	 * @param out
-	 * @throws DMLRuntimeException
-	 * @throws IOException
+	 * @param workerID worker id
+	 * @param vars local variable map
+	 * @param resultVars list of result variables
+	 * @param rvarFnames ?
+	 * @param out output collectors
+	 * @throws IOException if IOException occurs
 	 */
-	public static void exportResultVariables( long workerID, LocalVariableMap vars, ArrayList<String> resultVars, 
-			                                  HashMap<String,String> rvarFnames, OutputCollector<Writable, Writable> out ) 
-		throws DMLRuntimeException, IOException
+	public static void exportResultVariables( long workerID, LocalVariableMap vars, ArrayList<ResultVar> resultVars, 
+			HashMap<String,String> rvarFnames, OutputCollector<Writable, Writable> out ) throws IOException
 	{
 		//create key and value for reuse
 		LongWritable okey = new LongWritable( workerID ); 
 		Text ovalue = new Text();
 		
 		//foreach result variables probe if export necessary
-		for( String rvar : resultVars )
+		for( ResultVar rvar : resultVars )
 		{
-			Data dat = vars.get( rvar );
+			Data dat = vars.get( rvar._name );
 			
 			//export output variable to HDFS (see RunMRJobs)
 			if ( dat != null && dat.getDataType() == DataType.MATRIX ) 
@@ -142,13 +123,13 @@ public class RemoteParForUtils
 				{
 					if( ParForProgramBlock.ALLOW_REUSE_MR_PAR_WORKER && rvarFnames!=null )
 					{
-						String fname = rvarFnames.get( rvar );
+						String fname = rvarFnames.get( rvar._name );
 						if( fname!=null )
 							mo.setFileName( fname );
 							
 						//export result var (iff actually modified in parfor)
 						mo.exportData(); //note: this is equivalent to doing it in close (currently not required because 1 Task=1Map tasks, hence only one map invocation)		
-						rvarFnames.put(rvar, mo.getFileName());	
+						rvarFnames.put(rvar._name, mo.getFileName());
 					}
 					else
 					{
@@ -158,7 +139,7 @@ public class RemoteParForUtils
 					
 					//pass output vars (scalars by value, matrix by ref) to result
 					//(only if actually exported, hence in check for dirty, otherwise potential problems in result merge)
-					String datStr = ProgramConverter.serializeDataObject(rvar, mo);
+					String datStr = ProgramConverter.serializeDataObject(rvar._name, mo);
 					ovalue.set( datStr );
 					out.collect( okey, ovalue );
 				}
@@ -169,48 +150,38 @@ public class RemoteParForUtils
 	/**
 	 * For remote Spark parfor workers. This is a simplified version compared to MR.
 	 * 
-	 * @param workerID
-	 * @param vars
-	 * @param resultVars
-	 * @param rvarFnames
-	 * @throws DMLRuntimeException
-	 * @throws IOException
+	 * @param workerID worker id
+	 * @param vars local variable map
+	 * @param resultVars list of result variables
+	 * @return list of result variables
+	 * @throws IOException if IOException occurs
 	 */
-	public static ArrayList<String> exportResultVariables( long workerID, LocalVariableMap vars, ArrayList<String> resultVars) 
-		throws DMLRuntimeException, IOException
+	public static ArrayList<String> exportResultVariables( long workerID, LocalVariableMap vars, ArrayList<ResultVar> resultVars) 
+		throws IOException
 	{
-		ArrayList<String> ret = new ArrayList<String>();
+		ArrayList<String> ret = new ArrayList<>();
 		
 		//foreach result variables probe if export necessary
-		for( String rvar : resultVars )
-		{
-			Data dat = vars.get( rvar );
-			
+		for( ResultVar rvar : resultVars ) {
+			Data dat = vars.get( rvar._name );
 			//export output variable to HDFS (see RunMRJobs)
-			if ( dat != null && dat.getDataType() == DataType.MATRIX ) 
-			{
+			if ( dat != null && dat.getDataType() == DataType.MATRIX )  {
 				MatrixObject mo = (MatrixObject) dat;
-				if( mo.isDirty() )
-				{
+				if( mo.isDirty() ) {
 					//export result var (iff actually modified in parfor)
 					mo.exportData(); 
-					
-					
 					//pass output vars (scalars by value, matrix by ref) to result
 					//(only if actually exported, hence in check for dirty, otherwise potential problems in result merge)
-					ret.add( ProgramConverter.serializeDataObject(rvar, mo) );
+					ret.add( ProgramConverter.serializeDataObject(rvar._name, mo) );
 				}
-			}	
+			}
 		}
 		
 		return ret;
 	}
-		
 	
 	/**
-	 * Cleanup all temporary files created by this SystemML process
-	 * instance.
-	 * 
+	 * Cleanup all temporary files created by this SystemML process.
 	 */
 	public static void cleanupWorkingDirectories()
 	{
@@ -230,18 +201,19 @@ public class RemoteParForUtils
 			LocalFileUtils.cleanupWorkingDirectory();
 		}
 	}
-	
+
 	/**
-	 * 
-	 * @param out
-	 * @return
-	 * @throws DMLRuntimeException
-	 * @throws IOException
+	 * Cleanup all temporary files created by this SystemML process,
+	 * on shutdown via exit or interrupt.
 	 */
+	public static void cleanupWorkingDirectoriesOnShutdown() {
+		Runtime.getRuntime().addShutdownHook(
+				new DeleteWorkingDirectoriesTask());
+	}
+	
 	public static LocalVariableMap[] getResults( List<Tuple2<Long,String>> out, Log LOG ) 
-		throws DMLRuntimeException
 	{
-		HashMap<Long,LocalVariableMap> tmp = new HashMap<Long,LocalVariableMap>();
+		HashMap<Long,LocalVariableMap> tmp = new HashMap<>();
 
 		int countAll = 0;
 		for( Tuple2<Long,String> entry : out )
@@ -249,10 +221,10 @@ public class RemoteParForUtils
 			Long key = entry._1();
 			String val = entry._2();
 			if( !tmp.containsKey( key ) )
-        		tmp.put(key, new LocalVariableMap ());	   
+				tmp.put(key, new LocalVariableMap ());	   
 			Object[] dat = ProgramConverter.parseDataObject( val );
-        	tmp.get(key).put((String)dat[0], (Data)dat[1]);
-        	countAll++;
+			tmp.get(key).put((String)dat[0], (Data)dat[1]);
+			countAll++;
 		}
 
 		if( LOG != null ) {
@@ -262,5 +234,17 @@ public class RemoteParForUtils
 		
 		//create return array
 		return tmp.values().toArray(new LocalVariableMap[0]);	
+	}
+	
+	/**
+	 * Task to be registered as shutdown hook in order to delete the 
+	 * all working directories, including any remaining files, which 
+	 * might not have been created  at time of registration.
+	 */
+	private static class DeleteWorkingDirectoriesTask extends Thread {
+		@Override
+		public void run() {
+			cleanupWorkingDirectories();
+		}
 	}
 }

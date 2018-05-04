@@ -21,17 +21,14 @@ package org.apache.sysml.runtime.instructions.mr;
 
 import org.apache.sysml.runtime.matrix.operators.Operator;
 
-public abstract class UnaryMRInstructionBase extends MRInstruction 
-{
-	
+public abstract class UnaryMRInstructionBase extends MRInstruction {
 	public byte input;
-	
-	public UnaryMRInstructionBase(Operator op, byte in, byte out)
-	{
-		super(op, out);
-		input=in;
+
+	protected UnaryMRInstructionBase(MRType type, Operator op, byte in, byte out) {
+		super(type, op, out);
+		input = in;
 	}
-	
+
 	@Override
 	public byte[] getInputIndexes() {
 		return new byte[]{input};

@@ -20,56 +20,63 @@
 package org.apache.sysml.runtime.controlprogram.parfor;
 
 import java.io.IOException;
-import java.util.ArrayList;
+import java.util.Collection;
+import java.util.HashMap;
+import java.util.Iterator;
+import java.util.Map;
+import java.util.Map.Entry;
+import java.util.stream.Collectors;
 
-import org.apache.spark.Accumulator;
 import org.apache.spark.TaskContext;
 import org.apache.spark.api.java.function.PairFlatMapFunction;
-
-import org.apache.sysml.runtime.DMLRuntimeException;
+import org.apache.spark.broadcast.Broadcast;
+import org.apache.spark.util.LongAccumulator;
+import org.apache.sysml.runtime.codegen.CodegenUtils;
+import org.apache.sysml.runtime.controlprogram.caching.CacheBlock;
 import org.apache.sysml.runtime.controlprogram.caching.CacheableData;
+import org.apache.sysml.runtime.controlprogram.parfor.stat.InfrastructureAnalyzer;
 import org.apache.sysml.runtime.controlprogram.parfor.util.IDHandler;
 import org.apache.sysml.runtime.util.LocalFileUtils;
+import org.apache.sysml.runtime.util.UtilFunctions;
 
 import scala.Tuple2;
 
-/**
- * 
- * 
- */
 public class RemoteParForSparkWorker extends ParWorker implements PairFlatMapFunction<Task, Long, String> 
 {
-	
 	private static final long serialVersionUID = -3254950138084272296L;
-
+	
+	private static final CachedReuseVariables reuseVars = new CachedReuseVariables();
+	
+	private final long _jobid;
+	private final String _prog;
+	private final HashMap<String, byte[]> _clsMap;
 	private boolean _initialized = false;
-	private String  _prog = null;
 	private boolean _caching = true;
 	
-	private Accumulator<Integer> _aTasks = null;
-	private Accumulator<Integer> _aIters = null;
+	private final LongAccumulator _aTasks;
+	private final LongAccumulator _aIters;
+
+	private final Map<String, Broadcast<CacheBlock>> _brInputs;
 	
-	public RemoteParForSparkWorker(String program, boolean cpCaching, Accumulator<Integer> atasks, Accumulator<Integer> aiters) 
-		throws DMLRuntimeException
-	{
-		//keep inputs (unfortunately, spark does not expose task ids and it would be implementation-dependent
-		//when this constructor is actually called; hence, we do lazy initialization on task execution)
-		_initialized = false;
+	public RemoteParForSparkWorker(long jobid, String program, HashMap<String, byte[]> clsMap, boolean cpCaching, LongAccumulator atasks, LongAccumulator aiters, Map<String, Broadcast<CacheBlock>> brInputs) {
+		_jobid = jobid;
 		_prog = program;
+		_clsMap = clsMap;
+		_initialized = false;
 		_caching = cpCaching;
-		
 		//setup spark accumulators
 		_aTasks = atasks;
 		_aIters = aiters;
+		_brInputs = brInputs;
 	}
 	
 	@Override 
-	public Iterable<Tuple2<Long, String>> call(Task arg0)
+	public Iterator<Tuple2<Long, String>> call(Task arg0)
 		throws Exception 
 	{
 		//lazy parworker initialization
 		if( !_initialized )
-			configureWorker( TaskContext.get().taskAttemptId() ); //requires Spark 1.3
+			configureWorker(TaskContext.get().taskAttemptId());
 		
 		//execute a single task
 		long numIter = getExecutedIterations();
@@ -81,51 +88,63 @@ public class RemoteParForSparkWorker extends ParWorker implements PairFlatMapFun
 		
 		//write output if required (matrix indexed write) 
 		//note: this copy is necessary for environments without spark libraries
-		ArrayList<Tuple2<Long,String>> ret = new ArrayList<Tuple2<Long,String>>();
-		ArrayList<String> tmp = RemoteParForUtils.exportResultVariables( _workerID, _ec.getVariables(), _resultVars );
-		for( String val : tmp )
-			ret.add(new Tuple2<Long,String>(_workerID, val));
-			
-		return ret;
+		return RemoteParForUtils.exportResultVariables(_workerID, _ec.getVariables(), _resultVars)
+			.stream().map(s -> new Tuple2<>(_workerID, s)).iterator();
 	}
 	
-	/**
-	 * 
-	 * @param ID
-	 * @throws DMLRuntimeException 
-	 * @throws IOException 
-	 */
-	private void configureWorker( long ID ) 
-		throws DMLRuntimeException, IOException
+	private void configureWorker(long taskID) 
+		throws IOException
 	{
-		_workerID = ID;
+		_workerID = taskID;
 		
+		//initialize codegen class cache (before program parsing)
+		for( Entry<String, byte[]> e : _clsMap.entrySet() )
+			CodegenUtils.getClassSync(e.getKey(), e.getValue());
+	
 		//parse and setup parfor body program
-		ParForBody body = ProgramConverter.parseParForBody(_prog, (int)_workerID);
+		ParForBody body = ProgramConverter.parseParForBody(_prog, (int)_workerID, true);
 		_childBlocks = body.getChildBlocks();
-		_ec          = body.getEc();				
-		_resultVars  = body.getResultVarNames();
+		_ec          = body.getEc();
+		_resultVars  = body.getResultVariables();
 		_numTasks    = 0;
 		_numIters    = 0;
 
-		//init local cache manager 
-		if( !CacheableData.isCachingActive() ) {
-			String uuid = IDHandler.createDistributedUniqueID();
-			LocalFileUtils.createWorkingDirectoryWithUUID( uuid );
-			CacheableData.initCaching( uuid ); //incl activation, cache dir creation (each map task gets its own dir for simplified cleanup)
-		}		
-		if( !CacheableData.cacheEvictionLocalFilePrefix.contains("_") ){ //account for local mode
-			CacheableData.cacheEvictionLocalFilePrefix = CacheableData.cacheEvictionLocalFilePrefix +"_" + _workerID; 
+		//reuse shared inputs (to read shared inputs once per process instead of once per core; 
+		//we reuse everything except result variables and partitioned input matrices)
+		_ec.pinVariables(_ec.getVarList()); //avoid cleanup of shared inputs
+		Collection<String> blacklist = UtilFunctions.asSet(_resultVars.stream()
+			.map(v -> v._name).collect(Collectors.toList()), _ec.getVarListPartitioned());
+		reuseVars.reuseVariables(_jobid, _ec.getVariables(), blacklist, _brInputs);
+		
+		//init and register-cleanup of buffer pool (in parfor spark, multiple tasks might 
+		//share the process-local, i.e., per executor, buffer pool; hence we synchronize 
+		//the initialization and immediately register the created directory for cleanup
+		//on process exit, i.e., executor exit, including any files created in the future.
+		synchronized( CacheableData.class ) {
+			if( !CacheableData.isCachingActive() && !InfrastructureAnalyzer.isLocalMode() ) { 
+				//create id, executor working dir, and cache dir
+				String uuid = IDHandler.createDistributedUniqueID();
+				LocalFileUtils.createWorkingDirectoryWithUUID( uuid );
+				CacheableData.initCaching( uuid ); //incl activation and cache dir creation
+				CacheableData.cacheEvictionLocalFilePrefix = 
+						CacheableData.cacheEvictionLocalFilePrefix +"_" + _workerID; 
+				//register entire working dir for delete on shutdown
+				RemoteParForUtils.cleanupWorkingDirectoriesOnShutdown();
+			}
 		}
 		
 		//ensure that resultvar files are not removed
 		super.pinResultVariables();
 		
-		//enable/disable caching (if required)
-		if( !_caching )
+		//enable/disable caching (if required and not in CP process)
+		if( !_caching && !InfrastructureAnalyzer.isLocalMode() )
 			CacheableData.disableCaching();
 		
-		//make as lazily intialized
+		//mark as initialized
 		_initialized = true;
+	}
+
+	public static void cleanupCachedVariables(long pfid) {
+		reuseVars.clearVariables(pfid);
 	}
 }

@@ -20,10 +20,10 @@
 package org.apache.sysml.runtime.io;
 
 import java.io.IOException;
+import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 
 import org.apache.commons.lang.StringUtils;
 import org.apache.hadoop.fs.FileSystem;
@@ -41,7 +41,9 @@ import org.apache.sysml.conf.ConfigurationManager;
 import org.apache.sysml.hops.OptimizerUtils;
 import org.apache.sysml.runtime.DMLRuntimeException;
 import org.apache.sysml.runtime.matrix.data.CSVFileFormatProperties;
+import org.apache.sysml.runtime.matrix.data.DenseBlock;
 import org.apache.sysml.runtime.matrix.data.MatrixBlock;
+import org.apache.sysml.runtime.util.CommonThreadPool;
 
 /**
  * Parallel version of ReaderTextCSV.java. To summarize, we do two passes in
@@ -73,9 +75,9 @@ public class ReaderTextCSVParallel extends MatrixReader
 	{
 		// prepare file access
 		JobConf job = new JobConf(ConfigurationManager.getCachedJobConf());
-		FileSystem fs = FileSystem.get(job);
 		Path path = new Path(fname);
-
+		FileSystem fs = IOUtilFunctions.getFileSystem(path, job);
+		
 		FileInputFormat.addInputPath(job, path);
 		TextInputFormat informat = new TextInputFormat();
 		informat.configure(job);
@@ -104,29 +106,22 @@ public class ReaderTextCSVParallel extends MatrixReader
 		ret.examSparsity();
 
 		// sanity check for parallel row count (since determined internally)
-		if (rlen > 0 && rlen != ret.getNumRows())
+		if (rlen >= 0 && rlen != ret.getNumRows())
 			throw new DMLRuntimeException("Read matrix inconsistent with given meta data: "
 					+ "expected nrow="+ rlen + ", real nrow=" + ret.getNumRows());
 
 		return ret;
 	}
 
-	/**
-	 * 
-	 * @param path
-	 * @param job
-	 * @param dest
-	 * @param rlen
-	 * @param clen
-	 * @param brlen
-	 * @param bclen
-	 * @param hasHeader
-	 * @param delim
-	 * @param fill
-	 * @param fillValue
-	 * @return
-	 * @throws IOException
-	 */
+	@Override
+	public MatrixBlock readMatrixFromInputStream(InputStream is, long rlen, long clen, int brlen, int bclen, long estnnz) 
+		throws IOException, DMLRuntimeException 
+	{
+		//not implemented yet, fallback to sequential reader
+		return new ReaderTextCSV(_props)
+			.readMatrixFromInputStream(is, rlen, clen, brlen, bclen, estnnz);
+	}
+	
 	private void readCSVMatrixFromHDFS(InputSplit[] splits, Path path, JobConf job, 
 			MatrixBlock dest, long rlen, long clen, int brlen, int bclen, 
 			boolean hasHeader, String delim, boolean fill, double fillValue) 
@@ -136,12 +131,12 @@ public class ReaderTextCSVParallel extends MatrixReader
 		TextInputFormat informat = new TextInputFormat();
 		informat.configure(job);
 
-		ExecutorService pool = Executors.newFixedThreadPool(_numThreads);
+		ExecutorService pool = CommonThreadPool.get(_numThreads);
 
 		try 
 		{
 			// create read tasks for all splits
-			ArrayList<CSVReadTask> tasks = new ArrayList<CSVReadTask>();
+			ArrayList<CSVReadTask> tasks = new ArrayList<>();
 			int splitCount = 0;
 			for (InputSplit split : splits) {
 				tasks.add( new CSVReadTask(split, _offsets, informat, job, dest, 
@@ -166,16 +161,6 @@ public class ReaderTextCSVParallel extends MatrixReader
 		}
 	}
 
-	/**
-	 * 
-	 * @param path
-	 * @param job
-	 * @param hasHeader
-	 * @param delim
-	 * @return
-	 * @throws IOException
-	 * @throws DMLRuntimeException 
-	 */
 	private MatrixBlock computeCSVSizeAndCreateOutputMatrixBlock(
 			InputSplit[] splits, Path path, JobConf job, boolean hasHeader,
 			String delim, long estnnz) throws IOException, DMLRuntimeException 
@@ -205,8 +190,8 @@ public class ReaderTextCSVParallel extends MatrixReader
 		// count rows in parallel per split
 		try 
 		{
-			ExecutorService pool = Executors.newFixedThreadPool(_numThreads);
-			ArrayList<CountRowsTask> tasks = new ArrayList<CountRowsTask>();
+			ExecutorService pool = CommonThreadPool.get(_numThreads);
+			ArrayList<CountRowsTask> tasks = new ArrayList<>();
 			for (InputSplit split : splits) {
 				tasks.add(new CountRowsTask(split, informat, job, hasHeader));
 				hasHeader = false;
@@ -228,16 +213,13 @@ public class ReaderTextCSVParallel extends MatrixReader
 		catch (Exception e) {
 			throw new IOException("Threadpool Error " + e.getMessage(), e);
 		}
-
+		
 		// allocate target matrix block based on given size; 
 		// need to allocate sparse as well since lock-free insert into target
-		return createOutputMatrixBlock(nrow, ncol, nrow, ncol, estnnz, true, true);
+		long estnnz2 = (estnnz < 0) ? (long)nrow * ncol : estnnz;
+		return createOutputMatrixBlock(nrow, ncol, nrow, ncol, estnnz2, true, true);
 	}
 
-	/**
-	 * 
-	 * 
-	 */
 	private static class SplitOffsetInfos {
 		// offset & length info per split
 		private int[] offsetPerSplit = null;
@@ -265,10 +247,6 @@ public class ReaderTextCSVParallel extends MatrixReader
 		}
 	}
 
-	/**
-	 * 
-	 * 
-	 */
 	private static class CountRowsTask implements Callable<Object> 
 	{
 		private InputSplit _split = null;
@@ -330,10 +308,6 @@ public class ReaderTextCSVParallel extends MatrixReader
 		}
 	}
 
-	/**
-	 * 
-	 * 
-	 */
 	private static class CSVReadTask implements Callable<Object> 
 	{
 		private InputSplit _split = null;
@@ -448,14 +422,12 @@ public class ReaderTextCSVParallel extends MatrixReader
 					} 
 					else // DENSE<-value
 					{
-						while (reader.next(key, value)) // foreach line
-						{
+						DenseBlock a = _dest.getDenseBlock();
+						while (reader.next(key, value)) { // foreach line
 							String cellStr = value.toString().trim();
 							String[] parts = IOUtilFunctions.split(cellStr, _delim);
 							col = 0;
-
-							for (String part : parts) // foreach cell
-							{
+							for (String part : parts) { // foreach cell
 								part = part.trim();
 								if (part.isEmpty()) {
 									noFillEmpty |= !_fill;
@@ -465,7 +437,7 @@ public class ReaderTextCSVParallel extends MatrixReader
 									cellValue = IOUtilFunctions.parseDoubleParallel(part);
 								}
 								if( cellValue != 0 ) {
-									_dest.setValueDenseUnsafe(row, col, cellValue);
+									a.set(row, col, cellValue);
 									lnnz++;
 								}
 								col++;
@@ -488,8 +460,7 @@ public class ReaderTextCSVParallel extends MatrixReader
 					}
 				} 
 				finally {
-					if (reader != null)
-						reader.close();
+					IOUtilFunctions.closeSilently(reader);
 				}
 			} 
 			catch (Exception ex) {

@@ -30,46 +30,17 @@ import org.apache.sysml.parser.Expression.*;
  * Lop to perform binary scalar operations. Both inputs must be scalars.
  * Example i = j + k, i = i + 1. 
  */
-
 public class BinaryScalar extends Lop 
-{	
-	
+{
 	public enum OperationTypes {
-		ADD, SUBTRACT, SUBTRACTRIGHT, MULTIPLY, DIVIDE, MODULUS, INTDIV,
+		ADD, SUBTRACT, MULTIPLY, DIVIDE, MODULUS, INTDIV,
 		LESS_THAN, LESS_THAN_OR_EQUALS, GREATER_THAN, GREATER_THAN_OR_EQUALS, EQUALS, NOT_EQUALS,
-		AND, OR, 
-		LOG,POW,MAX,MIN,PRINT,
-		IQSIZE,
-		Over,
+		AND, OR, XOR,
+		LOG,POW,MAX,MIN,PRINT,IQSIZE,
+		BW_AND, BW_OR, BW_XOR, BW_SHIFTL, BW_SHIFTR, //Bitwise operations
 	}
 	
-	OperationTypes operation;
-
-	/**
-	 * This overloaded constructor is used for setting exec type in case of spark backend
-	 * 
-	 * @param input1 low-level operator 1
-	 * @param input2 low-level operator 2
-	 * @param op operation type
-	 * @param dt data type
-	 * @param vt value type
-	 * @param et exec type
-	 */
-	public BinaryScalar(Lop input1, Lop input2, OperationTypes op, DataType dt, ValueType vt, ExecType et) 
-	{
-		super(Lop.Type.BinaryCP, dt, vt);		
-		operation = op;		
-		this.addInput(input1);
-		this.addInput(input2);
-		input1.addOutput(this);
-		input2.addOutput(this);
-
-		boolean breaksAlignment = false; // this field does not carry any meaning for this lop
-		boolean aligner = false;
-		boolean definesMRJob = false;
-		lps.addCompatibility(JobType.INVALID);
-		this.lps.setProperties(inputs, et, ExecLocation.ControlProgram, breaksAlignment, aligner, definesMRJob );
-	}
+	private final OperationTypes operation;
 	
 	/**
 	 * Constructor to perform a scalar operation
@@ -93,7 +64,7 @@ public class BinaryScalar extends Lop
 		boolean aligner = false;
 		boolean definesMRJob = false;
 		lps.addCompatibility(JobType.INVALID);
-		this.lps.setProperties(inputs, ExecType.CP, ExecLocation.ControlProgram, breaksAlignment, aligner, definesMRJob );
+		lps.setProperties(inputs, ExecType.CP, ExecLocation.ControlProgram, breaksAlignment, aligner, definesMRJob );
 	}
 
 	@Override
@@ -101,23 +72,18 @@ public class BinaryScalar extends Lop
 		return "Operation: " + operation;
 	}
 	
-	public OperationTypes getOperationType(){
+	public OperationTypes getOperationType() {
 		return operation;
 	}
 
 	@Override
-	public String getInstructions(String input1, String input2, String output) throws LopsException
-	{
-		String opString = getOpcode( operation );
-		
-		
-		
+	public String getInstructions(String input1, String input2, String output) {
 		StringBuilder sb = new StringBuilder();
 		
 		sb.append(getExecType());
 		sb.append(Lop.OPERAND_DELIMITOR);
 		
-		sb.append( opString );
+		sb.append( getOpcode(operation) );
 		sb.append( OPERAND_DELIMITOR );
 		
 		sb.append( getInputs().get(0).prepScalarInputOperand(getExecType()) );
@@ -132,17 +98,15 @@ public class BinaryScalar extends Lop
 	}
 	
 	@Override
-	public Lop.SimpleInstType getSimpleInstructionType()
-	{
-		switch (operation){
- 
-		default:
-			return SimpleInstType.Scalar;
-		}
+	public Lop.SimpleInstType getSimpleInstructionType() {
+		return SimpleInstType.Scalar;
 	}
 	
 	public static String getOpcode( OperationTypes op )
 	{
+		if( op == null )
+			throw new UnsupportedOperationException("Unable to get opcode for 'null'.");
+		
 		switch ( op ) 
 		{
 			/* Arithmetic */
@@ -180,7 +144,21 @@ public class BinaryScalar extends Lop
 				return "&&";
 			case OR:
 				return "||";
-			
+
+			/* Boolean built in binary function */
+			case XOR:
+				return "xor";
+			case BW_AND:
+				return "bitwAnd";
+			case BW_OR:
+				return "bitwOr";
+			case BW_XOR:
+				return "bitwXor";
+			case BW_SHIFTL:
+				return "bitwShiftL";
+			case BW_SHIFTR:
+				return "bitwShiftR";
+
 			/* Builtin Functions */
 			case LOG:
 				return "log";
@@ -196,7 +174,8 @@ public class BinaryScalar extends Lop
 				return "iqsize"; 
 				
 			default:
-				throw new UnsupportedOperationException("Instruction is not defined for BinaryScalar operator: " + op);
+				throw new UnsupportedOperationException("Instruction "
+					+ "is not defined for BinaryScalar operator: " + op);
 		}
 	}
 }

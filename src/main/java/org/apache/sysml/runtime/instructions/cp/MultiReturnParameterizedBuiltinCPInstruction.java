@@ -32,32 +32,22 @@ import org.apache.sysml.runtime.matrix.operators.Operator;
 import org.apache.sysml.runtime.transform.encode.Encoder;
 import org.apache.sysml.runtime.transform.encode.EncoderFactory;
 
+public class MultiReturnParameterizedBuiltinCPInstruction extends ComputationCPInstruction {
+	protected final ArrayList<CPOperand> _outputs;
 
-public class MultiReturnParameterizedBuiltinCPInstruction extends ComputationCPInstruction 
-{
-	protected ArrayList<CPOperand> _outputs;
-	
-	public MultiReturnParameterizedBuiltinCPInstruction(Operator op, CPOperand input1, CPOperand input2, ArrayList<CPOperand> outputs, String opcode, String istr ) {
-		super(op, input1, input2, outputs.get(0), opcode, istr);
-		_cptype = CPINSTRUCTION_TYPE.MultiReturnBuiltin;
+	private MultiReturnParameterizedBuiltinCPInstruction(Operator op, CPOperand input1, CPOperand input2,
+			ArrayList<CPOperand> outputs, String opcode, String istr) {
+		super(CPType.MultiReturnBuiltin, op, input1, input2, outputs.get(0), opcode, istr);
 		_outputs = outputs;
 	}
-	
+
 	public CPOperand getOutput(int i) {
 		return _outputs.get(i);
 	}
-	
-	/**
-	 * 
-	 * @param str
-	 * @return
-	 * @throws DMLRuntimeException
-	 */
-	public static MultiReturnParameterizedBuiltinCPInstruction parseInstruction ( String str ) 
-		throws DMLRuntimeException 
-	{
+
+	public static MultiReturnParameterizedBuiltinCPInstruction parseInstruction ( String str ) {
 		String[] parts = InstructionUtils.getInstructionPartsWithValueType(str);
-		ArrayList<CPOperand> outputs = new ArrayList<CPOperand>();
+		ArrayList<CPOperand> outputs = new ArrayList<>();
 		String opcode = parts[0];
 		
 		if ( opcode.equalsIgnoreCase("transformencode") ) {
@@ -75,9 +65,7 @@ public class MultiReturnParameterizedBuiltinCPInstruction extends ComputationCPI
 	}
 
 	@Override 
-	public void processInstruction(ExecutionContext ec) 
-		throws DMLRuntimeException 
-	{
+	public void processInstruction(ExecutionContext ec) {
 		//obtain and pin input frame
 		FrameBlock fin = ec.getFrameInput(input1.getName());
 		String spec = ec.getScalarInput(input2.getName(), input2.getValueType(), input2.isLiteral()).getStringValue();
@@ -91,7 +79,7 @@ public class MultiReturnParameterizedBuiltinCPInstruction extends ComputationCPI
 		
 		//release input and outputs
 		ec.releaseFrameInput(input1.getName());
-		ec.setMatrixOutput(getOutput(0).getName(), data);
+		ec.setMatrixOutput(getOutput(0).getName(), data, getExtendedOpcode());
 		ec.setFrameOutput(getOutput(1).getName(), meta);
 	}
 }

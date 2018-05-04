@@ -25,26 +25,24 @@ import java.util.ArrayList;
 
 public class WhileStatement extends Statement
 {
-		
-	
 	private ConditionalPredicate _predicate;
 	private ArrayList<StatementBlock> _body;
 	
-	public Statement rewriteStatement(String prefix) throws LanguageException{
+	@Override
+	public Statement rewriteStatement(String prefix) {
 		LOG.error(this.printErrorLocation() + "should not call rewriteStatement for WhileStatement");
 		throw new LanguageException(this.printErrorLocation() + "should not call rewriteStatement for WhileStatement");
 	}
 	
-	public WhileStatement(){
-		 _predicate = null;
-		 _body = new ArrayList<StatementBlock>();
+	public WhileStatement() {
+		_predicate = null;
+		_body = new ArrayList<>();
 	}
 	
 	public void setPredicate(ConditionalPredicate pred){
 		_predicate = pred;
 	}
-	
-	
+		
 	public void addStatementBlock(StatementBlock sb){
 		_body.add(sb);
 	}
@@ -66,11 +64,11 @@ public class WhileStatement extends Statement
 		return true;
 	}
 	
-
 	public void mergeStatementBlocks(){
 		_body = StatementBlock.mergeStatementBlocks(_body);
 	}
 	
+	@Override
 	public String toString(){
 		StringBuilder sb = new StringBuilder();
 		sb.append("while ( ");
@@ -83,15 +81,14 @@ public class WhileStatement extends Statement
 		return sb.toString();
 	}
 
-	public void initializeforwardLV(VariableSet activeIn) throws LanguageException{
-		LOG.error(this.printErrorLocation() + "should never call initializeforwardLV for WhileStatement");
+	@Override
+	public void initializeforwardLV(VariableSet activeIn) {
 		throw new LanguageException(this.printErrorLocation() + "should never call initializeforwardLV for WhileStatement");
 	}
 	
-	public VariableSet initializebackwardLV(VariableSet lo) throws LanguageException{
-		LOG.error(this.printErrorLocation() + "should never call initializeforwardLV for WhileStatement");
+	@Override
+	public VariableSet initializebackwardLV(VariableSet lo) {
 		throw new LanguageException(this.printErrorLocation() + "should never call initializeforwardLV for WhileStatement");
-		
 	}
 	
 	@Override

@@ -22,8 +22,8 @@ package org.apache.sysml.lops;
 
 import java.util.ArrayList;
 
+import org.apache.sysml.hops.FunctionOp;
 import org.apache.sysml.hops.Hop;
-import org.apache.sysml.hops.HopsException;
 import org.apache.sysml.lops.LopProperties.ExecLocation;
 import org.apache.sysml.lops.LopProperties.ExecType;
 import org.apache.sysml.lops.compile.JobType;
@@ -38,12 +38,10 @@ public class FunctionCallCP extends Lop
 	private String[] _outputs;
 	private ArrayList<Lop> _outputLops = null;
 
-	public FunctionCallCP(ArrayList<Lop> inputs, String fnamespace, String fname, String[] outputs, ArrayList<Hop> outputHops, ExecType et) 
-		throws HopsException, LopsException 
-	{
+	public FunctionCallCP(ArrayList<Lop> inputs, String fnamespace, String fname, String[] outputs, ArrayList<Hop> outputHops, ExecType et) {
 		this(inputs, fnamespace, fname, outputs, et);
 		if(outputHops != null) {
-			_outputLops = new ArrayList<Lop>();
+			_outputLops = new ArrayList<>();
 			for(Hop h : outputHops)
 				_outputLops.add( h.constructLops() );
 		}
@@ -106,7 +104,7 @@ public class FunctionCallCP extends Lop
 	 * Builtin functions have their namespace set to DMLProgram.INTERNAL_NAMESPACE ("_internal").
 	 */
 	@Override
-	public String getInstructions(String[] inputs, String[] outputs) throws LopsException
+	public String getInstructions(String[] inputs, String[] outputs)
 	{		
 		// Handle internal builtin functions
 		if (_fnamespace.equalsIgnoreCase(DMLProgram.INTERNAL_NAMESPACE) ) {
@@ -122,7 +120,7 @@ public class FunctionCallCP extends Lop
 		inst.append(getExecType());
 		
 		inst.append(Lop.OPERAND_DELIMITOR); 
-		inst.append("extfunct");
+		inst.append(FunctionOp.OPSTRING);
 		inst.append(Lop.OPERAND_DELIMITOR);
 		inst.append(_fnamespace);
 		inst.append(Lop.OPERAND_DELIMITOR);

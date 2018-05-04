@@ -184,23 +184,12 @@ public class ReblockMR
 		
 		Group group=runjob.getCounters().getGroup(MRJobConfiguration.NUM_NONZERO_CELLS);
 		for(int i=0; i<resultIndexes.length; i++) {
-			// number of non-zeros
 			stats[i].setNonZeros( group.getCounter(Integer.toString(i)) );
-			//	System.out.println("result #"+resultIndexes[i]+" ===>\n"+stats[i]);
 		}
 
 		return new JobReturn(stats, outputInfos, runjob.isSuccessful());
 	}
-	
-	/**
-	 * 
-	 * @param rlen
-	 * @param clen
-	 * @param nnz
-	 * @param defaultNumRed
-	 * @param numRedGroups
-	 * @return
-	 */
+
 	private static int determineNumReducers( long[] rlen, long[] clen, long[] nnz, int defaultNumRed, long numRedGroups )
 	{
 		//init return with default value

@@ -19,29 +19,23 @@
 
 package org.apache.sysml.runtime.instructions.spark.functions;
 
-import org.apache.spark.Accumulator;
 import org.apache.spark.api.java.function.Function;
-
+import org.apache.spark.util.LongAccumulator;
 import org.apache.sysml.runtime.matrix.data.MatrixBlock;
 
-/**
- * 
- */
 public class ComputeBinaryBlockNnzFunction implements Function<MatrixBlock,MatrixBlock> 
 {
 	private static final long serialVersionUID = -8396410450821999936L;
 	
-	private Accumulator<Double> _aNnz = null;
+	private LongAccumulator _aNnz = null;
 	
-	public ComputeBinaryBlockNnzFunction( Accumulator<Double> aNnz )
-	{
+	public ComputeBinaryBlockNnzFunction( LongAccumulator aNnz ) {
 		_aNnz = aNnz;
 	}
 
 	@Override
-	public MatrixBlock call(MatrixBlock arg0) throws Exception 
-	{
-		_aNnz.add( (double)arg0.getNonZeros() );
+	public MatrixBlock call(MatrixBlock arg0) {
+		_aNnz.add( arg0.getNonZeros() );
 		return arg0;
 	}
 }

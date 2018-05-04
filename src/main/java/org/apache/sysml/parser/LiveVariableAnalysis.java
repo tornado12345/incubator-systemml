@@ -22,8 +22,6 @@ package org.apache.sysml.parser;
 
 public abstract class LiveVariableAnalysis 
 {
-
-		
 	VariableSet _read;
 	VariableSet _updated;
 	VariableSet _gen;
@@ -59,12 +57,24 @@ public abstract class LiveVariableAnalysis
 		return _kill;
 	}
 	
-	public void setLiveOut(VariableSet lo){
+	public VariableSet getGen(){
+		return _gen;
+	}
+	
+	public void setLiveOut(VariableSet lo) {
 		_liveOut = lo;
 	}
 	
-	public void setLiveIn(VariableSet li){
+	public void setLiveIn(VariableSet li) {
 		_liveIn = li;
+	}
+	
+	public void setKill(VariableSet ki) {
+		_kill = ki;
+	}
+	
+	public void setGen(VariableSet ge) {
+		_gen = ge;
 	}
 	
 	public void setUpdatedVariables( VariableSet vars ){
@@ -75,20 +85,15 @@ public abstract class LiveVariableAnalysis
 		_read = vars;
 	}
 	
-	public abstract VariableSet initializeforwardLV(VariableSet activeIn) throws LanguageException;
-	public abstract VariableSet initializebackwardLV(VariableSet loPassed) throws LanguageException;
-	public abstract VariableSet analyze(VariableSet loPassed) throws LanguageException;
-	
-	
-	public void updateLiveVariablesIn(VariableSet liveIn){
-		 updateLiveVariables(_liveIn,liveIn);
-	}
+	public abstract VariableSet initializeforwardLV(VariableSet activeIn);
+	public abstract VariableSet initializebackwardLV(VariableSet loPassed);
+	public abstract VariableSet analyze(VariableSet loPassed);
 	
 	public void updateLiveVariablesOut(VariableSet liveOut){
 		 updateLiveVariables(_liveOut,liveOut);
 	}
 	
-	private void updateLiveVariables(VariableSet origVars, VariableSet newVars){
+	private static void updateLiveVariables(VariableSet origVars, VariableSet newVars){
 		for (String var : newVars.getVariables().keySet()){
 			if (origVars.containsVariable(var)){
 				DataIdentifier varId = newVars.getVariable(var);

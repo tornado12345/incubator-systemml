@@ -27,7 +27,6 @@ import org.junit.Test;
 import org.apache.sysml.api.DMLScript.RUNTIME_PLATFORM;
 import org.apache.sysml.lops.LopProperties.ExecType;
 import org.apache.sysml.parser.Expression.ValueType;
-import org.apache.sysml.runtime.DMLRuntimeException;
 import org.apache.sysml.runtime.matrix.MatrixCharacteristics;
 import org.apache.sysml.runtime.matrix.data.InputInfo;
 import org.apache.sysml.runtime.matrix.data.MatrixBlock;
@@ -192,7 +191,7 @@ public class FullDynWriteTest extends AutomatedTestBase
 	 * @return
 	 * @throws IOException 
 	 */
-	private double[][] readMatrix( String fname, InputInfo ii, long rows, long cols, int brows, int bcols ) 
+	private static double[][] readMatrix( String fname, InputInfo ii, long rows, long cols, int brows, int bcols ) 
 		throws IOException
 	{
 		MatrixBlock mb = DataConverter.readMatrixFromHDFS(fname, ii, rows, cols, brows, bcols);
@@ -200,20 +199,8 @@ public class FullDynWriteTest extends AutomatedTestBase
 		return C;
 	}
 	
-	/**
-	 * 
-	 * @param A
-	 * @param dir
-	 * @param oi
-	 * @param rows
-	 * @param cols
-	 * @param brows
-	 * @param bcols
-	 * @throws DMLRuntimeException
-	 * @throws IOException
-	 */
-	private void writeMatrix( double[][] A, String fname, OutputInfo oi, long rows, long cols, int brows, int bcols, long nnz ) 
-		throws DMLRuntimeException, IOException
+	private static void writeMatrix( double[][] A, String fname, OutputInfo oi, long rows, long cols, int brows, int bcols, long nnz ) 
+		throws IOException
 	{
 		MapReduceTool.deleteFileIfExistOnHDFS(fname);
 		MapReduceTool.deleteFileIfExistOnHDFS(fname+".mtd");
@@ -225,12 +212,7 @@ public class FullDynWriteTest extends AutomatedTestBase
 			MapReduceTool.writeMetaDataFile(fname+".mtd", ValueType.DOUBLE, mc, oi);
 	}
 	
-	/**
-	 * 
-	 * @param oinfo
-	 * @return
-	 */
-	private String getFormatString(OutputInfo oinfo)
+	private static String getFormatString(OutputInfo oinfo)
 	{
 		if( oinfo==OutputInfo.BinaryBlockOutputInfo )
 			return "binary";
@@ -244,20 +226,11 @@ public class FullDynWriteTest extends AutomatedTestBase
 		return null;
 	}
 	
-	/**
-	 * 
-	 * @param A
-	 * @return
-	 */
-	private long computeSum( double[][] A )
-	{
+	private static long computeSum( double[][] A ) {
 		double ret = 0;
-		
 		for( int i=0; i<A.length; i++ )
 			for( int j=0; j<A[i].length; j++ )
 				ret += A[i][j];
-		
 		return UtilFunctions.toLong(ret);
 	}
-	
 }

@@ -34,28 +34,18 @@ public class OptTreePlanMapping
 	
 	protected IDSequence _idSeq;
 	protected Map<Long, OptNode> _id_optnode;
-    
+	    
 	public OptTreePlanMapping()
 	{
 		_idSeq = new IDSequence();
-		_id_optnode = new HashMap<Long, OptNode>();
+		_id_optnode = new HashMap<>();
 	}
-	
-	/**
-	 * 
-	 * @param id
-	 * @return
-	 */
+
 	public OptNode getOptNode( long id )
 	{
 		return _id_optnode.get(id);
 	}
-	
-	/**
-	 * 
-	 * @param id
-	 * @return
-	 */
+
 	public long getMappedParentID( long id )
 	{
 		for( OptNode p : _id_optnode.values() )
@@ -65,10 +55,7 @@ public class OptTreePlanMapping
 						return p.getID();
 		return -1;
 	}
-	
-	/**
-	 * 
-	 */
+
 	public void clear()
 	{
 		_id_optnode.clear();

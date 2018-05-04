@@ -19,7 +19,6 @@
 
 package org.apache.sysml.runtime.functionobjects;
 
-import org.apache.sysml.runtime.DMLRuntimeException;
 import org.apache.sysml.runtime.instructions.cp.CM_COV_Object;
 import org.apache.sysml.runtime.instructions.cp.Data;
 import org.apache.sysml.runtime.instructions.cp.KahanObject;
@@ -35,7 +34,6 @@ import org.apache.sysml.runtime.instructions.cp.KahanObject;
  */
 public class COV extends ValueFunction
 {
-
 	private static final long serialVersionUID = 1865050401811477181L;
 
 	private static COV singleObj = null;
@@ -48,28 +46,20 @@ public class COV extends ValueFunction
 		return singleObj;
 	}
 	
-	private COV()
-	{
+	private COV() {
 		_plus = KahanPlus.getKahanPlusFnObject();
-	}
-	
-	public Object clone() throws CloneNotSupportedException {
-		// cloning is not supported for singleton classes
-		throw new CloneNotSupportedException();
 	}
 	
 	/**
 	 * General case for arbitrary weights w2
 	 * 
-	 * @param in1
-	 * @param u
-	 * @param v
-	 * @param w2
-	 * @return
-	 * @throws DMLRuntimeException
+	 * @param in1 input data
+	 * @param u ?
+	 * @param v ?
+	 * @param w2 ?
+	 * @return result
 	 */
 	public Data execute(Data in1, double u, double v, double w2) 
-		throws DMLRuntimeException 
 	{
 		CM_COV_Object cov1=(CM_COV_Object) in1;
 		if(cov1.isCOVAllZeros())
@@ -94,9 +84,14 @@ public class COV extends ValueFunction
 	
 	/**
 	 * Special case for weights w2==1
+	 * 
+	 * @param in1 ?
+	 * @param u ?
+	 * @param v ?
+	 * @return result
 	 */
+	@Override
 	public Data execute(Data in1, double u, double v) 
-		throws DMLRuntimeException 
 	{
 		CM_COV_Object cov1=(CM_COV_Object) in1;
 		if(cov1.isCOVAllZeros())
@@ -119,7 +114,8 @@ public class COV extends ValueFunction
 		return cov1;
 	}
 	
-	public Data execute(Data in1, Data in2) throws DMLRuntimeException 
+	@Override
+	public Data execute(Data in1, Data in2)
 	{
 		CM_COV_Object cov1=(CM_COV_Object) in1;
 		CM_COV_Object cov2=(CM_COV_Object) in2;

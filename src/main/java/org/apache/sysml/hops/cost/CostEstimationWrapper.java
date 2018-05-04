@@ -19,18 +19,12 @@
 
 package org.apache.sysml.hops.cost;
 
-import java.io.IOException;
-import java.util.ArrayList;
 import java.util.HashMap;
 
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.log4j.Level;
 import org.apache.log4j.Logger;
-
-import org.apache.sysml.hops.Hop;
-import org.apache.sysml.hops.HopsException;
-import org.apache.sysml.lops.LopsException;
 import org.apache.sysml.runtime.DMLRuntimeException;
 import org.apache.sysml.runtime.controlprogram.LocalVariableMap;
 import org.apache.sysml.runtime.controlprogram.Program;
@@ -43,9 +37,8 @@ public class CostEstimationWrapper
 	
 	public enum CostType { 
 		NUM_MRJOBS, //based on number of MR jobs, [number MR jobs]
-		STATIC, // based on FLOPS, read/write, etc, [time in sec]      
-		DYNAMIC // based on dynamic offline performance profile, [time in sec]
-	};
+		STATIC // based on FLOPS, read/write, etc, [time in sec]
+	}
 	
 	private static final boolean LDEBUG = false; //internal local debug level
 	private static final Log LOG = LogFactory.getLog(CostEstimationWrapper.class.getName());
@@ -74,12 +67,10 @@ public class CostEstimationWrapper
 		}
 	}
 	
-	public static double getTimeEstimate(Program rtprog, ExecutionContext ec) 
-		throws DMLRuntimeException
-	{
+	public static double getTimeEstimate(Program rtprog, ExecutionContext ec) {
 		Timing time = new Timing(true);
 		
-		HashMap<String,VarStats> stats = new HashMap<String, VarStats>();		
+		HashMap<String,VarStats> stats = new HashMap<>();
 		LocalVariableMap vars = (ec!=null)? ec.getVariables() : new LocalVariableMap(); 
 		
 		double costs = _costEstim.getTimeEstimate(rtprog, vars, stats);
@@ -87,36 +78,18 @@ public class CostEstimationWrapper
 		return costs;
 	}
 	
-	public static double getTimeEstimate(ProgramBlock pb, ExecutionContext ec, boolean recursive) 
-		throws DMLRuntimeException
-	{
+	public static double getTimeEstimate(ProgramBlock pb, ExecutionContext ec, boolean recursive) {
 		Timing time = new Timing(true);
 		
-		HashMap<String,VarStats> stats = new HashMap<String, VarStats>();		
+		HashMap<String,VarStats> stats = new HashMap<>();
 		LocalVariableMap vars = (ec!=null)? ec.getVariables() : new LocalVariableMap(); 
 		
 		double costs = _costEstim.getTimeEstimate(pb, vars, stats, recursive);
 		LOG.debug("Finished estimation in "+time.stop()+"ms.");
 		return costs;
 	}
-	
-	public static double getTimeEstimate( ArrayList<Hop> hops, ExecutionContext ec ) 
-		throws DMLRuntimeException, HopsException, LopsException, IOException
-	{
-		Timing time = new Timing(true);
-		
-		HashMap<String,VarStats> stats = new HashMap<String, VarStats>();
-		LocalVariableMap vars = (ec!=null)? ec.getVariables() : new LocalVariableMap(); 
-		
-		double costs = _costEstim.getTimeEstimate(hops, vars, stats);
-		LOG.debug("Finished estimation in "+time.stop()+"ms.");
-		
-		return costs;
-	}
 
-	private static CostEstimator createCostEstimator( CostType type ) 
-		throws DMLRuntimeException
-	{
+	private static CostEstimator createCostEstimator( CostType type ) {
 		switch( type )
 		{
 			case NUM_MRJOBS:

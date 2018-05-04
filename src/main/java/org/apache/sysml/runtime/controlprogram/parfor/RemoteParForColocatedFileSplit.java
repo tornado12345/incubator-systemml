@@ -39,6 +39,7 @@ import org.apache.hadoop.mapred.lib.NLineInputFormat;
 import org.apache.sysml.conf.ConfigurationManager;
 import org.apache.sysml.runtime.controlprogram.parfor.Task.TaskType;
 import org.apache.sysml.runtime.instructions.cp.IntObject;
+import org.apache.sysml.runtime.io.IOUtilFunctions;
 
 
 /**
@@ -47,7 +48,6 @@ import org.apache.sysml.runtime.instructions.cp.IntObject;
  */
 public class RemoteParForColocatedFileSplit extends FileSplit
 {
-	
 	private String _fname = null;
 	private int    _blen  = 1;
 	
@@ -56,9 +56,8 @@ public class RemoteParForColocatedFileSplit extends FileSplit
 	 * via reflection (since private not inherited from FileSplit).
 	 */
 	@SuppressWarnings("unused")
-	private RemoteParForColocatedFileSplit()
-	{
-		super( null, -1, -1, new String[]{} );	
+	private RemoteParForColocatedFileSplit() {
+		super( null, -1, -1, new String[]{} );
 	}
 	
 	public RemoteParForColocatedFileSplit( FileSplit split, String fname, int blen ) 
@@ -80,20 +79,25 @@ public class RemoteParForColocatedFileSplit extends FileSplit
 		//time.start();
 		
 		JobConf job = new JobConf(ConfigurationManager.getCachedJobConf());
-		FileSystem fs = FileSystem.get(job);
+		FileSystem fs = IOUtilFunctions.getFileSystem(getPath(), job);
 		
 		//read task string
 		LongWritable key = new LongWritable();
 		Text value = new Text();
-		RecordReader<LongWritable,Text> reader = new NLineInputFormat().getRecordReader(this, job, Reporter.NULL);
-		reader.next(key, value);
-		reader.close();
+		RecordReader<LongWritable,Text> reader = null;
+		try {
+			reader = new NLineInputFormat().getRecordReader(this, job, Reporter.NULL);
+			reader.next(key, value);
+		}
+		finally {
+			IOUtilFunctions.closeSilently(reader);
+		}
 		
 		//parse task
 		Task t = Task.parseCompactString( value.toString() );
 		
 		//get all locations
-		HashMap<String, Integer> hosts = new HashMap<String,Integer>();
+		HashMap<String, Integer> hosts = new HashMap<>();
 		
 		if( t.getType() == TaskType.SET )
 		{
@@ -120,38 +124,14 @@ public class RemoteParForColocatedFileSplit extends FileSplit
 				for( BlockLocation bl : tmp1 )
 					countHosts(hosts, bl.getHosts());
 			}
-			
-			/*
-			int lFrom  = t.getIterations().get(0).getIntValue();
-			int lTo    = t.getIterations().get(1).getIntValue();
-			int lIncr  = t.getIterations().get(2).getIntValue();				
-			for( int i=lFrom; i<=lTo; i+=lIncr )
-			{
-				String fname = _fname+"/"+String.valueOf( ((i-_offset)/_blen+_offset) );
-				FileSystem fs = FileSystem.get(job);
-				FileStatus status = fs.getFileStatus(new Path(fname)); 
-				BlockLocation[] tmp1 = fs.getFileBlockLocations(status, 0, status.getLen());
-				for( BlockLocation bl : tmp1 )
-					countHosts(hosts, bl.getHosts());
-			}*/
 		}
-
-		//System.out.println("Get locations "+time.stop()+"");
 		
 		//majority consensus on top host
 		return getTopHosts(hosts);
 	}
 
-	
-	/**
-	 * 
-	 * @param hosts
-	 * @param names
-	 */
-	private void countHosts( HashMap<String,Integer> hosts, String[] names )
-	{
-		for( String name : names )
-		{
+	private static void countHosts( HashMap<String,Integer> hosts, String[] names ) {
+		for( String name : names ) {
 			Integer tmp = hosts.get(name);
 			if( tmp != null )
 				hosts.put(name, tmp+1);
@@ -159,17 +139,10 @@ public class RemoteParForColocatedFileSplit extends FileSplit
 				hosts.put(name, 1);
 		}
 	}
-	
-	/**
-	 * 
-	 * @param hosts
-	 * @return
-	 */
-	private String[] getTopHosts( HashMap<String,Integer> hosts )
-	{
+
+	private static String[] getTopHosts( HashMap<String,Integer> hosts ) {
 		int max = Integer.MIN_VALUE;
-		HashSet<String> maxName = new HashSet<String>();
-		
+		HashSet<String> maxName = new HashSet<>();
 		for( Entry<String,Integer> e : hosts.entrySet() )
 			if( e.getValue() > max ) {
 				maxName.clear();
@@ -178,8 +151,6 @@ public class RemoteParForColocatedFileSplit extends FileSplit
 			}
 			else if( e.getValue() == max )
 				maxName.add(e.getKey());
-		
-		//System.out.println("HOSTS: "+ProgramConverter.serializeStringHashSet(maxName));
 		return maxName.toArray(new String[0]);
 	}
 }

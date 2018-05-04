@@ -36,8 +36,7 @@ import org.apache.sysml.runtime.io.FrameReaderFactory;
 import org.apache.sysml.runtime.io.FrameWriter;
 import org.apache.sysml.runtime.io.FrameWriterFactory;
 import org.apache.sysml.runtime.matrix.MatrixCharacteristics;
-import org.apache.sysml.runtime.matrix.MatrixDimensionsMetaData;
-import org.apache.sysml.runtime.matrix.MatrixFormatMetaData;
+import org.apache.sysml.runtime.matrix.MetaDataFormat;
 import org.apache.sysml.runtime.matrix.MetaData;
 import org.apache.sysml.runtime.matrix.data.FileFormatProperties;
 import org.apache.sysml.runtime.matrix.data.FrameBlock;
@@ -50,41 +49,22 @@ public class FrameObject extends CacheableData<FrameBlock>
 	private static final long serialVersionUID = 1755082174281927785L;
 
 	private ValueType[] _schema = null;
-	
-	/**
-	 * 
-	 */
+
 	protected FrameObject() {
 		super(DataType.FRAME, ValueType.STRING);
 	}
-	
-	/**
-	 * 
-	 * @param fname
-	 */
+
 	public FrameObject(String fname) {
 		this();
 		setFileName(fname);
 	}
-	
-	/**
-	 * 
-	 * @param fname
-	 * @param meta
-	 */
+
 	public FrameObject(String fname, MetaData meta) {
 		this();
 		setFileName(fname);
 		setMetaData(meta);
 	}
-	
-	/**
-	 * 
-	 * @param fname
-	 * @param meta
-	 * @param schema
-	 * 
-	 */
+
 	public FrameObject(String fname, MetaData meta, ValueType[] schema) {
 		this();
 		setFileName(fname);
@@ -95,7 +75,7 @@ public class FrameObject extends CacheableData<FrameBlock>
 	/**
 	 * Copy constructor that copies meta data but NO data.
 	 * 
-	 * @param fo
+	 * @param fo frame object
 	 */
 	public FrameObject(FrameObject fo) {
 		super(fo);
@@ -107,10 +87,11 @@ public class FrameObject extends CacheableData<FrameBlock>
 	}
 
 	/**
+	 * Obtain schema of value types
 	 * 
 	 * @param cl column lower bound, inclusive
 	 * @param cu column upper bound, inclusive
-	 * @return
+	 * @return schema of value types
 	 */
 	public ValueType[] getSchema(int cl, int cu) {
 		return (_schema!=null && _schema.length>cu) ? Arrays.copyOfRange(_schema, cl, cu+1) :
@@ -121,8 +102,8 @@ public class FrameObject extends CacheableData<FrameBlock>
 	 * Creates a new collection which contains the schema of the current
 	 * frame object concatenated with the schema of the passed frame object.
 	 * 
-	 * @param fo
-	 * @return
+	 * @param fo frame object
+	 * @return schema of value types
 	 */
 	public ValueType[] mergeSchemas(FrameObject fo) {
 		return (ValueType[]) ArrayUtils.addAll(
@@ -134,7 +115,7 @@ public class FrameObject extends CacheableData<FrameBlock>
 		if( schema.equals("*") ) {
 			//populate default schema
 			int clen = (int) getNumColumns();
-			if( clen > 0 ) //known number of cols
+			if( clen >= 0 ) //known number of cols
 				_schema = UtilFunctions.nCopies(clen, ValueType.STRING);
 		}
 		else {
@@ -151,34 +132,24 @@ public class FrameObject extends CacheableData<FrameBlock>
 	}
 		
 	@Override
-	public void refreshMetaData() 
-		throws CacheException
-	{
+	public void refreshMetaData() {
 		if ( _data == null || _metaData ==null ) //refresh only for existing data
-			throw new CacheException("Cannot refresh meta data because there is no data or meta data. "); 
+			throw new DMLRuntimeException("Cannot refresh meta data because there is no data or meta data. "); 
 
 		//update matrix characteristics
-		MatrixCharacteristics mc = ((MatrixDimensionsMetaData) _metaData).getMatrixCharacteristics();
+		MatrixCharacteristics mc = _metaData.getMatrixCharacteristics();
 		mc.setDimension( _data.getNumRows(),_data.getNumColumns() );
 		mc.setNonZeros(_data.getNumRows()*_data.getNumColumns());
 		
 		//update schema information
 		_schema = _data.getSchema();
 	}
-	
-	/**
-	 * 
-	 * @return
-	 */
+
 	public long getNumRows() {
 		MatrixCharacteristics mc = getMatrixCharacteristics();
 		return mc.getRows();
 	}
 
-	/**
-	 * 
-	 * @return
-	 */
 	public long getNumColumns() {
 		MatrixCharacteristics mc = getMatrixCharacteristics();
 		return mc.getCols();
@@ -193,7 +164,7 @@ public class FrameObject extends CacheableData<FrameBlock>
 	protected FrameBlock readBlobFromHDFS(String fname, long rlen, long clen)
 		throws IOException 
 	{
-		MatrixFormatMetaData iimd = (MatrixFormatMetaData) _metaData;
+		MetaDataFormat iimd = (MetaDataFormat) _metaData;
 		MatrixCharacteristics mc = iimd.getMatrixCharacteristics();
 		
 		//handle missing schema if necessary
@@ -228,7 +199,7 @@ public class FrameObject extends CacheableData<FrameBlock>
 		//prepare return status (by default only collect)
 		status.setValue(false);
 		
-		MatrixFormatMetaData iimd = (MatrixFormatMetaData) _metaData;
+		MetaDataFormat iimd = (MetaDataFormat) _metaData;
 		MatrixCharacteristics mc = iimd.getMatrixCharacteristics();
 		int rlen = (int)mc.getRows();
 		int clen = (int)mc.getCols();
@@ -250,11 +221,10 @@ public class FrameObject extends CacheableData<FrameBlock>
 		catch(DMLRuntimeException ex) {
 			throw new IOException(ex);
 		}
-				
+		
 		//sanity check correct output
-		if( fb == null ) {
-			throw new IOException("Unable to load frame from rdd: "+lrdd.getVarName());
-		}
+		if( fb == null )
+			throw new IOException("Unable to load frame from rdd.");
 		
 		return fb;
 	}
@@ -273,7 +243,7 @@ public class FrameObject extends CacheableData<FrameBlock>
 		throws IOException, DMLRuntimeException 
 	{
 		//prepare output info
-		MatrixFormatMetaData iimd = (MatrixFormatMetaData) _metaData;
+		MetaDataFormat iimd = (MetaDataFormat) _metaData;
 		OutputInfo oinfo = (ofmt != null ? OutputInfo.stringToOutputInfo (ofmt ) 
 				: InputInfo.getMatchingOutputInfo (iimd.getInputInfo ()));
 	    

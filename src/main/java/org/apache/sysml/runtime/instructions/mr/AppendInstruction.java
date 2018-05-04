@@ -27,40 +27,20 @@ import org.apache.sysml.runtime.matrix.mapred.CachedValueMap;
 import org.apache.sysml.runtime.matrix.mapred.IndexedMatrixValue;
 import org.apache.sysml.runtime.matrix.operators.Operator;
 
-
-public class AppendInstruction extends BinaryMRInstructionBase 
-{
+public class AppendInstruction extends BinaryMRInstructionBase {
 	protected boolean _cbind = true;
-	
-	/**
-	 * 
-	 * @param op
-	 * @param in1
-	 * @param in2
-	 * @param out
-	 * @param istr
-	 */
-	public AppendInstruction(Operator op, byte in1, byte in2, byte out, boolean cbind, String istr)
-	{
-		super(op, in1, in2, out);
-		instString = istr;	
-		mrtype = MRINSTRUCTION_TYPE.Append;
+
+	protected AppendInstruction(Operator op, byte in1, byte in2, byte out, boolean cbind, String istr) {
+		super(MRType.Append, op, in1, in2, out);
+		instString = istr;
 		_cbind = cbind;
 	}
 
 	public boolean isCBind() {
 		return _cbind;
 	}
-	
-	/**
-	 * 
-	 * @param str
-	 * @return
-	 * @throws DMLRuntimeException
-	 */
-	public static AppendInstruction parseInstruction ( String str ) 
-		throws DMLRuntimeException 
-	{
+
+	public static AppendInstruction parseInstruction ( String str ) {
 		String opcode = InstructionUtils.getOpCode(str);
 		if( opcode.equals("mappend") )
 			return AppendMInstruction.parseInstruction(str);
@@ -75,9 +55,7 @@ public class AppendInstruction extends BinaryMRInstructionBase
 	
 	@Override
 	public void processInstruction(Class<? extends MatrixValue> valueClass,
-			CachedValueMap cachedValues, IndexedMatrixValue tempValue, IndexedMatrixValue zeroInput, int brlen, int bclen)
-			throws DMLRuntimeException 
-	{
+			CachedValueMap cachedValues, IndexedMatrixValue tempValue, IndexedMatrixValue zeroInput, int brlen, int bclen) {
 		throw new DMLRuntimeException("Operations on base append instruction not supported.");
 	}
 }

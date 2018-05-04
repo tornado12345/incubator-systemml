@@ -29,7 +29,7 @@ public class DebugState
 {
 	
 	public String [] dmlScript;
-	public Stack<DMLFrame> callStack = new Stack<DMLFrame>();
+	public Stack<DMLFrame> callStack = new Stack<>();
 	public DMLProgramCounter pc = null, prevPC = null;
 	public LocalVariableMap frameVariables=null;
 	public String dbCommand=null;
@@ -58,9 +58,8 @@ public class DebugState
 	/**
 	 * Getter for current frame's program counter
 	 * @return Current frame program counter
-	 * @throws DMLRuntimeException if DMLRuntimeException occurs
 	 */
-	public DMLProgramCounter getPC() throws DMLRuntimeException {
+	public DMLProgramCounter getPC() {
 		if(!DMLScript.ENABLE_DEBUG_MODE) {
 			System.err.println("Error: This functionality (getPC) is available only in debug mode");
 			//// Fatal error to avoid unintentional bugs 
@@ -154,19 +153,7 @@ public class DebugState
 			return null;
 		return callStack.pop();		
 	}
-	
-	/**
-	 * Get stack frame at indicated location (if any)
-	 * @param location Frame position in call stack
-	 * @return Stack frame at specified location
-	 */
-	protected DMLFrame getFrame(int location) {
-		if (location < 0 || location >= callStack.size()) {
-			return null;
-		}
-		return callStack.elementAt(location);
-	}
-	
+
 	/**
 	 * Get current call stack (if any) 
 	 * @return Stack callStack 

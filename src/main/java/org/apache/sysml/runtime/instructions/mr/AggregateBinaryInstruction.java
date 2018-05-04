@@ -28,6 +28,7 @@ import org.apache.sysml.runtime.DMLRuntimeException;
 import org.apache.sysml.runtime.functionobjects.Multiply;
 import org.apache.sysml.runtime.functionobjects.Plus;
 import org.apache.sysml.runtime.instructions.InstructionUtils;
+import org.apache.sysml.runtime.matrix.data.MatrixBlock;
 import org.apache.sysml.runtime.matrix.data.MatrixIndexes;
 import org.apache.sysml.runtime.matrix.data.MatrixValue;
 import org.apache.sysml.runtime.matrix.data.OperationsOnMatrixValues;
@@ -39,40 +40,27 @@ import org.apache.sysml.runtime.matrix.operators.AggregateBinaryOperator;
 import org.apache.sysml.runtime.matrix.operators.AggregateOperator;
 import org.apache.sysml.runtime.matrix.operators.Operator;
 
-
-public class AggregateBinaryInstruction extends BinaryMRInstructionBase implements IDistributedCacheConsumer
-{	
+public class AggregateBinaryInstruction extends BinaryMRInstructionBase implements IDistributedCacheConsumer {
 	private String _opcode = null;
-	
-	//optional argument for cpmm
+
+	// optional argument for cpmm
 	private MMCJType _aggType = MMCJType.AGG;
-	
-	//optional argument for mapmm
+
+	// optional argument for mapmm
 	private CacheType _cacheType = null;
 	private boolean _outputEmptyBlocks = true;
-	
-	public AggregateBinaryInstruction(Operator op, String opcode, byte in1, byte in2, byte out, String istr)
-	{
-		super(op, in1, in2, out);
-		mrtype = MRINSTRUCTION_TYPE.AggregateBinary;
+
+	private AggregateBinaryInstruction(Operator op, String opcode, byte in1, byte in2, byte out, String istr) {
+		super(MRType.AggregateBinary, op, in1, in2, out);
 		instString = istr;
-		
 		_opcode = opcode;
 	}
-	
-	/**
-	 * 
-	 * @param flag
-	 */
+
 	public void setCacheTypeMapMult( CacheType type )
 	{
 		_cacheType = type;
 	}
-	
-	/**
-	 * 
-	 * @param flag
-	 */
+
 	public void setOutputEmptyBlocksMapMult( boolean flag )
 	{
 		_outputEmptyBlocks = flag;
@@ -92,16 +80,8 @@ public class AggregateBinaryInstruction extends BinaryMRInstructionBase implemen
 	{
 		return _aggType;
 	}
-	
-	/**
-	 * 
-	 * @param str
-	 * @return
-	 * @throws DMLRuntimeException
-	 */
-	public static AggregateBinaryInstruction parseInstruction ( String str ) 
-		throws DMLRuntimeException 
-	{
+
+	public static AggregateBinaryInstruction parseInstruction ( String str ) {
 		String[] parts = InstructionUtils.getInstructionParts ( str );
 		
 		byte in1, in2, out;
@@ -133,7 +113,7 @@ public class AggregateBinaryInstruction extends BinaryMRInstructionBase implemen
 	@Override //IDistributedCacheConsumer
 	public boolean isDistCacheOnlyIndex( String inst, byte index )
 	{
-		return _cacheType.isRightCache() ? 
+		return _cacheType.isRight() ? 
 				(index==input2 && index!=input1) : 
 				(index==input1 && index!=input2);
 	}
@@ -141,22 +121,20 @@ public class AggregateBinaryInstruction extends BinaryMRInstructionBase implemen
 	@Override //IDistributedCacheConsumer
 	public void addDistCacheIndex( String inst, ArrayList<Byte> indexes )
 	{
-		indexes.add( _cacheType.isRightCache() ? input2 : input1 );
+		indexes.add( _cacheType.isRight() ? input2 : input1 );
 	}
 	
 	@Override
 	public void processInstruction(Class<? extends MatrixValue> valueClass,
 			CachedValueMap cachedValues, IndexedMatrixValue tempValue,
-			IndexedMatrixValue zeroInput, int blockRowFactor, int blockColFactor)
-			throws DMLRuntimeException 
-	{	
+			IndexedMatrixValue zeroInput, int blockRowFactor, int blockColFactor) {
 		IndexedMatrixValue in1=cachedValues.getFirst(input1);
 		IndexedMatrixValue in2=cachedValues.getFirst(input2);
 		
 		if ( _opcode.equals(MapMult.OPCODE) ) 
 		{
 			//check empty inputs (data for different instructions)
-			if( _cacheType.isRightCache() ? in1==null : in2==null )
+			if( _cacheType.isRight() ? in1==null : in2==null )
 				return;
 			
 			// one of the input is from distributed cache.
@@ -176,48 +154,45 @@ public class AggregateBinaryInstruction extends BinaryMRInstructionBase implemen
 				out=cachedValues.holdPlace(output, valueClass);
 
 			//process instruction
-			OperationsOnMatrixValues.performAggregateBinary(
-					    in1.getIndexes(), in1.getValue(), 
-						in2.getIndexes(), in2.getValue(), 
-						out.getIndexes(), out.getValue(), 
-						((AggregateBinaryOperator)optr));
+			OperationsOnMatrixValues.matMult(
+				in1.getIndexes(), (MatrixBlock) in1.getValue(),
+				in2.getIndexes(), (MatrixBlock) in2.getValue(),
+				out.getIndexes(), (MatrixBlock) out.getValue(),
+				((AggregateBinaryOperator)optr));
 			
 			//put the output value in the cache
 			if(out==tempValue)
-				cachedValues.add(output, out);				
+				cachedValues.add(output, out);
 		}
 	}
 	
 	/**
 	 * Helper function to perform map-side matrix-matrix multiplication.
 	 * 
-	 * @param valueClass
-	 * @param cachedValues
-	 * @param in1
-	 * @param in2
-	 * @param blockRowFactor
-	 * @param blockColFactor
-	 * @throws DMLRuntimeException
+	 * @param valueClass matrix value class
+	 * @param cachedValues cached value map
+	 * @param in1 indexed matrix value 1
+	 * @param in2 indexed matrix value 2
+	 * @param blockRowFactor ?
+	 * @param blockColFactor ?
 	 */
 	private void processMapMultInstruction(Class<? extends MatrixValue> valueClass, CachedValueMap cachedValues, IndexedMatrixValue in1, IndexedMatrixValue in2, int blockRowFactor, int blockColFactor) 
-		throws DMLRuntimeException 
 	{
 		boolean removeOutput = true;
 		
-		if( _cacheType.isRightCache() )
+		if( _cacheType.isRight() )
 		{
 			DistributedCacheInput dcInput = MRBaseForCommonInstructions.dcValues.get(input2);
 			
 			long in2_cols = dcInput.getNumCols();
 			long  in2_colBlocks = (long)Math.ceil(((double)in2_cols)/dcInput.getNumColsPerBlock());
 			
-			for(int bidx=1; bidx <= in2_colBlocks; bidx++) 
-			{	
+			for(int bidx=1; bidx <= in2_colBlocks; bidx++) {
 				// Matrix multiply A[i,k] %*% B[k,bid]
 				
 				// Setup input2 block
 				IndexedMatrixValue in2Block = dcInput.getDataBlock((int)in1.getIndexes().getColumnIndex(), bidx);
-							
+				
 				MatrixValue in2BlockValue = in2Block.getValue(); 
 				MatrixIndexes in2BlockIndex = in2Block.getIndexes();
 				
@@ -225,10 +200,9 @@ public class AggregateBinaryInstruction extends BinaryMRInstructionBase implemen
 				IndexedMatrixValue out = cachedValues.holdPlace(output, valueClass);
 				
 				//process instruction
-				OperationsOnMatrixValues.performAggregateBinary(in1.getIndexes(), in1.getValue(), 
-							in2BlockIndex, in2BlockValue, out.getIndexes(), out.getValue(), 
-							((AggregateBinaryOperator)optr));	
-				
+				OperationsOnMatrixValues.matMult(in1.getIndexes(), (MatrixBlock)in1.getValue(), 
+					in2BlockIndex, (MatrixBlock) in2BlockValue, out.getIndexes(), (MatrixBlock)out.getValue(), 
+					((AggregateBinaryOperator)optr));
 				removeOutput &= ( !_outputEmptyBlocks && out.getValue().isEmpty() );
 			}
 		}
@@ -245,7 +219,7 @@ public class AggregateBinaryInstruction extends BinaryMRInstructionBase implemen
 				
 				// Setup input2 block
 				IndexedMatrixValue in1Block = dcInput.getDataBlock(bidx, (int)in2.getIndexes().getRowIndex());
-							
+				
 				MatrixValue in1BlockValue = in1Block.getValue(); 
 				MatrixIndexes in1BlockIndex = in1Block.getIndexes();
 				
@@ -253,14 +227,14 @@ public class AggregateBinaryInstruction extends BinaryMRInstructionBase implemen
 				IndexedMatrixValue out = cachedValues.holdPlace(output, valueClass);
 				
 				//process instruction
-				OperationsOnMatrixValues.performAggregateBinary(in1BlockIndex, in1BlockValue, 
-						in2.getIndexes(), in2.getValue(),
-						out.getIndexes(), out.getValue(), 
-							((AggregateBinaryOperator)optr));
-			
+				OperationsOnMatrixValues.matMult(
+					in1BlockIndex, (MatrixBlock)in1BlockValue,
+					in2.getIndexes(), (MatrixBlock)in2.getValue(),
+					out.getIndexes(), (MatrixBlock)out.getValue(),
+					((AggregateBinaryOperator)optr));
 				removeOutput &= ( !_outputEmptyBlocks && out.getValue().isEmpty() );
 			}
-		}		
+		}
 		
 		//empty block output filter (enabled by compiler consumer operation is in CP)
 		if( removeOutput )

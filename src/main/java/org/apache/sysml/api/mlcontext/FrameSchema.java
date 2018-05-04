@@ -6,9 +6,9 @@
  * to you under the Apache License, Version 2.0 (the
  * "License"); you may not use this file except in compliance
  * with the License.  You may obtain a copy of the License at
- * 
+ *
  *   http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing,
  * software distributed under the License is distributed on an
  * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
@@ -19,8 +19,9 @@
 
 package org.apache.sysml.api.mlcontext;
 
-import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
+import java.util.stream.Collectors;
 
 import org.apache.commons.lang3.StringUtils;
 import org.apache.sysml.parser.Expression.ValueType;
@@ -39,7 +40,7 @@ public class FrameSchema {
 	/**
 	 * Constructor that specifies the schema as a list of {@code ValueType}
 	 * values.
-	 * 
+	 *
 	 * @param schema
 	 *            the frame schema
 	 */
@@ -49,7 +50,7 @@ public class FrameSchema {
 
 	/**
 	 * Constructor that specifies the schema as a comma-separated string.
-	 * 
+	 *
 	 * @param schema
 	 *            the frame schema as a string
 	 */
@@ -59,7 +60,7 @@ public class FrameSchema {
 
 	/**
 	 * Obtain the frame schema
-	 * 
+	 *
 	 * @return the frame schema as a list of {@code ValueType} values
 	 */
 	public List<ValueType> getSchema() {
@@ -68,7 +69,7 @@ public class FrameSchema {
 
 	/**
 	 * Set the frame schema
-	 * 
+	 *
 	 * @param schema
 	 *            the frame schema
 	 */
@@ -79,7 +80,7 @@ public class FrameSchema {
 	/**
 	 * Set the frame schema, specifying the frame schema as a comma-separated
 	 * string
-	 * 
+	 *
 	 * @param schema
 	 *            the frame schema as a string
 	 */
@@ -89,26 +90,22 @@ public class FrameSchema {
 
 	/**
 	 * Convert a schema string to a list of {@code ValueType} values
-	 * 
+	 *
 	 * @param schemaString
 	 *            the frame schema as a string
 	 * @return the frame schema as a list of {@code ValueType} values
 	 */
-	private List<ValueType> schemaStringToListOfValueTypes(String schemaString) {
-		if (StringUtils.isBlank(schemaString)) {
+	private static List<ValueType> schemaStringToListOfValueTypes(String schemaString) {
+		if (StringUtils.isBlank(schemaString))
 			return null;
-		}
-		String[] cols = schemaString.split(",");
-		List<ValueType> list = new ArrayList<ValueType>();
-		for (String col : cols) {
-			list.add(ValueType.valueOf(col.toUpperCase()));
-		}
-		return list;
+		return Arrays.stream(schemaString.split(","))
+			.map(s -> ValueType.valueOf(s.toUpperCase()))
+			.collect(Collectors.toList());
 	}
 
 	/**
 	 * Obtain the schema as a comma-separated string
-	 * 
+	 *
 	 * @return the frame schema as a string
 	 */
 	public String getSchemaAsString() {

@@ -19,59 +19,55 @@
 
 package org.apache.sysml.runtime.instructions.spark;
 
-import org.apache.sysml.api.MLContextProxy;
 import org.apache.sysml.lops.runtime.RunMRJobs;
-import org.apache.sysml.runtime.DMLRuntimeException;
 import org.apache.sysml.runtime.controlprogram.context.ExecutionContext;
-import org.apache.sysml.runtime.controlprogram.context.SparkExecutionContext;
 import org.apache.sysml.runtime.instructions.Instruction;
 import org.apache.sysml.runtime.instructions.SPInstructionParser;
 import org.apache.sysml.runtime.matrix.operators.Operator;
 import org.apache.sysml.utils.Statistics;
 
-/**
- * 
- * 
- */
-public abstract class SPInstruction extends Instruction 
-{
-	
-	public enum SPINSTRUCTION_TYPE { 
+public abstract class SPInstruction extends Instruction {
+
+	public enum SPType { 
 		MAPMM, MAPMMCHAIN, CPMM, RMM, TSMM, TSMM2, PMM, ZIPMM, PMAPMM, //matrix multiplication instructions  
-		MatrixIndexing, Reorg, ArithmeticBinary, RelationalBinary, AggregateUnary, AggregateTernary, Reblock, CSVReblock, 
-		Builtin, BuiltinUnary, BuiltinBinary, MultiReturnBuiltin, Checkpoint, Compression, Cast,
+		MatrixIndexing, Reorg, Binary, Ternary,
+		AggregateUnary, AggregateTernary, Reblock, CSVReblock, 
+		Builtin, Unary, BuiltinNary, MultiReturnBuiltin, Checkpoint, Compression, Cast,
 		CentralMoment, Covariance, QSort, QPick, 
 		ParameterizedBuiltin, MAppend, RAppend, GAppend, GAlignedAppend, Rand, 
-		MatrixReshape, Ternary, Quaternary, CumsumAggregate, CumsumOffset, BinUaggChain, UaggOuterChain, 
-		Write, INVALID, 
-	};
-	
-	protected SPINSTRUCTION_TYPE _sptype;
-	protected Operator _optr;
-	
-	protected boolean _requiresLabelUpdate = false;
-	
-	public SPInstruction(String opcode, String istr) {
-		type = INSTRUCTION_TYPE.SPARK;
+		MatrixReshape, Ctable, Quaternary, CumsumAggregate, CumsumOffset, BinUaggChain, UaggOuterChain, 
+		Write, SpoofFused, Convolution
+	}
+
+	protected final SPType _sptype;
+	protected final Operator _optr;
+	protected final boolean _requiresLabelUpdate;
+
+	protected SPInstruction(SPType type, String opcode, String istr) {
+		this(type, null, opcode, istr);
+	}
+
+	protected SPInstruction(SPType type, Operator op, String opcode, String istr) {
+		_sptype = type;
+		_optr = op;
 		instString = istr;
+
+		// prepare opcode and update requirement for repeated usage
 		instOpcode = opcode;
-		
-		//update requirement for repeated usage
 		_requiresLabelUpdate = super.requiresLabelUpdate();
 	}
 	
-	public SPInstruction(Operator op, String opcode, String istr) {
-		this(opcode, istr);
-		_optr = op;
+	@Override
+	public IType getType() {
+		return IType.SPARK;
 	}
-	
-	public SPINSTRUCTION_TYPE getSPInstructionType() {
+
+	public SPType getSPInstructionType() {
 		return _sptype;
 	}
 	
 	@Override
-	public boolean requiresLabelUpdate()
-	{
+	public boolean requiresLabelUpdate() {
 		return _requiresLabelUpdate;
 	}
 
@@ -81,9 +77,7 @@ public abstract class SPInstruction extends Instruction
 	}
 	
 	@Override
-	public Instruction preprocessInstruction(ExecutionContext ec)
-		throws DMLRuntimeException 
-	{
+	public Instruction preprocessInstruction(ExecutionContext ec) {
 		//default pre-process behavior (e.g., debug state)
 		Instruction tmp = super.preprocessInstruction(ec);
 		
@@ -95,66 +89,18 @@ public abstract class SPInstruction extends Instruction
 			tmp = SPInstructionParser.parseSingleInstruction(updInst);
 		}
 		
-
-		//spark-explain-specific handling of current instructions 
-		//This only relevant for ComputationSPInstruction as in postprocess we call setDebugString which is valid only for ComputationSPInstruction
-		Object mlCtxObj = MLContextProxy.getActiveMLContext();
-		if (mlCtxObj instanceof org.apache.sysml.api.MLContext) {
-			org.apache.sysml.api.MLContext mlCtx = (org.apache.sysml.api.MLContext) mlCtxObj;
-			if (tmp instanceof ComputationSPInstruction 
-				&& mlCtx != null && mlCtx.getMonitoringUtil() != null 
-				&& ec instanceof SparkExecutionContext ) {
-				mlCtx.getMonitoringUtil().addCurrentInstruction((SPInstruction)tmp);
-				MLContextProxy.setInstructionForMonitoring(tmp);
-			}
-		} else if (mlCtxObj instanceof org.apache.sysml.api.mlcontext.MLContext) {
-			org.apache.sysml.api.mlcontext.MLContext mlCtx = (org.apache.sysml.api.mlcontext.MLContext) mlCtxObj;
-			if (tmp instanceof ComputationSPInstruction 
-				&& mlCtx != null && mlCtx.getSparkMonitoringUtil() != null 
-				&& ec instanceof SparkExecutionContext ) {
-				mlCtx.getSparkMonitoringUtil().addCurrentInstruction((SPInstruction)tmp);
-				MLContextProxy.setInstructionForMonitoring(tmp);
-			}
-		}
-		
 		return tmp;
 	}
 
 	@Override 
-	public abstract void processInstruction(ExecutionContext ec)
-			throws DMLRuntimeException;
+	public abstract void processInstruction(ExecutionContext ec);
 
 	@Override
-	public void postprocessInstruction(ExecutionContext ec)
-			throws DMLRuntimeException 
-	{
-		//spark-explain-specific handling of current instructions
-		Object mlCtxObj = MLContextProxy.getActiveMLContext();
-		if (mlCtxObj instanceof org.apache.sysml.api.MLContext) {
-			org.apache.sysml.api.MLContext mlCtx = (org.apache.sysml.api.MLContext) mlCtxObj;
-			if (this instanceof ComputationSPInstruction 
-					&& mlCtx != null && mlCtx.getMonitoringUtil() != null
-					&& ec instanceof SparkExecutionContext ) {
-				SparkExecutionContext sec = (SparkExecutionContext) ec;
-				sec.setDebugString(this, ((ComputationSPInstruction) this).getOutputVariableName());
-				mlCtx.getMonitoringUtil().removeCurrentInstruction(this);
-			}
-		} else if (mlCtxObj instanceof org.apache.sysml.api.mlcontext.MLContext) {
-			org.apache.sysml.api.mlcontext.MLContext mlCtx = (org.apache.sysml.api.mlcontext.MLContext) mlCtxObj;
-			if (this instanceof ComputationSPInstruction 
-					&& mlCtx != null && mlCtx.getSparkMonitoringUtil() != null
-					&& ec instanceof SparkExecutionContext ) {
-				SparkExecutionContext sec = (SparkExecutionContext) ec;
-				sec.setDebugString(this, ((ComputationSPInstruction) this).getOutputVariableName());
-				mlCtx.getSparkMonitoringUtil().removeCurrentInstruction(this);
-			}
-		}
-		
+	public void postprocessInstruction(ExecutionContext ec) {
 		//maintain statistics
 		Statistics.incrementNoOfExecutedSPInst();
 		
 		//default post-process behavior
 		super.postprocessInstruction(ec);
 	}
-	
 }

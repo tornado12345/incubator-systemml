@@ -38,15 +38,7 @@ import org.apache.sysml.runtime.util.MapReduceTool;
  */
 public class FrameWriterBinaryBlock extends FrameWriter
 {
-	/**
-	 * @param src
-	 * @param fname
-	 * @param rlen
-	 * @param clen
-	 * @return
-	 * @throws IOException 
-	 * @throws DMLRuntimeException 
-	 */
+
 	@Override
 	public final void writeFrameToHDFS( FrameBlock src, String fname, long rlen, long clen )
 		throws IOException, DMLRuntimeException 
@@ -67,44 +59,34 @@ public class FrameWriterBinaryBlock extends FrameWriter
 		//write binary block to hdfs (sequential/parallel)
 		writeBinaryBlockFrameToHDFS( path, job, src, rlen, clen );
 	}
-	
-	/**
-	 * 
-	 * @param path
-	 * @param job
-	 * @param src
-	 * @param rlen
-	 * @param clen
-	 * @throws IOException
-	 * @throws DMLRuntimeException
-	 */
+
 	protected void writeBinaryBlockFrameToHDFS( Path path, JobConf job, FrameBlock src, long rlen, long clen )
 			throws IOException, DMLRuntimeException
 	{
-		FileSystem fs = FileSystem.get(job);
+		FileSystem fs = IOUtilFunctions.getFileSystem(path);
 		int blen = ConfigurationManager.getBlocksize();
 		
 		//sequential write to single file
-		writeBinaryBlockFrameToSequenceFile(path, job, fs, src, blen, 0, (int)rlen);		
+		writeBinaryBlockFrameToSequenceFile(path, job, fs, src, blen, 0, (int)rlen);
+		IOUtilFunctions.deleteCrcFilesFromLocalFileSystem(fs, path);
 	}
 
 	/**
 	 * Internal primitive to write a block-aligned row range of a frame to a single sequence file, 
 	 * which is used for both single- and multi-threaded writers (for consistency). 
-	 *  
-	 * @param path
-	 * @param job
-	 * @param fs
-	 * @param src
-	 * @param blen
-	 * @param rl
-	 * @param ru
-	 * @throws DMLRuntimeException
-	 * @throws IOException
+	 * 
+	 * @param path file path
+	 * @param job job configuration
+	 * @param fs file system
+	 * @param src frame block
+	 * @param blen block length
+	 * @param rl lower row
+	 * @param ru upper row
+	 * @throws IOException if IOException occurs
 	 */
 	@SuppressWarnings("deprecation")
-	protected final void writeBinaryBlockFrameToSequenceFile( Path path, JobConf job, FileSystem fs, FrameBlock src, int blen, int rl, int ru ) 
-		throws DMLRuntimeException, IOException
+	protected static void writeBinaryBlockFrameToSequenceFile( Path path, JobConf job, FileSystem fs, FrameBlock src, int blen, int rl, int ru ) 
+		throws IOException
 	{
 		//1) create sequence file writer 
 		SequenceFile.Writer writer = null;
@@ -132,7 +114,7 @@ public class FrameWriterBinaryBlock extends FrameWriter
 					
 					//get reuse frame block and copy subpart to block (incl meta on first)
 					FrameBlock block = getFrameBlockForReuse(blocks);
-					src.sliceOperations( bi, bi+len-1, 0, src.getNumColumns()-1, block );
+					src.slice( bi, bi+len-1, 0, src.getNumColumns()-1, block );
 					if( bi==0 ) //first block
 						block.setColumnMetadata(src.getColumnMetadata());
 					

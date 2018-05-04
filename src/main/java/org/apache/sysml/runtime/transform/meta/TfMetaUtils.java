@@ -32,7 +32,7 @@ import java.util.List;
 import java.util.Map.Entry;
 
 import org.apache.commons.collections.CollectionUtils;
-import org.apache.commons.lang3.ArrayUtils;
+import org.apache.commons.lang.ArrayUtils;
 import org.apache.sysml.api.jmlc.Connection;
 import org.apache.sysml.lops.Lop;
 import org.apache.sysml.parser.Expression.ValueType;
@@ -50,44 +50,25 @@ import org.apache.wink.json4j.JSONObject;
 
 public class TfMetaUtils 
 {
-	/**
-	 * 
-	 * @param spec
-	 * @return
-	 * @throws DMLRuntimeException
-	 */
-	public static boolean isIDSpecification(String spec) throws DMLRuntimeException {
+	public static boolean isIDSpec(String spec) {
 		try {
 			JSONObject jSpec = new JSONObject(spec);
-			return jSpec.containsKey("ids") && jSpec.getBoolean("ids");
+			return isIDSpec(jSpec);
 		}
 		catch(JSONException ex) {
 			throw new DMLRuntimeException(ex);
 		}
 	}
 	
-	/**
-	 * 
-	 * @param spec
-	 * @param colnames
-	 * @return
-	 * @throws DMLRuntimeException
-	 */
-	public static boolean containsOmitSpec(String spec, String[] colnames) throws DMLRuntimeException {
+	public static boolean isIDSpec(JSONObject spec) throws JSONException {
+		return spec.containsKey("ids") && spec.getBoolean("ids");
+	}
+
+	public static boolean containsOmitSpec(String spec, String[] colnames) {
 		return (TfMetaUtils.parseJsonIDList(spec, colnames, TfUtils.TXMETHOD_OMIT).length > 0);	
 	}
-	
-	/**
-	 * 
-	 * @param spec
-	 * @param colnames
-	 * @param group
-	 * @return
-	 * @throws DMLRuntimeException
-	 */
-	public static int[] parseJsonIDList(String spec, String[] colnames, String group) 
-		throws DMLRuntimeException 
-	{
+
+	public static int[] parseJsonIDList(String spec, String[] colnames, String group) {
 		try {
 			JSONObject jSpec = new JSONObject(spec);
 			return parseJsonIDList(jSpec, colnames, group);
@@ -100,11 +81,11 @@ public class TfMetaUtils
 	/**
 	 * TODO consolidate external and internal json spec definitions
 	 * 
-	 * @param spec
-	 * @param colnames
-	 * @param group
-	 * @return
-	 * @throws JSONException
+	 * @param spec transform specification as json string
+	 * @param colnames column names
+	 * @param group ?
+	 * @return list of column ids
+	 * @throws JSONException if JSONException occurs
 	 */
 	public static int[] parseJsonIDList(JSONObject spec, String[] colnames, String group) 
 		throws JSONException
@@ -139,14 +120,7 @@ public class TfMetaUtils
 		
 		return colList;
 	}
-	
-	/**
-	 * 
-	 * @param spec
-	 * @param group
-	 * @return
-	 * @throws JSONException
-	 */
+
 	public static int[] parseJsonObjectIDList(JSONObject spec, String[] colnames, String group) 
 		throws JSONException
 	{
@@ -181,8 +155,8 @@ public class TfMetaUtils
 	 * @param spec      transform specification as json string
 	 * @param metapath  hdfs file path to meta data directory
 	 * @param colDelim  separator for processing column names in the meta data file 'column.names'
-	 * @return FrameBlock object representing transform metadata
-	 * @throws IOException
+	 * @return frame block
+	 * @throws IOException if IOException occurs
 	 */
 	public static FrameBlock readTransformMetaDataFromFile(String spec, String metapath, String colDelim) 
 		throws IOException 
@@ -193,8 +167,8 @@ public class TfMetaUtils
 		
 		//read meta data (currently supported: recode, dummycode, bin, omit, impute)
 		//note: recode/binning and impute might be applied on the same column
-		HashMap<String,String> meta = new HashMap<String,String>();
-		HashMap<String,String> mvmeta = new HashMap<String,String>();
+		HashMap<String,String> meta = new HashMap<>();
+		HashMap<String,String> mvmeta = new HashMap<>();
 		int rows = 0;
 		for( int j=0; j<colnames.length; j++ ) {
 			String colName = colnames[j];
@@ -235,41 +209,41 @@ public class TfMetaUtils
 	 * @param spec      transform specification as json string
 	 * @param metapath  resource path to meta data directory
 	 * @param colDelim  separator for processing column names in the meta data file 'column.names'
-	 * @return FrameBlock object representing transform metadata
-	 * @throws IOException
+	 * @return frame block
+	 * @throws IOException if IOException occurs
 	 */
 	public static FrameBlock readTransformMetaDataFromPath(String spec, String metapath, String colDelim) 
 		throws IOException 
 	{
 		//read column names
-		String colnamesStr = IOUtilFunctions.toString(Connection.class.getResourceAsStream(metapath+"/"+TfUtils.TXMTD_COLNAMES));
+		String colnamesStr = getStringFromResource(metapath+"/"+TfUtils.TXMTD_COLNAMES);
 		String[] colnames = IOUtilFunctions.split(colnamesStr.trim(), colDelim);
 		
 		//read meta data (currently supported: recode, dummycode, bin, omit)
 		//note: recode/binning and impute might be applied on the same column
-		HashMap<String,String> meta = new HashMap<String,String>();
-		HashMap<String,String> mvmeta = new HashMap<String,String>();
+		HashMap<String,String> meta = new HashMap<>();
+		HashMap<String,String> mvmeta = new HashMap<>();
 		int rows = 0;
 		for( int j=0; j<colnames.length; j++ ) {
 			String colName = colnames[j];
 			//read recode maps for recoded or dummycoded columns
 			String name = metapath+"/"+"Recode"+"/"+colName;
-			String map = IOUtilFunctions.toString(Connection.class.getResourceAsStream(name+TfUtils.TXMTD_RCD_MAP_SUFFIX));
+			String map = getStringFromResource(name+TfUtils.TXMTD_RCD_MAP_SUFFIX);
 			if( map != null ) {
 				meta.put(colName, map);
-				String ndistinct = IOUtilFunctions.toString(Connection.class.getResourceAsStream(name+TfUtils.TXMTD_RCD_DISTINCT_SUFFIX));
+				String ndistinct = getStringFromResource(name+TfUtils.TXMTD_RCD_DISTINCT_SUFFIX);
 				rows = Math.max(rows, Integer.parseInt(ndistinct));
 			}
 			//read binning map for binned columns
 			String name2 = metapath+"/"+"Bin"+"/"+colName;
-			String map2 = IOUtilFunctions.toString(Connection.class.getResourceAsStream(name2+TfUtils.TXMTD_BIN_FILE_SUFFIX));
+			String map2 = getStringFromResource(name2+TfUtils.TXMTD_BIN_FILE_SUFFIX);
 			if( map2 != null ) {
 				meta.put(colName, map2);
 				rows = Math.max(rows, Integer.parseInt(map2.split(TfUtils.TXMTD_SEP)[4]));
 			}
 			//read impute value for mv columns
 			String name3 = metapath+File.separator+"Impute"+File.separator+colName;
-			String map3 = IOUtilFunctions.toString(Connection.class.getResourceAsStream(name3+TfUtils.TXMTD_MV_FILE_SUFFIX));
+			String map3 = getStringFromResource(name3+TfUtils.TXMTD_MV_FILE_SUFFIX);
 			if( map3 != null ) {
 				mvmeta.put(colName, map3);
 			}
@@ -286,12 +260,14 @@ public class TfMetaUtils
 	/**
 	 * Converts transform meta data into an in-memory FrameBlock object.
 	 * 
-	 * @param rows
-	 * @param recodeIDs
-	 * @param colnames
-	 * @param meta
-	 * @return
-	 * @throws IOException
+	 * @param rows number of rows
+	 * @param colnames column names
+	 * @param rcIDs recode IDs
+	 * @param binIDs binning IDs
+	 * @param meta ?
+	 * @param mvmeta ?
+	 * @return frame block
+	 * @throws IOException if IOException occurs
 	 */
 	private static FrameBlock convertToTransformMetaDataFrame(int rows, String[] colnames, List<Integer> rcIDs, List<Integer> binIDs, 
 			HashMap<String,String> meta, HashMap<String,String> mvmeta) 
@@ -311,7 +287,7 @@ public class TfMetaUtils
 			
 			InputStream is = new ByteArrayInputStream(map.getBytes("UTF-8"));
 			BufferedReader br = new BufferedReader(new InputStreamReader(is));
-			Pair<String,String> pair = new Pair<String,String>();
+			Pair<String,String> pair = new Pair<>();
 			String line; int rpos = 0; 
 			while( (line = br.readLine()) != null ) {
 				DecoderRecode.parseRecodeMapEntry(line, pair);
@@ -354,10 +330,10 @@ public class TfMetaUtils
 	 * Parses the given json specification and extracts a list of column ids
 	 * that are subject to recoding.
 	 * 
-	 * @param spec
-	 * @param coltypes
-	 * @return
-	 * @throws IOException
+	 * @param spec transform specification as json string
+	 * @param colnames column names
+	 * @return list of column ids
+	 * @throws IOException if IOException occurs
 	 */
 	@SuppressWarnings("unchecked")
 	private static List<Integer> parseRecodeColIDs(String spec, String[] colnames) 
@@ -383,13 +359,7 @@ public class TfMetaUtils
 		
 		return specRecodeIDs;
 	}
-	
-	/**
-	 * 
-	 * @param spec
-	 * @return
-	 * @throws IOException
-	 */
+
 	public static List<Integer> parseBinningColIDs(String spec, String[] colnames) 
 		throws IOException 
 	{
@@ -401,13 +371,7 @@ public class TfMetaUtils
 			throw new IOException(ex);
 		}
 	}
-	
-	/**
-	 * 
-	 * @param jSpec
-	 * @return
-	 * @throws IOException
-	 */
+
 	public static List<Integer> parseBinningColIDs(JSONObject jSpec, String[] colnames) 
 		throws IOException 
 	{
@@ -423,6 +387,12 @@ public class TfMetaUtils
 		}
 		catch(JSONException ex) {
 			throw new IOException(ex);
+		}
+	}
+	
+	private static String getStringFromResource(String path) throws IOException {
+		try(InputStream is = Connection.class.getResourceAsStream(path) ) {
+			return IOUtilFunctions.toString(is);
 		}
 	}
 }

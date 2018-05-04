@@ -34,8 +34,7 @@ import org.apache.sysml.runtime.matrix.data.MatrixIndexes;
 import org.apache.sysml.runtime.util.DataConverter;
 
 public class DistributedCacheInput 
-{	
-	
+{
 	//internal partitioning parameter (threshold and partition size) 
 	public static final long PARTITION_SIZE = 4000000; //32MB
 	//public static final String PARTITION_SUFFIX = "_dp";
@@ -77,10 +76,7 @@ public class DistributedCacheInput
 	public int getNumColsPerBlock(){
 		return _bclen;
 	}
-	
-	/**
-	 * 
-	 */
+
 	public void reset() 
 	{
 		_localFilePath = null;
@@ -91,16 +87,7 @@ public class DistributedCacheInput
 		_pformat = null;
 	}
 
-	/**
-	 * 
-	 * @param rowBlockIndex
-	 * @param colBlockIndex
-	 * @return
-	 * @throws DMLRuntimeException
-	 */
-	public IndexedMatrixValue getDataBlock(int rowBlockIndex, int colBlockIndex)
-		throws DMLRuntimeException 
-	{
+	public IndexedMatrixValue getDataBlock(int rowBlockIndex, int colBlockIndex) {
 		//probe missing block (read on-demand)
 		if( dataBlocks==null || dataBlocks[rowBlockIndex-1][colBlockIndex-1]==null )
 			readDataBlocks( rowBlockIndex, colBlockIndex );
@@ -108,54 +95,28 @@ public class DistributedCacheInput
 		//return read or existing block
 		return dataBlocks[rowBlockIndex-1][colBlockIndex-1];
 	}
-	
-	/**
-	 * 
-	 * @return
-	 * @throws DMLRuntimeException
-	 */
-	public double[] getRowVectorArray() 
-		throws DMLRuntimeException
-	{
+
+	public double[] getRowVectorArray() {
 		double[] ret = new double[(int)_clen];
-		
 		for( int j=0; j<_clen; j+=_bclen ) {
 			MatrixBlock mb = (MatrixBlock) getDataBlock(1, (int)Math.ceil((double)(j+1)/_bclen)).getValue(); 
-			double[] mbtmp = DataConverter.convertToDoubleVector(mb);
+			double[] mbtmp = DataConverter.convertToDoubleVector(mb, false);
 			System.arraycopy(mbtmp, 0, ret, j, mbtmp.length);
 		}
-		
 		return ret;
 	}
-	
-	/**
-	 * 
-	 * @return
-	 * @throws DMLRuntimeException
-	 */
-	public double[] getColumnVectorArray() 
-		throws DMLRuntimeException
-	{
+
+	public double[] getColumnVectorArray() {
 		double[] ret = new double[(int)_rlen];
-		
 		for( int j=0; j<_rlen; j+=_brlen ) {
 			MatrixBlock mb = (MatrixBlock) getDataBlock((int)Math.ceil((double)(j+1)/_brlen),1).getValue(); 
-			double[] mbtmp = DataConverter.convertToDoubleVector(mb);
+			double[] mbtmp = DataConverter.convertToDoubleVector(mb, false);
 			System.arraycopy(mbtmp, 0, ret, j, mbtmp.length);
 		}
-		
 		return ret;
 	}
-	
-	/**
-	 * 
-	 * @param rowBlockSize
-	 * @param colBlockSize
-	 * @throws DMLRuntimeException
-	 */
-	private void readDataBlocks( int rowBlockIndex, int colBlockIndex )
-		throws DMLRuntimeException 
-	{
+
+	private void readDataBlocks( int rowBlockIndex, int colBlockIndex ) {
 		//get filename for rowblock/colblock
 		String fname = _localFilePath.toString();
 		if( isPartitioned() ) 
@@ -163,7 +124,7 @@ public class DistributedCacheInput
 			
 		//read matrix partition (or entire vector)
 		try 
-		{		
+		{
 			ReaderBinaryBlock reader = (ReaderBinaryBlock) MatrixReaderFactory.createMatrixReader(InputInfo.BinaryBlockInputInfo);
 			reader.setLocalFS( !MRBaseForCommonInstructions.isJobLocal );
 			ArrayList<IndexedMatrixValue> tmp = reader.readIndexedMatrixBlocksFromHDFS(fname, _rlen, _clen, _brlen, _bclen);
@@ -173,7 +134,6 @@ public class DistributedCacheInput
 
 			if( dataBlocks==null )
 				dataBlocks = new IndexedMatrixValue[rowBlocks][colBlocks];
-
 			for (IndexedMatrixValue val : tmp) {
 				MatrixIndexes idx = val.getIndexes();
 				dataBlocks[(int) idx.getRowIndex() - 1][(int) idx.getColumnIndex() - 1] = val;
@@ -183,43 +143,24 @@ public class DistributedCacheInput
 			throw new DMLRuntimeException(ex);
 		} 
 	}
-	
-	/**
-	 * 
-	 * @return
-	 */
-	private boolean isPartitioned()
-	{
+
+	private boolean isPartitioned() {
 		return (_pformat != PDataPartitionFormat.NONE);
 	}
-	
 
-	/**
-	 * 
-	 * @param rowBlockIndex
-	 * @param colBlockIndex
-	 * @return
-	 * @throws DMLRuntimeException
-	 */
-	private String getPartitionFileName( int rowBlockIndex, int colBlockIndex  ) 
-		throws DMLRuntimeException
-	{
+	private String getPartitionFileName( int rowBlockIndex, int colBlockIndex  ) {
 		long partition = -1;
-		switch( _pformat )
-		{
-			case ROW_BLOCK_WISE_N:
-			{
+		switch( _pformat ) {
+			case ROW_BLOCK_WISE_N:{
 				long numRowBlocks = (long)Math.ceil(((double)PARTITION_SIZE)/_clen/_brlen); 
 				partition = (rowBlockIndex-1)/numRowBlocks + 1;	
 				break;
 			}
-			case COLUMN_BLOCK_WISE_N:
-			{
+			case COLUMN_BLOCK_WISE_N: {
 				long numColBlocks = (long)Math.ceil(((double)PARTITION_SIZE)/_rlen/_bclen); 
 				partition = (colBlockIndex-1)/numColBlocks + 1;
 				break;
 			}
-			
 			default: 
 				throw new DMLRuntimeException("Unsupported partition format for distributed cache input: "+_pformat);
 		}

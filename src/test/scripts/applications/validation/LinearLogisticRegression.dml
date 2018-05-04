@@ -55,10 +55,10 @@ zeros_D = Rand(rows = D, cols = 1, min = 0.0, max = 0.0);
 if (intercept == 1) {
  num_samples = nrow(X);
  ones  = Rand(rows=num_samples, cols=1, min=1, max=1, pdf="uniform");
- X = append(X, ones);
+ X = cbind(X, ones);
  zero_matrix = Rand(rows=1, cols=1, min=0.0, max=0.0);
- w = t(append(t(w), zero_matrix));
- zeros_D = t(append(t(zeros_D), zero_matrix));
+ w = t(cbind(t(w), zero_matrix));
+ zeros_D = t(cbind(t(zeros_D), zero_matrix));
 }
 
 N = nrow(X)
@@ -230,7 +230,7 @@ while(!converge) {
  } 
  
  o2 = y * o
- correct = sum(ppred(o2, 0, ">"))
+ correct = sum(o2 > 0)
  accuracy = correct*100.0/N 
  iter = iter + 1
  #converge = (norm_grad < (tol * norm_grad_initial)) | (iter > maxiter)

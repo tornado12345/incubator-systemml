@@ -19,20 +19,35 @@
 
 package org.apache.sysml.runtime.controlprogram.parfor;
 
+import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
-import org.apache.spark.Accumulator;
 import org.apache.spark.api.java.JavaSparkContext;
+import org.apache.spark.broadcast.Broadcast;
+import org.apache.spark.util.LongAccumulator;
 
+import org.apache.sysml.parser.ParForStatementBlock;
+import org.apache.sysml.parser.ParForStatementBlock.ResultVar;
+import org.apache.sysml.runtime.controlprogram.ParForProgramBlock;
+import org.apache.sysml.runtime.controlprogram.caching.CacheBlock;
+import org.apache.sysml.runtime.controlprogram.caching.CacheableData;
+import org.apache.sysml.runtime.controlprogram.caching.MatrixObject;
+import org.apache.sysml.runtime.instructions.cp.Data;
+import org.apache.sysml.runtime.instructions.cp.ScalarObject;
 import scala.Tuple2;
 
 import org.apache.sysml.api.DMLScript;
-import org.apache.sysml.runtime.DMLRuntimeException;
 import org.apache.sysml.runtime.controlprogram.LocalVariableMap;
 import org.apache.sysml.runtime.controlprogram.context.ExecutionContext;
 import org.apache.sysml.runtime.controlprogram.context.SparkExecutionContext;
+import org.apache.sysml.runtime.controlprogram.parfor.stat.InfrastructureAnalyzer;
+import org.apache.sysml.runtime.controlprogram.parfor.util.IDSequence;
 import org.apache.sysml.utils.Statistics;
 
 /**
@@ -45,28 +60,17 @@ import org.apache.sysml.utils.Statistics;
  * pre-aggregation by overwriting partial task results with pre-paggregated results from subsequent
  * iterations)
  * 
- * TODO broadcast variables if possible
  * TODO reducebykey on variable names
  */
 public class RemoteParForSpark 
 {
-	
 	protected static final Log LOG = LogFactory.getLog(RemoteParForSpark.class.getName());
 	
-	/**
-	 * 
-	 * @param pfid
-	 * @param program
-	 * @param tasks
-	 * @param ec
-	 * @param enableCPCaching
-	 * @param numMappers
-	 * @return
-	 * @throws DMLRuntimeException 
-	 */
-	public static RemoteParForJobReturn runJob(long pfid, String program, List<Task> tasks, ExecutionContext ec,
-			                                   boolean cpCaching, int numMappers) 
-		throws DMLRuntimeException  
+	//globally unique id for parfor spark job instances (unique across spark contexts)
+	private static final IDSequence _jobID = new IDSequence();
+	
+	public static RemoteParForJobReturn runJob(long pfid, String prog, HashMap<String, byte[]> clsMap, 
+			List<Task> tasks, ExecutionContext ec, ArrayList<ResultVar> resultVars, boolean cpCaching, int numMappers) 
 	{
 		String jobname = "ParFor-ESP";
 		long t0 = DMLScript.STATISTICS ? System.nanoTime() : 0;
@@ -75,32 +79,61 @@ public class RemoteParForSpark
 		JavaSparkContext sc = sec.getSparkContext();
 		
 		//initialize accumulators for tasks/iterations
-		Accumulator<Integer> aTasks = sc.accumulator(0);
-		Accumulator<Integer> aIters = sc.accumulator(0);
+		LongAccumulator aTasks = sc.sc().longAccumulator("tasks");
+		LongAccumulator aIters = sc.sc().longAccumulator("iterations");
 		
+		//reset cached shared inputs for correctness in local mode
+		long jobid = _jobID.getNextID();
+		if( InfrastructureAnalyzer.isLocalMode() )
+			RemoteParForSparkWorker.cleanupCachedVariables(jobid);
+
+		// broadcast the inputs except the result variables
+		Map<String, Broadcast<CacheBlock>> brInputs = null;
+		if (ParForProgramBlock.ALLOW_BROADCAST_INPUTS) {
+			brInputs = broadcastInputs(sec, resultVars);
+		}
+
 		//run remote_spark parfor job 
 		//(w/o lazy evaluation to fit existing parfor framework, e.g., result merge)
-		RemoteParForSparkWorker func = new RemoteParForSparkWorker(program, cpCaching, aTasks, aIters);
-		List<Tuple2<Long,String>> out = 
-				sc.parallelize( tasks, numMappers )  //create rdd of parfor tasks
-		          .flatMapToPair( func )             //execute parfor tasks 
-		          .collect();                        //get output handles
+		List<Tuple2<Long,String>> out = sc.parallelize(tasks, tasks.size()) //create rdd of parfor tasks
+			.flatMapToPair(new RemoteParForSparkWorker(jobid, prog, clsMap, cpCaching, aTasks, aIters, brInputs))
+			.collect(); //execute and get output handles
 		
 		//de-serialize results
 		LocalVariableMap[] results = RemoteParForUtils.getResults(out, LOG);
-		int numTasks = aTasks.value(); //get accumulator value
-		int numIters = aIters.value(); //get accumulator value
+		int numTasks = aTasks.value().intValue(); //get accumulator value
+		int numIters = aIters.value().intValue(); //get accumulator value
 		
 		//create output symbol table entries
 		RemoteParForJobReturn ret = new RemoteParForJobReturn(true, numTasks, numIters, results);
 		
 		//maintain statistics
-	    Statistics.incrementNoOfCompiledSPInst();
-	    Statistics.incrementNoOfExecutedSPInst();
-	    if( DMLScript.STATISTICS ){
+		Statistics.incrementNoOfCompiledSPInst();
+		Statistics.incrementNoOfExecutedSPInst();
+		if( DMLScript.STATISTICS )
 			Statistics.maintainCPHeavyHitters(jobname, System.nanoTime()-t0);
-		}
 		
 		return ret;
+	}
+
+	@SuppressWarnings("unchecked")
+	private static Map<String, Broadcast<CacheBlock>> broadcastInputs(SparkExecutionContext sec, ArrayList<ParForStatementBlock.ResultVar> resultVars) {
+		LocalVariableMap inputs = sec.getVariables();
+		// exclude the result variables
+		// TODO use optimizer-picked list of amenable objects (e.g., size constraints)
+		Set<String> retVars = resultVars.stream()
+			.map(v -> v._name).collect(Collectors.toSet());
+		Set<String> brVars = inputs.keySet().stream()
+			.filter(v -> !retVars.contains(v)).collect(Collectors.toSet());
+		
+		// construct broadcast objects
+		Map<String, Broadcast<CacheBlock>> result = new HashMap<>();
+		for (String key : brVars) {
+			Data var = sec.getVariable(key);
+			if ((var instanceof ScalarObject) || (var instanceof MatrixObject && ((MatrixObject) var).isPartitioned()))
+				continue;
+			result.put(key, sec.broadcastVariable((CacheableData<CacheBlock>) var));
+		}
+		return result;
 	}
 }

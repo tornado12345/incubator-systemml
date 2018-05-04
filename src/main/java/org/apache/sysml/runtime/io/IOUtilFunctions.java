@@ -19,18 +19,22 @@
 
 package org.apache.sysml.runtime.io;
 
-import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.Closeable;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.StringReader;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Comparator;
+import java.util.LinkedList;
 
+import org.apache.commons.io.input.ReaderInputStream;
 import org.apache.commons.lang.StringUtils;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
+import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.fs.FileStatus;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.LocalFileSystem;
 import org.apache.hadoop.fs.Path;
@@ -42,6 +46,7 @@ import org.apache.hadoop.mapred.InputSplit;
 import org.apache.hadoop.mapred.JobConf;
 import org.apache.hadoop.mapred.RecordReader;
 import org.apache.hadoop.mapred.Reporter;
+import org.apache.sysml.conf.ConfigurationManager;
 import org.apache.sysml.runtime.transform.TfUtils;
 import org.apache.sysml.runtime.util.LocalFileUtils;
 import org.apache.sysml.runtime.util.UtilFunctions;
@@ -50,12 +55,58 @@ public class IOUtilFunctions
 {
 	private static final Log LOG = LogFactory.getLog(UtilFunctions.class.getName());
 
+	//for empty text lines we use 0-0 despite for 1-based indexing in order
+	//to allow matrices with zero rows and columns (consistent with R)
+	public static final String EMPTY_TEXT_LINE = "0 0 0\n";
 	private static final char CSV_QUOTE_CHAR = '"';
 	
-	/**
-	 * 
-	 * @param io
-	 */
+	public static FileSystem getFileSystem(String fname) throws IOException {
+		return getFileSystem(new Path(fname),
+			ConfigurationManager.getCachedJobConf());
+	}
+	
+	public static FileSystem getFileSystem(Path fname) throws IOException {
+		return getFileSystem(fname, 
+			ConfigurationManager.getCachedJobConf());
+	}
+	
+	public static FileSystem getFileSystem(Configuration conf) throws IOException {
+		try{
+			return FileSystem.get(conf);
+		} catch(NoClassDefFoundError err) {
+			throw new IOException(err.getMessage());
+		}
+	}
+	
+	public static FileSystem getFileSystem(Path fname, Configuration conf) throws IOException {
+		try {
+			return FileSystem.get(fname.toUri(), conf);
+		} catch(NoClassDefFoundError err) {
+			throw new IOException(err.getMessage());
+		}
+	}
+	
+	public static boolean isSameFileScheme(Path path1, Path path2) {
+		if( path1 == null || path2 == null || path1.toUri() == null || path2.toUri() == null)
+			return false;
+		String scheme1 = path1.toUri().getScheme();
+		String scheme2 = path2.toUri().getScheme();
+		return (scheme1 == null && scheme2 == null)
+			|| (scheme1 != null && scheme1.equals(scheme2));
+	}
+	
+	public static boolean isObjectStoreFileScheme(Path path) {
+		if( path == null || path.toUri() == null || path.toUri().getScheme() == null )
+			return false;
+		String scheme = path.toUri().getScheme();
+		//capture multiple alternatives s3, s3n, s3a, swift, swift2d
+		return scheme.startsWith("s3") || scheme.startsWith("swift");
+	}
+	
+	public static String getPartFileName(int pos) {
+		return String.format("0-m-%05d", pos);
+	}
+	
 	public static void closeSilently( Closeable io ) {
 		try {
 			if( io != null )
@@ -66,10 +117,6 @@ public class IOUtilFunctions
 		}
 	}
 
-	/**
-	 * 
-	 * @param rr
-	 */
 	public static void closeSilently( RecordReader<?,?> rr ) 
 	{
 		try {
@@ -80,24 +127,13 @@ public class IOUtilFunctions
            LOG.error("Failed to close record reader.", ex);
 		}
 	}
-	
-	/**
-	 * 
-	 * @param br
-	 */
+
 	public static double parseDoubleParallel( String str ) 
 	{
 		//return FloatingDecimal.parseDouble(str);
 		return Double.parseDouble(str);
 	}
 
-	/**
-	 * 
-	 * @param row
-	 * @param fill
-	 * @param emptyFound
-	 * @throws IOException
-	 */
 	public static void checkAndRaiseErrorCSVEmptyField(String row, boolean fill, boolean emptyFound) 
 		throws IOException
 	{
@@ -106,15 +142,7 @@ public class IOUtilFunctions
 			+ "Use \"fill\" option to read delimited files with empty fields:" + ((row!=null)?row:""));
 		}
 	}
-	
-	/**
-	 * 
-	 * @param fname
-	 * @param line
-	 * @param parts
-	 * @param ncol
-	 * @throws IOException 
-	 */
+
 	public static void checkAndRaiseErrorCSVNumColumns(String fname, String line, String[] parts, long ncol) 
 		throws IOException
 	{
@@ -131,9 +159,9 @@ public class IOUtilFunctions
 	 * NOTE: This method is meant as a faster drop-in replacement of the regular 
 	 * string split.
 	 * 
-	 * @param str
-	 * @param delim
-	 * @return
+	 * @param str string to split
+	 * @param delim delimiter
+	 * @return string array
 	 */
 	public static String[] split(String str, String delim)
 	{
@@ -144,13 +172,12 @@ public class IOUtilFunctions
 	
 	/**
 	 * Splits a string by a specified delimiter into all tokens, including empty
-	 * while respecting the rules for quotes and escapes defined in RFC4180.
+	 * while respecting the rules for quotes and escapes defined in RFC4180,
+	 * with robustness for various special cases.
 	 * 
-	 * NOTE: use StringEscapeUtils.unescapeCsv(tmp) if needed afterwards.
-	 * 
-	 * @param str
-	 * @param delim
-	 * @return
+	 * @param str string to split
+	 * @param delim delimiter
+	 * @return string array of tokens
 	 */
 	public static String[] splitCSV(String str, String delim)
 	{
@@ -159,9 +186,10 @@ public class IOUtilFunctions
 			return new String[]{""};
 		
 		// scan string and create individual tokens
-		ArrayList<String> tokens = new ArrayList<String>();
+		ArrayList<String> tokens = new ArrayList<>();
 		int from = 0, to = 0; 
 		int len = str.length();
+		int dlen = delim.length();
 		while( from < len  ) { // for all tokens
 			if( str.charAt(from) == CSV_QUOTE_CHAR 
 				&& str.indexOf(CSV_QUOTE_CHAR, from+1) > 0 ) {
@@ -170,8 +198,11 @@ public class IOUtilFunctions
 				while( to+1 < len && str.charAt(to+1)==CSV_QUOTE_CHAR )
 					to = str.indexOf(CSV_QUOTE_CHAR, to+2); // to + ""
 				to += 1; // last "
+				// handle remaining non-quoted characters "aa"a 
+				if( to<len-1 && !str.regionMatches(to, delim, 0, dlen) )
+					to = str.indexOf(delim, to+1);
 			}
-			else if(str.regionMatches(from, delim, 0, delim.length())) {
+			else if( str.regionMatches(from, delim, 0, dlen) ) {
 				to = from; // empty string
 			}
 			else { // default: unquoted non-empty
@@ -191,13 +222,16 @@ public class IOUtilFunctions
 		// return tokens
 		return tokens.toArray(new String[0]);
 	}
-	
+
 	/**
+	 * Splits a string by a specified delimiter into all tokens, including empty
+	 * while respecting the rules for quotes and escapes defined in RFC4180,
+	 * with robustness for various special cases.
 	 * 
-	 * @param str
-	 * @param delim
-	 * @param tokens
-	 * @return
+	 * @param str string to split
+	 * @param delim delimiter
+	 * @param tokens array for tokens, length needs to match the number of tokens
+	 * @return string array of tokens
 	 */
 	public static String[] splitCSV(String str, String delim, String[] tokens)
 	{
@@ -208,6 +242,7 @@ public class IOUtilFunctions
 		// scan string and create individual tokens
 		int from = 0, to = 0; 
 		int len = str.length();
+		int dlen = delim.length();
 		int pos = 0;
 		while( from < len  ) { // for all tokens
 			if( str.charAt(from) == CSV_QUOTE_CHAR
@@ -217,8 +252,11 @@ public class IOUtilFunctions
 				while( to+1 < len && str.charAt(to+1)==CSV_QUOTE_CHAR )
 					to = str.indexOf(CSV_QUOTE_CHAR, to+2); // to + ""
 				to += 1; // last "
+				// handle remaining non-quoted characters "aa"a 
+				if( to<len-1 && !str.regionMatches(to, delim, 0, dlen) )
+					to = str.indexOf(delim, to+1);
 			}
-			else if(str.regionMatches(from, delim, 0, delim.length())) {
+			else if( str.regionMatches(from, delim, 0, dlen) ) {
 				to = from; // empty string
 			}
 			else { // default: unquoted non-empty
@@ -241,11 +279,12 @@ public class IOUtilFunctions
 	
 	/**
 	 * Counts the number of tokens defined by the given delimiter, respecting 
-	 * the rules for quotes and escapes defined in RFC4180.
+	 * the rules for quotes and escapes defined in RFC4180,
+	 * with robustness for various special cases.
 	 * 
-	 * @param str
-	 * @param delim
-	 * @return
+	 * @param str string to split
+	 * @param delim delimiter
+	 * @return number of tokens split by the given delimiter
 	 */
 	public static int countTokensCSV(String str, String delim)
 	{
@@ -257,6 +296,7 @@ public class IOUtilFunctions
 		int numTokens = 0;
 		int from = 0, to = 0; 
 		int len = str.length();
+		int dlen = delim.length();
 		while( from < len  ) { // for all tokens
 			if( str.charAt(from) == CSV_QUOTE_CHAR
 				&& str.indexOf(CSV_QUOTE_CHAR, from+1) > 0 ) {
@@ -265,8 +305,11 @@ public class IOUtilFunctions
 				while( to+1 < len && str.charAt(to+1)==CSV_QUOTE_CHAR ) 
 					to = str.indexOf(CSV_QUOTE_CHAR, to+2); // to + ""
 				to += 1; // last "
+				// handle remaining non-quoted characters "aa"a 
+				if( to<len-1 && !str.regionMatches(to, delim, 0, dlen) )
+					to = str.indexOf(delim, to+1);
 			}
-			else if(str.regionMatches(from, delim, 0, delim.length())) {
+			else if( str.regionMatches(from, delim, 0, dlen) ) {
 				to = from; // empty string
 			}
 			else { // default: unquoted non-empty
@@ -292,8 +335,8 @@ public class IOUtilFunctions
 	 * string to double parsing. This function is guaranteed to never
 	 * underestimate.
 	 * 
-	 * @param cols
-	 * @return
+	 * @param cols string array
+	 * @return number of non-zeros
 	 */
 	public static int countNnz(String[] cols) {
 		return countNnz(cols, 0, cols.length);
@@ -304,10 +347,10 @@ public class IOUtilFunctions
 	 * string to double parsing. This function is guaranteed to never
 	 * underestimate.
 	 * 
-	 * @param cols
-	 * @param pos
-	 * @param len
-	 * @return
+	 * @param cols string array
+	 * @param pos starting array index
+	 * @param len ending array index
+	 * @return number of non-zeros
 	 */
 	public static int countNnz(String[] cols, int pos, int len) {
 		int lnnz = 0;
@@ -326,8 +369,8 @@ public class IOUtilFunctions
 	 * 
 	 * see java docs: docs/api/java/io/DataInput.html#modified-utf-8
 	 * 
-	 * @param value
-	 * @return
+	 * @param value string value
+	 * @return string size for modified UTF-8 specification
 	 */
 	public static int getUTFSize(String value) {
 		if( value == null )
@@ -341,41 +384,28 @@ public class IOUtilFunctions
         }
 		return size;
 	}
-	
-	/**
-	 * 
-	 * @param input
-	 * @return
-	 * @throws IOException
-	 */
+
 	public static InputStream toInputStream(String input) throws IOException {
 		if( input == null ) 
 			return null;
-		return new ByteArrayInputStream(input.getBytes("UTF-8"));
+		return new ReaderInputStream(new StringReader(input), "UTF-8");
 	}
-	
-	/**
-	 * 
-	 * @param input
-	 * @return
-	 * @throws IOException
-	 */
+
 	public static String toString(InputStream input) throws IOException {
 		if( input == null )
 			return null;
-		ByteArrayOutputStream bos = new ByteArrayOutputStream();
-		byte[] buff = new byte[LocalFileUtils.BUFFER_SIZE];
-		for( int len=0; (len=input.read(buff))!=-1; )
-			bos.write(buff, 0, len);
-		input.close();		
-		return bos.toString("UTF-8");
+		try {
+			ByteArrayOutputStream bos = new ByteArrayOutputStream();
+			byte[] buff = new byte[LocalFileUtils.BUFFER_SIZE];
+			for( int len=0; (len=input.read(buff))!=-1; )
+				bos.write(buff, 0, len);
+			return bos.toString("UTF-8");
+		}
+		finally {
+			IOUtilFunctions.closeSilently(input);
+		}
 	}
 
-	/**
-	 * 
-	 * @param splits
-	 * @return
-	 */
 	public static InputSplit[] sortInputSplits(InputSplit[] splits) {
 		if (splits[0] instanceof FileSplit) {
 			// The splits do not always arrive in order by file name.
@@ -398,12 +428,12 @@ public class IOUtilFunctions
 	 * Counts the number of columns in a given collection of csv file splits. This primitive aborts 
 	 * if a row with more than 0 columns is found and hence is robust against empty file splits etc.
 	 * 
-	 * @param splits
-	 * @param informat
-	 * @param job
-	 * @param delim
-	 * @return
-	 * @throws IOException 
+	 * @param splits input splits
+	 * @param informat input format
+	 * @param job job configruation
+	 * @param delim delimiter
+	 * @return the number of columns in the collection of csv file splits
+	 * @throws IOException if IOException occurs
 	 */
 	@SuppressWarnings({ "rawtypes", "unchecked" })
 	public static int countNumColumnsCSV(InputSplit[] splits, InputFormat informat, JobConf job, String delim ) 
@@ -411,19 +441,21 @@ public class IOUtilFunctions
 	{
 		LongWritable key = new LongWritable();
 		Text value = new Text();
-		int ncol = -1;
+		int ncol = -1; 
 		for( int i=0; i<splits.length && ncol<=0; i++ ) {
 			RecordReader<LongWritable, Text> reader = 
 					informat.getRecordReader(splits[i], job, Reporter.NULL);
 			try {
 				if( reader.next(key, value) ) {
+					boolean hasValue = true;
+					if( value.toString().startsWith(TfUtils.TXMTD_MVPREFIX) )
+						hasValue = reader.next(key, value);
+					if( value.toString().startsWith(TfUtils.TXMTD_NDPREFIX) )
+						hasValue = reader.next(key, value);
 					String row = value.toString().trim();
-					if( row.startsWith(TfUtils.TXMTD_MVPREFIX) )
-						reader.next(key, value);
-					if( row.startsWith(TfUtils.TXMTD_NDPREFIX) )
-						reader.next(key, value);
-					if( !row.isEmpty() )
+					if( hasValue && !row.isEmpty() ) {
 						ncol = IOUtilFunctions.countTokensCSV(row, delim);
+					}
 				}
 			}
 			finally {
@@ -433,6 +465,35 @@ public class IOUtilFunctions
 		return ncol;
 	}
 
+	public static Path[] getSequenceFilePaths( FileSystem fs, Path file ) 
+		throws IOException
+	{
+		Path[] ret = null;
+		
+		//Note on object stores: Since the object store file system implementations 
+		//only emulate a file system, the directory of a multi-part file does not
+		//exist physically and hence the isDirectory call returns false. Furthermore,
+		//listStatus call returns all files with the given directory as prefix, which
+		//includes the mtd file which needs to be ignored accordingly.
+		
+		if( fs.isDirectory(file) 
+			|| IOUtilFunctions.isObjectStoreFileScheme(file) )
+		{
+			LinkedList<Path> tmp = new LinkedList<>();
+			FileStatus[] dStatus = fs.listStatus(file);
+			for( FileStatus fdStatus : dStatus )
+				if( !fdStatus.getPath().getName().startsWith("_") //skip internal files
+					&& !fdStatus.getPath().toString().equals(file.toString()+".mtd") ) //mtd file
+					tmp.add(fdStatus.getPath());
+			ret = tmp.toArray(new Path[0]);
+		}
+		else {
+			ret = new Path[]{ file };
+		}
+		
+		return ret;
+	}
+	
 	/**
 	 * Delete the CRC files from the local file system associated with a
 	 * particular file and its metadata file.
@@ -451,5 +512,57 @@ public class IOUtilFunctions
 			Path fnameMtdCrc = new Path(path.getParent(), "." + path.getName() + ".mtd.crc");
 			fs.delete(fnameMtdCrc, false);
 		}
+	}
+	
+	public static int baToShort( byte[] ba, final int off ) {
+		//shift and add 2 bytes into single int
+		return ((ba[off+0] & 0xFF) << 8)
+			+  ((ba[off+1] & 0xFF) << 0);
+	}
+
+	public static int baToInt( byte[] ba, final int off ) {
+		//shift and add 4 bytes into single int
+		return ((ba[off+0] & 0xFF) << 24)
+			+  ((ba[off+1] & 0xFF) << 16)
+			+  ((ba[off+2] & 0xFF) <<  8)
+			+  ((ba[off+3] & 0xFF) <<  0);
+	}
+
+	public static long baToLong( byte[] ba, final int off ) {
+		//shift and add 8 bytes into single long
+		return ((long)(ba[off+0] & 0xFF) << 56)
+			+  ((long)(ba[off+1] & 0xFF) << 48)
+			+  ((long)(ba[off+2] & 0xFF) << 40)
+			+  ((long)(ba[off+3] & 0xFF) << 32)
+			+  ((long)(ba[off+4] & 0xFF) << 24)
+			+  ((long)(ba[off+5] & 0xFF) << 16)
+			+  ((long)(ba[off+6] & 0xFF) <<  8)
+			+  ((long)(ba[off+7] & 0xFF) <<  0);
+	}
+	
+	public static void shortToBa( final int val, byte[] ba, final int off ) {
+		//shift and mask out 2 bytes
+		ba[ off+0 ] = (byte)((val >>>  8) & 0xFF);
+		ba[ off+1 ] = (byte)((val >>>  0) & 0xFF);
+	}
+
+	public static void intToBa( final int val, byte[] ba, final int off ) {
+		//shift and mask out 4 bytes
+		ba[ off+0 ] = (byte)((val >>> 24) & 0xFF);
+		ba[ off+1 ] = (byte)((val >>> 16) & 0xFF);
+		ba[ off+2 ] = (byte)((val >>>  8) & 0xFF);
+		ba[ off+3 ] = (byte)((val >>>  0) & 0xFF);
+	}
+
+	public static void longToBa( final long val, byte[] ba, final int off ) {
+		//shift and mask out 8 bytes
+		ba[ off+0 ] = (byte)((val >>> 56) & 0xFF);
+		ba[ off+1 ] = (byte)((val >>> 48) & 0xFF);
+		ba[ off+2 ] = (byte)((val >>> 40) & 0xFF);
+		ba[ off+3 ] = (byte)((val >>> 32) & 0xFF);
+		ba[ off+4 ] = (byte)((val >>> 24) & 0xFF);
+		ba[ off+5 ] = (byte)((val >>> 16) & 0xFF);
+		ba[ off+6 ] = (byte)((val >>>  8) & 0xFF);
+		ba[ off+7 ] = (byte)((val >>>  0) & 0xFF);
 	}
 }

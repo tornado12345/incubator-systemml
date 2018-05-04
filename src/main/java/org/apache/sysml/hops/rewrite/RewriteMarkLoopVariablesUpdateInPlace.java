@@ -20,13 +20,14 @@
 package org.apache.sysml.hops.rewrite;
 
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
 
 import org.apache.sysml.api.DMLScript;
 import org.apache.sysml.api.DMLScript.RUNTIME_PLATFORM;
 import org.apache.sysml.hops.DataOp;
 import org.apache.sysml.hops.Hop;
 import org.apache.sysml.hops.Hop.OpOp1;
-import org.apache.sysml.hops.HopsException;
 import org.apache.sysml.hops.LeftIndexingOp;
 import org.apache.sysml.hops.UnaryOp;
 import org.apache.sysml.parser.ForStatement;
@@ -47,25 +48,30 @@ import org.apache.sysml.parser.Expression.DataType;
 public class RewriteMarkLoopVariablesUpdateInPlace extends StatementBlockRewriteRule
 {
 	@Override
-	public ArrayList<StatementBlock> rewriteStatementBlock(StatementBlock sb, ProgramRewriteStatus status)
-		throws HopsException 
+	public boolean createsSplitDag() {
+		return false;
+	}
+	
+	@Override
+	public List<StatementBlock> rewriteStatementBlock(StatementBlock sb, ProgramRewriteStatus status)
 	{
-		ArrayList<StatementBlock> ret = new ArrayList<StatementBlock>();
-		
 		if( DMLScript.rtplatform == RUNTIME_PLATFORM.HADOOP
 			|| DMLScript.rtplatform == RUNTIME_PLATFORM.SPARK )
 		{
-			ret.add(sb); // nothing to do here
-			return ret; //return original statement block
+			// nothing to do here, return original statement block
+			return Arrays.asList(sb);
 		}
 		
 		if( sb instanceof WhileStatementBlock || sb instanceof ForStatementBlock ) //incl parfor 
 		{
-			ArrayList<String> candidates = new ArrayList<String>(); 
+			ArrayList<String> candidates = new ArrayList<>();
 			VariableSet updated = sb.variablesUpdated();
+			VariableSet liveout = sb.liveOut();
 			
 			for( String varname : updated.getVariableNames() ) {
-				if( updated.getVariable(varname).getDataType()==DataType.MATRIX) {
+				if( updated.getVariable(varname).getDataType()==DataType.MATRIX
+					&& liveout.containsVariable(varname) ) //exclude local vars 
+				{
 					if( sb instanceof WhileStatementBlock ) {
 						WhileStatement wstmt = (WhileStatement) sb.getStatement(0);
 						if( rIsApplicableForUpdateInPlace(wstmt.getBody(), varname) )
@@ -83,12 +89,10 @@ public class RewriteMarkLoopVariablesUpdateInPlace extends StatementBlockRewrite
 		}
 			
 		//return modified statement block
-		ret.add(sb);
-		return ret;
+		return Arrays.asList(sb);
 	}
 	
 	private boolean rIsApplicableForUpdateInPlace( ArrayList<StatementBlock> sbs, String varname ) 
-		throws HopsException
 	{
 		//NOTE: no function statement blocks / predicates considered because function call would 
 		//render variable as not applicable and predicates don't allow assignments; further reuse 
@@ -97,12 +101,12 @@ public class RewriteMarkLoopVariablesUpdateInPlace extends StatementBlockRewrite
 		//recursive invocation
 		boolean ret = true;
 		for( StatementBlock sb : sbs ) {
-			if( !sb.variablesRead().containsVariable(varname) )
+			if( !sb.variablesRead().containsVariable(varname)
+				&& !sb.variablesUpdated().containsVariable(varname) )
 				continue; //valid wrt update-in-place
 			
 			if( sb instanceof WhileStatementBlock || sb instanceof ForStatementBlock ) {
-				ret &= sb.getUpdateInPlaceVars()
-						 .contains(varname);
+				ret &= sb.getUpdateInPlaceVars().contains(varname);
 			}
 			else if( sb instanceof IfStatementBlock ) {
 				IfStatementBlock isb = (IfStatementBlock) sb;
@@ -112,8 +116,8 @@ public class RewriteMarkLoopVariablesUpdateInPlace extends StatementBlockRewrite
 					ret &= rIsApplicableForUpdateInPlace(istmt.getElseBody(), varname);	
 			}
 			else {
-				if( sb.get_hops() != null )
-					for( Hop hop : sb.get_hops() ) 
+				if( sb.getHops() != null )
+					for( Hop hop : sb.getHops() ) 
 						ret &= isApplicableForUpdateInPlace(hop, varname);
 			}
 			
@@ -124,7 +128,7 @@ public class RewriteMarkLoopVariablesUpdateInPlace extends StatementBlockRewrite
 		return ret;
 	}
 	
-	private boolean isApplicableForUpdateInPlace( Hop hop, String varname )
+	private static boolean isApplicableForUpdateInPlace( Hop hop, String varname )
 	{
 		if( !hop.getName().equals(varname) )
 			return true;
@@ -132,6 +136,7 @@ public class RewriteMarkLoopVariablesUpdateInPlace extends StatementBlockRewrite
 		//valid if read/updated by leftindexing 
 		//CP exec type not evaluated here as no lops generated yet 
 		boolean validLix = hop instanceof DataOp 
+			&& hop.isMatrix() && hop.getInput().get(0).isMatrix()
 			&& hop.getInput().get(0) instanceof LeftIndexingOp
 			&& hop.getInput().get(0).getInput().get(0) instanceof DataOp
 			&& hop.getInput().get(0).getInput().get(0).getName().equals(varname);
@@ -146,5 +151,10 @@ public class RewriteMarkLoopVariablesUpdateInPlace extends StatementBlockRewrite
 		}
 		
 		return validLix;
+	}
+	
+	@Override
+	public List<StatementBlock> rewriteStatementBlocks(List<StatementBlock> sbs, ProgramRewriteStatus sate) {
+		return sbs;
 	}
 }

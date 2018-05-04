@@ -29,7 +29,6 @@ import java.util.Map;
 
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
-import org.apache.hadoop.fs.FSDataInputStream;
 import org.apache.hadoop.fs.FSDataOutputStream;
 import org.apache.hadoop.fs.FileStatus;
 import org.apache.hadoop.fs.FileSystem;
@@ -53,18 +52,17 @@ import org.apache.hadoop.yarn.client.api.YarnClientApplication;
 import org.apache.hadoop.yarn.conf.YarnConfiguration;
 import org.apache.hadoop.yarn.util.ConverterUtils;
 import org.apache.hadoop.yarn.util.Records;
-
 import org.apache.sysml.conf.DMLConfig;
-import org.apache.sysml.parser.ParseException;
 import org.apache.sysml.runtime.DMLRuntimeException;
 import org.apache.sysml.runtime.DMLScriptException;
 import org.apache.sysml.runtime.controlprogram.parfor.stat.Timing;
+import org.apache.sysml.runtime.io.IOUtilFunctions;
 import org.apache.sysml.runtime.util.MapReduceTool;
 
 /**
  * NOTES:
  *   * Security: By default, submitted applications are ran as user 'yarn'. 
- *     In order to allow for security and relative filenames on hdfs (/user/<username>/.), 
+ *     In order to allow for security and relative filenames on hdfs (/user/&lt;username&gt;/.), 
  *     we can configure the LinuxContainerExecutor in yarn-site.xml, which runs the
  *     application as the user who submits the application.
  *   * SystemML.jar file dependency: We need to submit the SystemML.jar along with the
@@ -120,9 +118,9 @@ public class DMLYarnClient
 	 * Protected since only supposed to be accessed via proxy in same package.
 	 * This is to ensure robustness in case of missing yarn libraries.
 	 * 
-	 * @param dmlScriptStr
-	 * @param conf
-	 * @param args
+	 * @param dmlScriptStr script string
+	 * @param conf dml configuration
+	 * @param args arguments
 	 */
 	protected DMLYarnClient(String dmlScriptStr, DMLConfig conf, String[] args)
 	{
@@ -142,7 +140,8 @@ public class DMLYarnClient
 	 *	  exception we fall back to run CP directly in the client process.
 	 * 
 	 * @return true if dml program successfully executed as yarn app master
-	 * @throws IOException 
+	 * @throws IOException if IOException occurs
+	 * @throws DMLScriptException if DMLScriptException occurs
 	 */
 	protected boolean launchDMLYarnAppmaster() 
 		throws IOException, DMLScriptException
@@ -260,42 +259,33 @@ public class DMLYarnClient
 		
 		return ret;
 	}
-	
-	/**
-	 * 	
-	 * @param appId
-	 * @throws ParseException
-	 * @throws IOException
-	 * @throws DMLRuntimeException
-	 * @throws InterruptedException 
-	 */
+
 	@SuppressWarnings("deprecation")
 	private void copyResourcesToHdfsWorkingDir( YarnConfiguration yconf, String hdfsWD ) 
-		throws ParseException, IOException, DMLRuntimeException, InterruptedException 
+		throws IOException, InterruptedException 
 	{
-		FileSystem fs = FileSystem.get(yconf);
+		Path confPath = new Path(hdfsWD, DML_CONFIG_NAME);
+		FileSystem fs = IOUtilFunctions.getFileSystem(confPath, yconf);
 		
 		//create working directory
-		MapReduceTool.createDirIfNotExistOnHDFS(hdfsWD, DMLConfig.DEFAULT_SHARED_DIR_PERMISSION);
+		MapReduceTool.createDirIfNotExistOnHDFS(confPath, DMLConfig.DEFAULT_SHARED_DIR_PERMISSION);
 		
 		//serialize the dml config to HDFS file 
 		//NOTE: we do not modify and ship the absolute scratch space path of the current user
 		//because this might result in permission issues if the app master is run with a different user
 		//(runtime plan migration during resource reoptimizations now needs to use qualified names
 		//for shipping/reading intermediates) TODO modify resource reoptimizer on prototype integration.
-		Path confPath = new Path(hdfsWD, DML_CONFIG_NAME);
-		FSDataOutputStream fout = fs.create(confPath, true);
-		//_dmlConfig.makeQualifiedScratchSpacePath(); 
-		fout.writeBytes(_dmlConfig.serializeDMLConfig() + "\n");
-		fout.close();
+		try( FSDataOutputStream fout = fs.create(confPath, true) ) {
+			fout.writeBytes(_dmlConfig.serializeDMLConfig() + "\n");
+		}
 		_hdfsDMLConfig = confPath.makeQualified(fs).toString();
 		LOG.debug("DML config written to HDFS file: "+_hdfsDMLConfig+"");
 
 		//serialize the dml script to HDFS file
 		Path scriptPath = new Path(hdfsWD, DML_SCRIPT_NAME);
-		FSDataOutputStream fout2 = fs.create(scriptPath, true);
-		fout2.writeBytes(_dmlScript);
-		fout2.close();
+		try( FSDataOutputStream fout2 = fs.create(scriptPath, true) ) {
+			fout2.writeBytes(_dmlScript);
+		}
 		_hdfsDMLScript = scriptPath.makeQualified(fs).toString();
 		LOG.debug("DML script written to HDFS file: "+_hdfsDMLScript+"");
 		
@@ -318,10 +308,11 @@ public class DMLYarnClient
 	}
 	
 	/**
+	 * Obtain the local jar file name from the system environment
 	 * 
 	 * @return null if the constant does not exists
 	 */
-	private String getLocalJarFileNameFromEnvConst()
+	private static String getLocalJarFileNameFromEnvConst()
 	{
 		String fname = null;
 		
@@ -357,11 +348,11 @@ public class DMLYarnClient
 	 * jar to a temporary jar and later copy it to hdfs.
 	 * 
 	 * @param dir
-	 * @return
-	 * @throws IOException
-	 * @throws InterruptedException
+	 * @return jar name
+	 * @throws IOException if IOException occurs
+	 * @throws InterruptedException if InterruptedException occurs
 	 */
-	private String createJar( String dir ) 
+	private static String createJar( String dir ) 
 		throws IOException, InterruptedException
 	{
 		//construct jar command
@@ -398,13 +389,7 @@ public class DMLYarnClient
 		
 		return jarname;
 	}
-	
-	/**
-	 * 
-	 * @param args
-	 * @param conf
-	 * @return
-	 */
+
 	private String constructAMCommand( String[] args, DMLConfig conf )
 	{
 		//start command
@@ -443,7 +428,7 @@ public class DMLYarnClient
 			command.append(' ');
 			if( i>0 && _args[i-1].equals("-f") ){
 				command.append(_hdfsDMLScript);
-				command.append(" -config=" + _hdfsDMLConfig);
+				command.append(" -config " + _hdfsDMLConfig);
 			}
 			else if( _args[i].startsWith("-config") ){
 				//ignore because config added with -f
@@ -458,23 +443,16 @@ public class DMLYarnClient
 	
 		return command.toString();
 	}
-	
-	/**
-	 * 
-	 * @param yconf
-	 * @param path
-	 * @param lpath
-	 * @return
-	 * @throws IOException
-	 */
+
 	private Map<String, LocalResource> constructLocalResourceMap(YarnConfiguration yconf) 
 		throws IOException 
 	{
-		Map<String, LocalResource> rMap = new HashMap<String, LocalResource>();
+		Map<String, LocalResource> rMap = new HashMap<>();
 		Path path = new Path(_hdfsJarFile); 
 		
 		LocalResource resource = Records.newRecord(LocalResource.class);
-		FileStatus jarStat = FileSystem.get(yconf).getFileStatus(path);
+		FileStatus jarStat = IOUtilFunctions
+			.getFileSystem(path, yconf).getFileStatus(path);
 		resource.setResource(ConverterUtils.getYarnUrlFromPath(path));
 		resource.setSize(jarStat.getLen());
 		resource.setTimestamp(jarStat.getModificationTime());
@@ -484,17 +462,11 @@ public class DMLYarnClient
 		rMap.put(DML_JAR_NAME, resource);
 		return rMap;
 	}
-	
-	/**
-	 * 
-	 * @param yconf
-	 * @return
-	 * @throws IOException
-	 */
-	private Map<String, String> constructEnvionmentMap(YarnConfiguration yconf) 
+
+	private static Map<String, String> constructEnvionmentMap(YarnConfiguration yconf) 
 		throws IOException
 	{
-		Map<String, String> eMap = new HashMap<String, String>();
+		Map<String, String> eMap = new HashMap<>();
 		
 		//setup default app master environment
 		StringBuilder classpath = new StringBuilder();
@@ -536,15 +508,8 @@ public class DMLYarnClient
 		
 		return eMap;
 	}	
-	
-	/**
-	 * 
-	 * @param conf
-	 * @param yconf
-	 * @param appId
-	 * @return
-	 */
-	private String readMessageToHDFSWorkingDir(DMLConfig conf, YarnConfiguration yconf, ApplicationId appId)
+
+	private static String readMessageToHDFSWorkingDir(DMLConfig conf, YarnConfiguration yconf, ApplicationId appId)
 	{
 		String ret = null;
 		
@@ -554,13 +519,11 @@ public class DMLYarnClient
 		
 		//write given message to hdfs
 		try {
-			FileSystem fs = FileSystem.get(yconf);
-			if( fs.exists(msgPath) )
-			{
-				FSDataInputStream fin = fs.open(msgPath);
-				BufferedReader br = new BufferedReader(new InputStreamReader(fin));
-				ret = br.readLine();
-				fin.close();
+			FileSystem fs = IOUtilFunctions.getFileSystem(msgPath, yconf);
+			if( fs.exists(msgPath) ) {
+				try( BufferedReader br = new BufferedReader(new InputStreamReader(fs.open(msgPath))) ) {
+					ret = br.readLine();
+				}
 				LOG.debug("Stop message read from HDFS file "+msgPath+": "+ret );
 			}
 		}
@@ -570,12 +533,7 @@ public class DMLYarnClient
 		
 		return ret;
 	}
-	
-	/**
-	 * 
-	 * @param heapsize
-	 * @return
-	 */
+
 	public static long computeMemoryAllocation( long heapsize )
 	{
 		long ret = heapsize;

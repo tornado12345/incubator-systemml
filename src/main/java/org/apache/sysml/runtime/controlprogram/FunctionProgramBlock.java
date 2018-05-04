@@ -24,6 +24,7 @@ import java.util.ArrayList;
 import org.apache.sysml.api.DMLScript;
 import org.apache.sysml.conf.ConfigurationManager;
 import org.apache.sysml.hops.recompile.Recompiler;
+import org.apache.sysml.hops.recompile.Recompiler.ResetType;
 import org.apache.sysml.parser.DataIdentifier;
 import org.apache.sysml.runtime.DMLRuntimeException;
 import org.apache.sysml.runtime.DMLScriptException;
@@ -34,23 +35,24 @@ import org.apache.sysml.utils.Statistics;
 
 public class FunctionProgramBlock extends ProgramBlock 
 {
-	
+	public String _functionName;
+	public String _namespace;
 	protected ArrayList<ProgramBlock> _childBlocks;
 	protected ArrayList<DataIdentifier> _inputParams;
 	protected ArrayList<DataIdentifier> _outputParams;
 	
 	private boolean _recompileOnce = false;
 	
-	public FunctionProgramBlock( Program prog, ArrayList<DataIdentifier> inputParams, ArrayList<DataIdentifier> outputParams) throws DMLRuntimeException
+	public FunctionProgramBlock( Program prog, ArrayList<DataIdentifier> inputParams, ArrayList<DataIdentifier> outputParams) 
 	{
 		super(prog);
-		_childBlocks = new ArrayList<ProgramBlock>();
-		_inputParams = new ArrayList<DataIdentifier>();
+		_childBlocks = new ArrayList<>();
+		_inputParams = new ArrayList<>();
 		for (DataIdentifier id : inputParams){
 			_inputParams.add(new DataIdentifier(id));
 			
 		}
-		_outputParams = new ArrayList<DataIdentifier>();
+		_outputParams = new ArrayList<>();
 		for (DataIdentifier id : outputParams){
 			_outputParams.add(new DataIdentifier(id));
 		}
@@ -79,8 +81,7 @@ public class FunctionProgramBlock extends ProgramBlock
 	
 	@Override
 	public void execute(ExecutionContext ec) 
-		throws DMLRuntimeException
-	{	
+	{
 		//dynamically recompile entire function body (according to function inputs)
 		try {
 			if( ConfigurationManager.isDynamicRecompilation() 
@@ -94,7 +95,8 @@ public class FunctionProgramBlock extends ProgramBlock
 				//     function will be recompiled for every execution.
 				// (2) without reset, there would be no benefit in recompiling the entire function
 				LocalVariableMap tmp = (LocalVariableMap) ec.getVariables().clone();
-				Recompiler.recompileProgramBlockHierarchy(_childBlocks, tmp, _tid, true);
+				ResetType reset = ConfigurationManager.isCodegenEnabled() ? ResetType.RESET_KNOWN_DIMS : ResetType.RESET;
+				Recompiler.recompileProgramBlockHierarchy(_childBlocks, tmp, _tid, reset);
 				
 				if( DMLScript.STATISTICS ){
 					long t1 = System.nanoTime();
@@ -124,15 +126,10 @@ public class FunctionProgramBlock extends ProgramBlock
 		// check return values
 		checkOutputParameters(ec.getVariables());
 	}
-	
-	/**
-	 * 
-	 * @param vars
-	 */
+
 	protected void checkOutputParameters( LocalVariableMap vars )
 	{
-		for( DataIdentifier diOut : _outputParams )
-		{
+		for( DataIdentifier diOut : _outputParams ) {
 			String varName = diOut.getName();
 			Data dat = vars.get( varName );
 			if( dat == null )
@@ -141,7 +138,6 @@ public class FunctionProgramBlock extends ProgramBlock
 				LOG.warn("Function output "+ varName +" has wrong data type: "+dat.getDataType()+".");
 			else if( dat.getValueType() != diOut.getValueType() )
 				LOG.warn("Function output "+ varName +" has wrong value type: "+dat.getValueType()+".");
-			   
 		}
 	}
 	
@@ -153,8 +149,8 @@ public class FunctionProgramBlock extends ProgramBlock
 		return _recompileOnce;
 	}
 	
+	@Override
 	public String printBlockErrorLocation(){
 		return "ERROR: Runtime error in function program block generated from function statement block between lines " + _beginLine + " and " + _endLine + " -- ";
 	}
-	
 }

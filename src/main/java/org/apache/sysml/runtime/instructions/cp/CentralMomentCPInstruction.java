@@ -29,17 +29,14 @@ import org.apache.sysml.runtime.matrix.data.MatrixBlock;
 import org.apache.sysml.runtime.matrix.operators.CMOperator;
 import org.apache.sysml.runtime.matrix.operators.CMOperator.AggregateOperationTypes;
 
-public class CentralMomentCPInstruction extends AggregateUnaryCPInstruction
-{	
-	public CentralMomentCPInstruction(CMOperator cm, CPOperand in1, CPOperand in2, 
-			CPOperand in3, CPOperand out, String opcode, String str) 
-	{
-		super(cm, in1, in2, in3, out, opcode, str);
+public class CentralMomentCPInstruction extends AggregateUnaryCPInstruction {
+
+	private CentralMomentCPInstruction(CMOperator cm, CPOperand in1, CPOperand in2, CPOperand in3, CPOperand out,
+			String opcode, String str) {
+		super(cm, in1, in2, in3, out, AUType.DEFAULT, opcode, str);
 	}
 
-	public static CentralMomentCPInstruction parseInstruction(String str)
-		throws DMLRuntimeException 
-	{
+	public static CentralMomentCPInstruction parseInstruction(String str) {
 		CPOperand in1 = new CPOperand("", ValueType.UNKNOWN, DataType.UNKNOWN);
 		CPOperand in2 = null; 
 		CPOperand in3 = null; 
@@ -90,9 +87,7 @@ public class CentralMomentCPInstruction extends AggregateUnaryCPInstruction
 	}
 	
 	@Override
-	public void processInstruction( ExecutionContext ec )
-		throws DMLRuntimeException
-	{
+	public void processInstruction( ExecutionContext ec ) {
 		String output_name = output.getName();
 
 		/*
@@ -102,30 +97,28 @@ public class CentralMomentCPInstruction extends AggregateUnaryCPInstruction
 		 * order and update the CMOperator, if needed.
 		 */
 		
-		MatrixBlock matBlock = ec.getMatrixInput(input1.getName());
+		MatrixBlock matBlock = ec.getMatrixInput(input1.getName(), getExtendedOpcode());
 
 		CPOperand scalarInput = (input3==null ? input2 : input3);
 		ScalarObject order = ec.getScalarInput(scalarInput.getName(), scalarInput.getValueType(), scalarInput.isLiteral()); 
 		
 		CMOperator cm_op = ((CMOperator)_optr); 
-		if ( cm_op.getAggOpType() == AggregateOperationTypes.INVALID ) {
-			((CMOperator)_optr).setCMAggOp((int)order.getLongValue());
-		}
+		if ( cm_op.getAggOpType() == AggregateOperationTypes.INVALID )
+			cm_op = cm_op.setCMAggOp((int)order.getLongValue());
 		
 		CM_COV_Object cmobj = null; 
 		if (input3 == null ) {
 			cmobj = matBlock.cmOperations(cm_op);
 		}
 		else {
-			MatrixBlock wtBlock = ec.getMatrixInput(input2.getName());
+			MatrixBlock wtBlock = ec.getMatrixInput(input2.getName(), getExtendedOpcode());
 			cmobj = matBlock.cmOperations(cm_op, wtBlock);
-			ec.releaseMatrixInput(input2.getName());
+			ec.releaseMatrixInput(input2.getName(), getExtendedOpcode());
 		}
 		
-		ec.releaseMatrixInput(input1.getName());
+		ec.releaseMatrixInput(input1.getName(), getExtendedOpcode());
 		
-		double val = cmobj.getRequiredResult(_optr);
-		DoubleObject ret = new DoubleObject(output_name, val);
-		ec.setScalarOutput(output_name, ret);
+		double val = cmobj.getRequiredResult(cm_op);
+		ec.setScalarOutput(output_name, new DoubleObject(val));
 	}
 }

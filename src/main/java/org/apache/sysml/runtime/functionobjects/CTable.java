@@ -26,13 +26,8 @@ import org.apache.sysml.runtime.matrix.data.MatrixIndexes;
 import org.apache.sysml.runtime.matrix.data.Pair;
 import org.apache.sysml.runtime.util.UtilFunctions;
 
-/**
- * 
- * 
- */
 public class CTable extends ValueFunction 
 {
-
 	private static final long serialVersionUID = -5374880447194177236L;
 
 	private static CTable singleObj = null;
@@ -46,23 +41,15 @@ public class CTable extends ValueFunction
 			singleObj = new CTable();
 		return singleObj;
 	}
-	
-	public Object clone() throws CloneNotSupportedException {
-		// cloning is not supported for singleton classes
-		throw new CloneNotSupportedException();
+
+	public void execute(double v1, double v2, double w, boolean ignoreZeros, CTableMap resultMap, MatrixBlock resultBlock) {
+		if( resultBlock != null )
+			execute(v1, v2, w, ignoreZeros, resultBlock);
+		else
+			execute(v1, v2, w, ignoreZeros, resultMap);
 	}
 	
-	/**
-	 * 
-	 * @param v1
-	 * @param v2
-	 * @param w
-	 * @param ctableResult
-	 * @throws DMLRuntimeException
-	 */
-	public void execute(double v1, double v2, double w, boolean ignoreZeros, CTableMap resultMap) 
-		throws DMLRuntimeException 
-	{	
+	public void execute(double v1, double v2, double w, boolean ignoreZeros, CTableMap resultMap) {
 		// If any of the values are NaN (i.e., missing) then 
 		// we skip this tuple, proceed to the next tuple
 		if ( Double.isNaN(v1) || Double.isNaN(v2) || Double.isNaN(w) ) {
@@ -87,17 +74,8 @@ public class CTable extends ValueFunction
 		resultMap.aggregate(row, col, w);	
 	}	
 
-	/**
-	 * 
-	 * @param v1
-	 * @param v2
-	 * @param w
-	 * @param ctableResult
-	 * @throws DMLRuntimeException
-	 */
 	public void execute(double v1, double v2, double w, boolean ignoreZeros, MatrixBlock ctableResult) 
-		throws DMLRuntimeException 
-	{	
+	{
 		// If any of the values are NaN (i.e., missing) then 
 		// we skip this tuple, proceed to the next tuple
 		if ( Double.isNaN(v1) || Double.isNaN(v2) || Double.isNaN(w) ) {
@@ -127,18 +105,9 @@ public class CTable extends ValueFunction
 		ctableResult.quickSetValue((int)row-1, (int)col-1,
 				ctableResult.quickGetValue((int)row-1, (int)col-1) + w);
 	}
-	
-	/**
-	 * 
-	 * @param row
-	 * @param v2
-	 * @param w
-	 * @param maxCol
-	 * @return
-	 */
+
 	public int execute(int row, double v2, double w, int maxCol, MatrixBlock ctableResult) 
-		throws DMLRuntimeException 
-	{	
+	{
 		// If any of the values are NaN (i.e., missing) then 
 		// we skip this tuple, proceed to the next tuple
 		if ( Double.isNaN(v2) || Double.isNaN(w) ) {
@@ -159,30 +128,16 @@ public class CTable extends ValueFunction
 		return Math.max(maxCol, (int)col);
 	}
 
-	/**
-	 * 
-	 * @param row
-	 * @param v2
-	 * @param w
-	 * @return
-	 * @throws DMLRuntimeException
-	 */
 	public Pair<MatrixIndexes,Double> execute( long row, double v2, double w ) 
-		throws DMLRuntimeException
 	{
 		// If any of the values are NaN (i.e., missing) then 
 		// we skip this tuple, proceed to the next tuple
-		if ( Double.isNaN(v2) || Double.isNaN(w) ) {
-			return new Pair<MatrixIndexes,Double>(new MatrixIndexes(-1,-1), w);
-		}
-		
+		if ( Double.isNaN(v2) || Double.isNaN(w) )
+			return new Pair<>(new MatrixIndexes(-1,-1), w);
 		// safe casts to long for consistent behavior with indexing
 		long col = UtilFunctions.toLong( v2 );
-				
-		if( col <= 0 ) {
+		if( col <= 0 )
 			throw new DMLRuntimeException("Erroneous input while computing the contingency table (value <= zero): "+v2);
-		} 
-		
-		return new Pair<MatrixIndexes,Double>(new MatrixIndexes(row, col), w);
+		return new Pair<>(new MatrixIndexes(row, col), w);
 	}
 }

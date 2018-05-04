@@ -28,6 +28,7 @@ import org.junit.runners.Suite;
 @Suite.SuiteClasses({
 	FullReblockTest.class,
 	FullStringInitializeTest.class,
+	RandRuntimePlatformTest.class,
 	RandTest1.class,
 	RandTest2.class,
 	RandTest3.class,
@@ -41,9 +42,8 @@ import org.junit.runners.Suite;
 	SequenceTest.class,
 	VariableTest.class,
 	WriteMMTest.class,
+	WriteReadZeroDimsTest.class,
 	WriteTest.class,
-	
-	RandRuntimePlatformTest.class
 })
 
 

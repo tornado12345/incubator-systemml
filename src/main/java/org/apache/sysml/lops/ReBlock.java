@@ -32,17 +32,16 @@ import org.apache.sysml.parser.Expression.ValueType;
  */
 public class ReBlock extends Lop 
 {
-	
 	public static final String OPCODE = "rblk"; 
 	
 	private boolean _outputEmptyBlocks = true;
 	
-	private Long _rows_per_block;
-	private Long _cols_per_block;
+	private int _rows_per_block;
+	private int _cols_per_block;
 
-	public ReBlock(Lop input, Long rows_per_block, Long cols_per_block, DataType dt, ValueType vt, boolean outputEmptyBlocks, ExecType et) throws LopsException
+	public ReBlock(Lop input, int rows_per_block, int cols_per_block, DataType dt, ValueType vt, boolean outputEmptyBlocks, ExecType et)
 	{
-		super(Lop.Type.ReBlock, dt, vt);		
+		super(Lop.Type.ReBlock, dt, vt);
 		this.addInput(input);
 		input.addOutput(this);
 		
@@ -67,24 +66,27 @@ public class ReBlock extends Lop
 
 	@Override
 	public String toString() {
-	
 		return "Reblock - rows per block = " + _rows_per_block + " cols per block  " + _cols_per_block ;
 	}
 
 	@Override
-	public String getInstructions(int input_index, int output_index) throws LopsException
-	{
+	public String getInstructions(int input_index, int output_index) {
+		return getInstructions(String.valueOf(input_index), String.valueOf(output_index));
+	}
+	
+	@Override
+	public String getInstructions(String input1, String output) {
 		StringBuilder sb = new StringBuilder();
 		sb.append( getExecType() );
 		
 		sb.append( Lop.OPERAND_DELIMITOR );
-		sb.append( OPCODE );
+		sb.append( "rblk" );
 		
 		sb.append( OPERAND_DELIMITOR );
-		sb.append( getInputs().get(0).prepInputOperand(input_index));
+		sb.append( getInputs().get(0).prepInputOperand(input1) );
 		
 		sb.append( OPERAND_DELIMITOR );
-		sb.append ( this.prepOutputOperand(output_index));
+		sb.append( prepOutputOperand(output) );
 		
 		sb.append( OPERAND_DELIMITOR );
 		sb.append( _rows_per_block );
@@ -98,40 +100,9 @@ public class ReBlock extends Lop
 		return sb.toString();
 	}
 	
-	@Override
-	public String getInstructions(String input1, String output) throws LopsException {
-		if(getExecType() != ExecType.SPARK) {
-			throw new LopsException("The method getInstructions(String,String) for Reblock should be called only for Spark execution type");
-		}
-		
-		if (this.getInputs().size() == 1) {
-			
-			StringBuilder sb = new StringBuilder();
-			sb.append( getExecType() );
-			sb.append( Lop.OPERAND_DELIMITOR );
-			sb.append( "rblk" );
-			sb.append( OPERAND_DELIMITOR );
-			sb.append( getInputs().get(0).prepInputOperand(input1));
-			sb.append( OPERAND_DELIMITOR );
-			sb.append( this.prepOutputOperand(output));
-			sb.append( OPERAND_DELIMITOR );
-			sb.append( _rows_per_block );
-			sb.append( OPERAND_DELIMITOR );
-			sb.append( _cols_per_block );
-			sb.append( OPERAND_DELIMITOR );
-			sb.append(_outputEmptyBlocks);
-			
-			return sb.toString();
-
-		} else {
-			throw new LopsException(this.printErrorLocation() + "Invalid number of operands ("
-					+ this.getInputs().size() + ") for Reblock operation");
-		}
-	}
-	
 	// This function is replicated in Dag.java
 	@SuppressWarnings("unused")
-	private Format getChildFormat(Lop node) throws LopsException {
+	private Format getChildFormat(Lop node) {
 		
 		if(node.getOutputParameters().getFile_name() != null
 				|| node.getOutputParameters().getLabel() != null)
@@ -157,8 +128,5 @@ public class ReBlock extends Lop
 			// return getChildFormat(node.getInputs().get(0));
 			return node.getInputs().get(0).getOutputParameters().getFormat();		}
 		
-	}
-
- 
- 
+	} 
 }

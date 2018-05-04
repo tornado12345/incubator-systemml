@@ -21,18 +21,14 @@ package org.apache.sysml.runtime.transform.encode;
 
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashMap;
 import java.util.List;
 
 import org.apache.commons.collections.CollectionUtils;
-import org.apache.commons.lang3.ArrayUtils;
+import org.apache.commons.lang.ArrayUtils;
 import org.apache.sysml.parser.Expression.ValueType;
 import org.apache.sysml.runtime.DMLRuntimeException;
 import org.apache.sysml.runtime.matrix.data.FrameBlock;
-import org.apache.sysml.runtime.transform.BinAgent;
-import org.apache.sysml.runtime.transform.DummycodeAgent;
-import org.apache.sysml.runtime.transform.MVImputeAgent;
-import org.apache.sysml.runtime.transform.OmitAgent;
-import org.apache.sysml.runtime.transform.RecodeAgent;
 import org.apache.sysml.runtime.transform.TfUtils;
 import org.apache.sysml.runtime.transform.meta.TfMetaUtils;
 import org.apache.sysml.runtime.util.UtilFunctions;
@@ -40,50 +36,24 @@ import org.apache.wink.json4j.JSONObject;
 
 public class EncoderFactory 
 {
-	/**
-	 * 
-	 * @param spec
-	 * @param clen
-	 * @return
-	 * @throws DMLRuntimeException 
-	 */
-	public static Encoder createEncoder(String spec, String[] colnames, int clen, FrameBlock meta) throws DMLRuntimeException {
+	public static Encoder createEncoder(String spec, String[] colnames, int clen, FrameBlock meta) {
 		return createEncoder(spec, colnames, UtilFunctions.nCopies(clen, ValueType.STRING), meta);
 	}
-	
-	/**
-	 * 
-	 * @param spec
-	 * @param schema
-	 * @param clen
-	 * @param meta
-	 * @return
-	 * @throws DMLRuntimeException
-	 */
-	public static Encoder createEncoder(String spec, String[] colnames, ValueType[] schema, int clen, FrameBlock meta) throws DMLRuntimeException {
+
+	public static Encoder createEncoder(String spec, String[] colnames, ValueType[] schema, int clen, FrameBlock meta) {
 		ValueType[] lschema = (schema==null) ? UtilFunctions.nCopies(clen, ValueType.STRING) : schema;
 		return createEncoder(spec, colnames, lschema, meta);
 	}
 	
-	
-	/**
-	 * 
-	 * @param spec
-	 * @param schema
-	 * @return
-	 * @throws DMLRuntimeException
-	 */
 	@SuppressWarnings("unchecked")
-	public static Encoder createEncoder(String spec,  String[] colnames, ValueType[] schema, FrameBlock meta) 
-		throws DMLRuntimeException 
-	{	
+	public static Encoder createEncoder(String spec, String[] colnames, ValueType[] schema, FrameBlock meta) {
 		Encoder encoder = null;
 		int clen = schema.length;
 		
 		try {
 			//parse transform specification
 			JSONObject jSpec = new JSONObject(spec);
-			List<Encoder> lencoders = new ArrayList<Encoder>();
+			List<Encoder> lencoders = new ArrayList<>();
 		
 			//prepare basic id lists (recode, dummycode, pass-through)
 			//note: any dummycode column requires recode as preparation
@@ -94,7 +64,7 @@ public class EncoderFactory
 			rcIDs = new ArrayList<Integer>(CollectionUtils.union(rcIDs, dcIDs));
 			List<Integer> binIDs = TfMetaUtils.parseBinningColIDs(jSpec, colnames); 
 			List<Integer> ptIDs = new ArrayList<Integer>(CollectionUtils.subtract(
-					CollectionUtils.subtract(UtilFunctions.getSequenceList(1, clen, 1), rcIDs), binIDs)); 
+					CollectionUtils.subtract(UtilFunctions.getSeqList(1, clen, 1), rcIDs), binIDs)); 
 			List<Integer> oIDs = Arrays.asList(ArrayUtils.toObject(
 					TfMetaUtils.parseJsonIDList(jSpec, colnames, TfUtils.TXMETHOD_OMIT))); 
 			List<Integer> mvIDs = Arrays.asList(ArrayUtils.toObject(
@@ -102,7 +72,7 @@ public class EncoderFactory
 			
 			//create individual encoders
 			if( !rcIDs.isEmpty() ) {
-				RecodeAgent ra = new RecodeAgent(jSpec, colnames, clen);
+				EncoderRecode ra = new EncoderRecode(jSpec, colnames, clen);
 				ra.setColList(ArrayUtils.toPrimitive(rcIDs.toArray(new Integer[0])));
 				lencoders.add(ra);	
 			}
@@ -110,27 +80,55 @@ public class EncoderFactory
 				lencoders.add(new EncoderPassThrough(
 						ArrayUtils.toPrimitive(ptIDs.toArray(new Integer[0])), clen));	
 			if( !dcIDs.isEmpty() )
-				lencoders.add(new DummycodeAgent(jSpec, colnames, schema.length));
+				lencoders.add(new EncoderDummycode(jSpec, colnames, schema.length));
 			if( !binIDs.isEmpty() )
-				lencoders.add(new BinAgent(jSpec, colnames, schema.length, true));
+				lencoders.add(new EncoderBin(jSpec, colnames, schema.length, true));
 			if( !oIDs.isEmpty() )
-				lencoders.add(new OmitAgent(jSpec, colnames, schema.length));
+				lencoders.add(new EncoderOmit(jSpec, colnames, schema.length));
 			if( !mvIDs.isEmpty() ) {
-				MVImputeAgent ma = new MVImputeAgent(jSpec, colnames, schema.length);
+				EncoderMVImpute ma = new EncoderMVImpute(jSpec, colnames, schema.length);
 				ma.initRecodeIDList(rcIDs);
 				lencoders.add(ma);
 			}
 			
 			//create composite decoder of all created encoders
-			//and initialize meta data (recode, dummy, bin, mv)
 			encoder = new EncoderComposite(lencoders);
-			if( meta != null )
+			
+			//initialize meta data w/ robustness for superset of cols
+			if( meta != null ) {
+				String[] colnames2 = meta.getColumnNames();
+				if( !TfMetaUtils.isIDSpec(jSpec) && colnames!=null && colnames2!=null 
+					&& !ArrayUtils.isEquals(colnames, colnames2) ) 
+				{
+					HashMap<String, Integer> colPos = getColumnPositions(colnames2);
+					//create temporary meta frame block w/ shallow column copy
+					FrameBlock meta2 = new FrameBlock(meta.getSchema(), colnames2);
+					meta2.setNumRows(meta.getNumRows());
+					for( int i=0; i<colnames.length; i++ ) {
+						if( !colPos.containsKey(colnames[i]) ) {
+							throw new DMLRuntimeException("Column name not found in meta data: "
+								+colnames[i]+" (meta: "+Arrays.toString(colnames2)+")");
+						}
+						int pos = colPos.get(colnames[i]);
+						meta2.setColumn(i, meta.getColumn(pos));
+						meta2.setColumnMetadata(i, meta.getColumnMetadata(pos));
+					}
+					meta = meta2;
+				}
 				encoder.initMetaData(meta);
+			}
 		}
 		catch(Exception ex) {
 			throw new DMLRuntimeException(ex);
 		}
 		
 		return encoder;
+	}
+	
+	private static HashMap<String, Integer> getColumnPositions(String[] colnames) {
+		HashMap<String, Integer> ret = new HashMap<>();
+		for(int i=0; i<colnames.length; i++)
+			ret.put(colnames[i], i);
+		return ret;
 	}
 }

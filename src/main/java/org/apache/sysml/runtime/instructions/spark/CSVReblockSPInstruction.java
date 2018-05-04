@@ -35,15 +35,14 @@ import org.apache.sysml.runtime.instructions.cp.CPOperand;
 import org.apache.sysml.runtime.instructions.spark.utils.FrameRDDConverterUtils;
 import org.apache.sysml.runtime.instructions.spark.utils.RDDConverterUtils;
 import org.apache.sysml.runtime.matrix.MatrixCharacteristics;
-import org.apache.sysml.runtime.matrix.MatrixFormatMetaData;
+import org.apache.sysml.runtime.matrix.MetaDataFormat;
 import org.apache.sysml.runtime.matrix.data.FrameBlock;
 import org.apache.sysml.runtime.matrix.data.InputInfo;
 import org.apache.sysml.runtime.matrix.data.MatrixBlock;
 import org.apache.sysml.runtime.matrix.data.MatrixIndexes;
 import org.apache.sysml.runtime.matrix.operators.Operator;
 
-public class CSVReblockSPInstruction extends UnarySPInstruction 
-{
+public class CSVReblockSPInstruction extends UnarySPInstruction {
 	private int _brlen;
 	private int _bclen;
 	private boolean _hasHeader;
@@ -51,11 +50,9 @@ public class CSVReblockSPInstruction extends UnarySPInstruction
 	private boolean _fill;
 	private double _fillValue;
 
-	public CSVReblockSPInstruction(Operator op, CPOperand in, CPOperand out,
-			int br, int bc, boolean hasHeader, String delim, boolean fill,
-			double fillValue, String opcode, String instr) 
-	{
-		super(op, in, out, opcode, instr);
+	protected CSVReblockSPInstruction(Operator op, CPOperand in, CPOperand out, int br, int bc, boolean hasHeader,
+			String delim, boolean fill, double fillValue, String opcode, String instr) {
+		super(SPType.CSVReblock, op, in, out, opcode, instr);
 		_brlen = br;
 		_bclen = bc;
 		_hasHeader = hasHeader;
@@ -64,9 +61,7 @@ public class CSVReblockSPInstruction extends UnarySPInstruction
 		_fillValue = fillValue;
 	}
 
-	public static CSVReblockSPInstruction parseInstruction(String str)
-			throws DMLRuntimeException 
-	{
+	public static CSVReblockSPInstruction parseInstruction(String str) {
 		String opcode = InstructionUtils.getOpCode(str);
 		if( !opcode.equals("csvrblk") )
 			throw new DMLRuntimeException("Incorrect opcode for CSVReblockSPInstruction:" + opcode);
@@ -90,14 +85,12 @@ public class CSVReblockSPInstruction extends UnarySPInstruction
 	}
 
 	@Override
-	public void processInstruction(ExecutionContext ec)
-		throws DMLRuntimeException 
-	{
+	public void processInstruction(ExecutionContext ec) {
 		SparkExecutionContext sec = (SparkExecutionContext) ec;
 
 		//sanity check input info
 		CacheableData<?> obj = sec.getCacheableData(input1.getName());
-		MatrixFormatMetaData iimd = (MatrixFormatMetaData) obj.getMetaData();
+		MetaDataFormat iimd = (MetaDataFormat) obj.getMetaData();
 		if (iimd.getInputInfo() != InputInfo.CSVInputInfo) {
 			throw new DMLRuntimeException("The given InputInfo is not implemented for "
 					+ "CSVReblockSPInstruction:" + iimd.getInputInfo());
@@ -117,9 +110,6 @@ public class CSVReblockSPInstruction extends UnarySPInstruction
 			return;
 		}
 		
-		//check jdk version (prevent double.parseDouble contention on <jdk8)
-		sec.checkAndRaiseValidationWarningJDKVersion();
-		
 		//execute matrix/frame csvreblock 
 		JavaPairRDD<?,?> out = null;
 		if( input1.getDataType() == DataType.MATRIX )
@@ -131,46 +121,28 @@ public class CSVReblockSPInstruction extends UnarySPInstruction
 		sec.setRDDHandleForVariable(output.getName(), out);
 		sec.addLineageRDD(output.getName(), input1.getName());
 	}
-	
-	/**
-	 * 
-	 * @param sec
-	 * @param mcOut
-	 * @return
-	 * @throws DMLRuntimeException
-	 */
+
 	@SuppressWarnings("unchecked")
-	protected JavaPairRDD<MatrixIndexes,MatrixBlock> processMatrixCSVReblockInstruction(SparkExecutionContext sec, MatrixCharacteristics mcOut) 
-		throws DMLRuntimeException
-	{
+	protected JavaPairRDD<MatrixIndexes,MatrixBlock> processMatrixCSVReblockInstruction(SparkExecutionContext sec, MatrixCharacteristics mcOut) {
 		//get input rdd (needs to be longwritable/text for consistency with meta data, in case of
 		//serialization issues create longwritableser/textser as serializable wrappers
-		JavaPairRDD<LongWritable, Text> in = (JavaPairRDD<LongWritable, Text>) 
-				sec.getRDDHandleForVariable(input1.getName(), InputInfo.CSVInputInfo);
-			
-		//reblock csv to binary block
-		return RDDConverterUtils.csvToBinaryBlock(sec.getSparkContext(), 
-				in, mcOut, _hasHeader, _delim, _fill, _fillValue);
-	}
-	
-	/**
-	 * 
-	 * @param sec
-	 * @param mcOut
-	 * @return
-	 * @throws DMLRuntimeException
-	 */
-	@SuppressWarnings("unchecked")
-	protected JavaPairRDD<Long,FrameBlock> processFrameCSVReblockInstruction(SparkExecutionContext sec, MatrixCharacteristics mcOut, ValueType[] schema) 
-		throws DMLRuntimeException
-	{
-		//get input rdd (needs to be longwritable/text for consistency with meta data, in case of
-		//serialization issues create longwritableser/textser as serializable wrappers
-		JavaPairRDD<LongWritable, Text> in = (JavaPairRDD<LongWritable, Text>) 
-				sec.getRDDHandleForVariable(input1.getName(), InputInfo.CSVInputInfo);
+		JavaPairRDD<LongWritable, Text> in = (JavaPairRDD<LongWritable, Text>)
+			sec.getRDDHandleForMatrixObject(sec.getMatrixObject(input1), InputInfo.CSVInputInfo);
 		
 		//reblock csv to binary block
-		return FrameRDDConverterUtils.csvToBinaryBlock(sec.getSparkContext(), 
-				in, mcOut, schema, _hasHeader, _delim, _fill, _fillValue);
+		return RDDConverterUtils.csvToBinaryBlock(sec.getSparkContext(),
+			in, mcOut, _hasHeader, _delim, _fill, _fillValue);
+	}
+
+	@SuppressWarnings("unchecked")
+	protected JavaPairRDD<Long,FrameBlock> processFrameCSVReblockInstruction(SparkExecutionContext sec, MatrixCharacteristics mcOut, ValueType[] schema) {
+		//get input rdd (needs to be longwritable/text for consistency with meta data, in case of
+		//serialization issues create longwritableser/textser as serializable wrappers
+		JavaPairRDD<LongWritable, Text> in = (JavaPairRDD<LongWritable, Text>) 
+			sec.getRDDHandleForFrameObject(sec.getFrameObject(input1), InputInfo.CSVInputInfo);
+		
+		//reblock csv to binary block
+		return FrameRDDConverterUtils.csvToBinaryBlock(sec.getSparkContext(),
+			in, mcOut, schema, _hasHeader, _delim, _fill, _fillValue);
 	}
 }

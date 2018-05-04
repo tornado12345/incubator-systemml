@@ -22,7 +22,6 @@ package org.apache.sysml.runtime.instructions.mr;
 import java.util.ArrayList;
 
 import org.apache.sysml.lops.PartialAggregate.CorrectionLocationType;
-import org.apache.sysml.runtime.DMLRuntimeException;
 import org.apache.sysml.runtime.functionobjects.KahanPlus;
 import org.apache.sysml.runtime.instructions.InstructionUtils;
 import org.apache.sysml.runtime.matrix.MatrixCharacteristics;
@@ -37,46 +36,30 @@ import org.apache.sysml.runtime.matrix.mapred.MRBaseForCommonInstructions;
 import org.apache.sysml.runtime.matrix.operators.AggregateOperator;
 import org.apache.sysml.runtime.matrix.operators.Operator;
 
-
-public class GroupedAggregateMInstruction extends BinaryMRInstructionBase implements IDistributedCacheConsumer
-{	
+public class GroupedAggregateMInstruction extends BinaryMRInstructionBase implements IDistributedCacheConsumer {
 	private int _ngroups = -1;
-	
-	public GroupedAggregateMInstruction(Operator op, byte in1, byte in2, byte out, int ngroups, String istr)
-	{
-		super(op, in1, in2, out);
+
+	private GroupedAggregateMInstruction(Operator op, byte in1, byte in2, byte out, int ngroups, String istr) {
+		super(MRType.GroupedAggregate, op, in1, in2, out);
 		_ngroups = ngroups;
 	}
-	
-	/**
-	 * 
-	 * @param str
-	 * @return
-	 * @throws DMLRuntimeException
-	 */
-	public static GroupedAggregateMInstruction parseInstruction ( String str ) 
-		throws DMLRuntimeException 
-	{
+
+	public static GroupedAggregateMInstruction parseInstruction ( String str ) {
 		String[] parts = InstructionUtils.getInstructionParts ( str );
 		InstructionUtils.checkNumFields(parts, 5);
-		
 		byte in1 = Byte.parseByte(parts[1]);
 		byte in2 = Byte.parseByte(parts[2]);
 		byte out = Byte.parseByte(parts[3]);
 		int ngroups = Integer.parseInt(parts[4]);
 		//partitioning ignored
-		
 		Operator op = new AggregateOperator(0, KahanPlus.getKahanPlusFnObject(), true, CorrectionLocationType.LASTCOLUMN);
-		
 		return new GroupedAggregateMInstruction(op, in1, in2, out, ngroups, str);
 	}
 	
 	@Override
 	public void processInstruction(Class<? extends MatrixValue> valueClass,
 			CachedValueMap cachedValues, IndexedMatrixValue tempValue, IndexedMatrixValue zeroInput, 
-			int blockRowFactor, int blockColFactor)
-		throws DMLRuntimeException 
-	{	
+			int blockRowFactor, int blockColFactor) {
 		ArrayList<IndexedMatrixValue> blkList = cachedValues.get(input1);
 		if( blkList == null ) 
 			return;
@@ -97,7 +80,7 @@ public class GroupedAggregateMInstruction extends BinaryMRInstructionBase implem
 			int bclen = dcInput.getNumColsPerBlock();
 			
 			//execute map grouped aggregate operations
-			ArrayList<IndexedMatrixValue> outlist = new ArrayList<IndexedMatrixValue>();
+			ArrayList<IndexedMatrixValue> outlist = new ArrayList<>();
 			OperationsOnMatrixValues.performMapGroupedAggregate(getOperator(), in1, groups, _ngroups, brlen, bclen, outlist);
 			
 			//output all result blocks

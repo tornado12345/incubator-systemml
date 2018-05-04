@@ -48,7 +48,7 @@ public class CSVReblockMapper extends MapperBase implements Mapper<LongWritable,
 	private long rowOffset=0;
 	private boolean first=true;
 	private long num=0;
-	private HashMap<Long, Long> offsetMap=new HashMap<Long, Long>();
+	private HashMap<Long, Long> offsetMap=new HashMap<>();
 	private String _delim=" ";
 	private boolean ignoreFirstLine=false;
 	private boolean headerFile=false;
@@ -152,8 +152,9 @@ public class CSVReblockMapper extends MapperBase implements Mapper<LongWritable,
 		byte matrixIndex=representativeMatrixes.get(0);
 		try 
 		{
-			FileSystem fs = FileSystem.get(job);
-			Path thisPath=new Path(job.get(MRConfigurationNames.MR_MAP_INPUT_FILE)).makeQualified(fs);
+			Path thisPath=new Path(job.get(MRConfigurationNames.MR_MAP_INPUT_FILE));
+			FileSystem fs = IOUtilFunctions.getFileSystem(thisPath, job);
+			thisPath = thisPath.makeQualified(fs);
 			String filename=thisPath.toString();
 			Path headerPath=new Path(job.getStrings(CSVReblockMR.SMALLEST_FILE_NAME_PER_INPUT)[matrixIndex]).makeQualified(fs);
 			if(headerPath.toString().equals(filename))
@@ -162,12 +163,17 @@ public class CSVReblockMapper extends MapperBase implements Mapper<LongWritable,
 			ByteWritable key=new ByteWritable();
 			OffsetCount value=new OffsetCount();
 			Path p=new Path(job.get(CSVReblockMR.ROWID_FILE_NAME));
-			SequenceFile.Reader reader = new SequenceFile.Reader(fs, p, job);
-			while (reader.next(key, value)) {
-				if(key.get()==matrixIndex && filename.equals(value.filename))
-					offsetMap.put(value.fileOffset, value.count);
+			SequenceFile.Reader reader = null;
+			try {
+				reader = new SequenceFile.Reader(fs, p, job);
+				while (reader.next(key, value)) {
+					if(key.get()==matrixIndex && filename.equals(value.filename))
+						offsetMap.put(value.fileOffset, value.count);
+				}
 			}
-			reader.close();
+			finally {
+				IOUtilFunctions.closeSilently(reader);
+			}
 		} 
 		catch (IOException e) {
 			throw new RuntimeException(e);

@@ -24,7 +24,6 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 
 import org.apache.hadoop.fs.FileSystem;
@@ -37,22 +36,21 @@ import org.apache.sysml.runtime.controlprogram.parfor.stat.InfrastructureAnalyze
 import org.apache.sysml.runtime.matrix.data.CSVFileFormatProperties;
 import org.apache.sysml.runtime.matrix.data.MatrixBlock;
 import org.apache.sysml.runtime.matrix.data.OutputInfo;
+import org.apache.sysml.runtime.util.CommonThreadPool;
 import org.apache.sysml.runtime.util.MapReduceTool;
 
-/**
- * 
- */
 public class WriterTextCSVParallel extends WriterTextCSV
 {
 	public WriterTextCSVParallel( CSVFileFormatProperties props ) {
 		super( props );
 	}
 
-	protected void writeCSVMatrixToHDFS(Path path, JobConf job, FileSystem fs, MatrixBlock src, CSVFileFormatProperties csvprops) 
+	@Override
+	protected void writeCSVMatrixToHDFS(Path path, JobConf job, FileSystem fs, MatrixBlock src, CSVFileFormatProperties csvprops)
 		throws IOException 
 	{
 		//estimate output size and number of output blocks (min 1)
-		int numPartFiles = (int)(OptimizerUtils.estimateSizeTextOutput(src.getNumRows(), src.getNumColumns(), 
+		int numPartFiles = (int)(OptimizerUtils.estimateSizeTextOutput(src.getNumRows(), src.getNumColumns(),
 				src.getNonZeros(), OutputInfo.CSVOutputInfo)  / InfrastructureAnalyzer.getHDFSBlockSize());
 		numPartFiles = Math.max(numPartFiles, 1);
 		
@@ -67,57 +65,48 @@ public class WriterTextCSVParallel extends WriterTextCSV
 		}
 		
 		//create directory for concurrent tasks
-		MapReduceTool.createDirIfNotExistOnHDFS(path.toString(), DMLConfig.DEFAULT_SHARED_DIR_PERMISSION);
+		MapReduceTool.createDirIfNotExistOnHDFS(path, DMLConfig.DEFAULT_SHARED_DIR_PERMISSION);
 		
 		//create and execute tasks
 		try 
 		{
-			ExecutorService pool = Executors.newFixedThreadPool(numThreads);
-			ArrayList<WriteCSVTask> tasks = new ArrayList<WriteCSVTask>();
+			ExecutorService pool = CommonThreadPool.get(numThreads);
+			ArrayList<WriteCSVTask> tasks = new ArrayList<>();
 			int rlen = src.getNumRows();
 			int blklen = (int)Math.ceil((double)rlen / numThreads);
 			for(int i=0; i<numThreads & i*blklen<rlen; i++) {
-				Path newPath = new Path(path, String.format("0-m-%05d",i));
+				Path newPath = new Path(path, IOUtilFunctions.getPartFileName(i));
 				tasks.add(new WriteCSVTask(newPath, job, fs, src, i*blklen, (int)Math.min((i+1)*blklen, rlen), csvprops));
 			}
 
 			//wait until all tasks have been executed
-			List<Future<Object>> rt = pool.invokeAll(tasks);	
+			List<Future<Object>> rt = pool.invokeAll(tasks);
 			pool.shutdown();
 			
 			//check for exceptions 
 			for( Future<Object> task : rt )
 				task.get();
+			
+			// delete crc files if written to local file system
+			if (fs instanceof LocalFileSystem) {
+				for(int i=0; i<numThreads & i*blklen<rlen; i++) 
+					IOUtilFunctions.deleteCrcFilesFromLocalFileSystem(fs,
+						new Path(path, IOUtilFunctions.getPartFileName(i)));
+			}
 		} 
 		catch (Exception e) {
 			throw new IOException("Failed parallel write of csv output.", e);
 		}
-
-		// delete crc files if written to local file system
-		if (fs instanceof LocalFileSystem) {
-			int rlen = src.getNumRows();
-			int blklen = (int)Math.ceil((double)rlen / numThreads);
-			for(int i=0; i<numThreads & i*blklen<rlen; i++) {
-				Path newPath = new Path(path, String.format("0-m-%05d",i));
-				IOUtilFunctions.deleteCrcFilesFromLocalFileSystem(fs, newPath);
-			}
-		}
 	}
 
-	
-	/**
-	 * 
-	 * 
-	 */
 	private class WriteCSVTask implements Callable<Object> 
 	{
-		private JobConf _job = null;
-		private FileSystem _fs = null;
-		private MatrixBlock _src = null;
-		private Path _path =null;
-		private int _rl = -1;
-		private int _ru = -1;
-		private CSVFileFormatProperties _props = null;
+		private final JobConf _job;
+		private final FileSystem _fs;
+		private final MatrixBlock _src;
+		private final Path _path;
+		private final int _rl, _ru;
+		private final CSVFileFormatProperties _props;
 		
 		public WriteCSVTask(Path path, JobConf job, FileSystem fs, MatrixBlock src, int rl, int ru, CSVFileFormatProperties props) {
 			_path = path;
@@ -130,8 +119,7 @@ public class WriterTextCSVParallel extends WriterTextCSV
 		}
 
 		@Override
-		public Object call() throws Exception 
-		{
+		public Object call() throws Exception {
 			writeCSVMatrixToFile(_path, _job, _fs, _src, _rl, _ru, _props);
 			return null;
 		}

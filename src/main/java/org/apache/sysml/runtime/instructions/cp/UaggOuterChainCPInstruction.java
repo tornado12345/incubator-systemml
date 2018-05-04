@@ -32,26 +32,18 @@ import org.apache.sysml.runtime.matrix.operators.AggregateOperator;
 import org.apache.sysml.runtime.matrix.operators.AggregateUnaryOperator;
 import org.apache.sysml.runtime.matrix.operators.BinaryOperator;
 
-public class UaggOuterChainCPInstruction extends UnaryCPInstruction
-{
-	//operators
-	private AggregateUnaryOperator _uaggOp = null;
-	private BinaryOperator _bOp = null;
+public class UaggOuterChainCPInstruction extends UnaryCPInstruction {
+	private final AggregateUnaryOperator _uaggOp;
+	private final BinaryOperator _bOp;
 
-	public UaggOuterChainCPInstruction(BinaryOperator bop, AggregateUnaryOperator uaggop, AggregateOperator aggop, CPOperand in1, CPOperand in2, CPOperand out, String opcode, String istr )
-	{
-		super(bop, in1, in2, out, opcode, istr);
-		_cptype = CPINSTRUCTION_TYPE.UaggOuterChain;
-		
+	private UaggOuterChainCPInstruction(BinaryOperator bop, AggregateUnaryOperator uaggop, AggregateOperator aggop,
+			CPOperand in1, CPOperand in2, CPOperand out, String opcode, String istr) {
+		super(CPType.UaggOuterChain, bop, in1, in2, out, opcode, istr);
 		_uaggOp = uaggop;
 		_bOp = bop;
-			
-		instString = istr;
 	}
 
-	public static UaggOuterChainCPInstruction parseInstruction(String str)
-		throws DMLRuntimeException 
-	{
+	public static UaggOuterChainCPInstruction parseInstruction(String str) {
 		String parts[] = InstructionUtils.getInstructionPartsWithValueType(str);
 		String opcode = parts[0];
 
@@ -78,31 +70,29 @@ public class UaggOuterChainCPInstruction extends UnaryCPInstruction
 	
 	
 	@Override
-	public void processInstruction(ExecutionContext ec) 
-		throws DMLRuntimeException
-	{	
+	public void processInstruction(ExecutionContext ec) {
 		boolean rightCached = (_uaggOp.indexFn instanceof ReduceCol || _uaggOp.indexFn instanceof ReduceAll
 				|| !LibMatrixOuterAgg.isSupportedUaggOp(_uaggOp, _bOp));
 
 		MatrixBlock mbLeft = null, mbRight = null, mbOut = null;		
 		//get the main data input
 		if( rightCached ) { 
-			mbLeft = ec.getMatrixInput(input1.getName());
-			mbRight = ec.getMatrixInput(input2.getName());
+			mbLeft = ec.getMatrixInput(input1.getName(), getExtendedOpcode());
+			mbRight = ec.getMatrixInput(input2.getName(), getExtendedOpcode());
 		}
 		else { 
-			mbLeft = ec.getMatrixInput(input2.getName());
-			mbRight = ec.getMatrixInput(input1.getName());
+			mbLeft = ec.getMatrixInput(input2.getName(), getExtendedOpcode());
+			mbRight = ec.getMatrixInput(input1.getName(), getExtendedOpcode());
 		}
 		
 		mbOut = mbLeft.uaggouterchainOperations(mbLeft, mbRight, mbOut, _bOp, _uaggOp);
 
 		//release locks
-		ec.releaseMatrixInput(input1.getName());
-		ec.releaseMatrixInput(input2.getName());
+		ec.releaseMatrixInput(input1.getName(), getExtendedOpcode());
+		ec.releaseMatrixInput(input2.getName(), getExtendedOpcode());
 		
 		if( _uaggOp.aggOp.correctionExists )
-			mbOut.dropLastRowsOrColums(_uaggOp.aggOp.correctionLocation);
+			mbOut.dropLastRowsOrColumns(_uaggOp.aggOp.correctionLocation);
 		
 		String output_name = output.getName();
 		//final aggregation if required
@@ -111,7 +101,7 @@ public class UaggOuterChainCPInstruction extends UnaryCPInstruction
 			//create and set output scalar
 			ScalarObject ret = null;
 			switch( output.getValueType() ) {
-				case DOUBLE:  ret = new DoubleObject(output_name, mbOut.quickGetValue(0, 0)); break;
+				case DOUBLE:  ret = new DoubleObject(mbOut.quickGetValue(0, 0)); break;
 				
 				default: 
 					throw new DMLRuntimeException("Invalid output value type: "+output.getValueType());
@@ -122,7 +112,7 @@ public class UaggOuterChainCPInstruction extends UnaryCPInstruction
 		{	
 			//Additional memory requirement to convert from dense to sparse can be leveraged from released memory needed for input data above.
 			mbOut.examSparsity();
-			ec.setMatrixOutput(output_name, mbOut);
+			ec.setMatrixOutput(output_name, mbOut, getExtendedOpcode());
 		}
 		
 	}		

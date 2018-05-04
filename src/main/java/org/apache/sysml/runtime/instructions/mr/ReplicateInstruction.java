@@ -21,7 +21,6 @@ package org.apache.sysml.runtime.instructions.mr;
 
 import java.util.ArrayList;
 
-import org.apache.sysml.runtime.DMLRuntimeException;
 import org.apache.sysml.runtime.instructions.InstructionUtils;
 import org.apache.sysml.runtime.matrix.MatrixCharacteristics;
 import org.apache.sysml.runtime.matrix.data.MatrixIndexes;
@@ -29,31 +28,18 @@ import org.apache.sysml.runtime.matrix.data.MatrixValue;
 import org.apache.sysml.runtime.matrix.mapred.CachedValueMap;
 import org.apache.sysml.runtime.matrix.mapred.IndexedMatrixValue;
 
-/**
- * 
- * 
- */
-public class ReplicateInstruction extends UnaryMRInstructionBase 
-{
-	
+public class ReplicateInstruction extends UnaryMRInstructionBase {
 	private boolean _repCols = true;
-	private long _lenM = -1; //clen/rlen
-	
-	public ReplicateInstruction(byte in, byte out, boolean repCols, long lenM, String istr)
-	{
-		super(null, in, out);
-		mrtype = MRINSTRUCTION_TYPE.Reorg;
+	private long _lenM = -1; // clen/rlen
+
+	private ReplicateInstruction(byte in, byte out, boolean repCols, long lenM, String istr) {
+		super(MRType.Reorg, null, in, out);
 		instString = istr;
-		
+
 		_repCols = repCols;
 		_lenM = lenM;
 	}
-	
-	/**
-	 * 
-	 * @param mcIn
-	 * @param mcOut
-	 */
+
 	public void computeOutputDimension(MatrixCharacteristics mcIn, MatrixCharacteristics mcOut)
 	{
 		if( _repCols )
@@ -61,37 +47,23 @@ public class ReplicateInstruction extends UnaryMRInstructionBase
 		else
 			mcOut.set(_lenM, mcIn.getCols(), mcIn.getRowsPerBlock(), mcIn.getColsPerBlock(), mcIn.getRows());
 	}
-	
-	/**
-	 * 
-	 * @param str
-	 * @return
-	 * @throws DMLRuntimeException
-	 */
-	public static ReplicateInstruction parseInstruction ( String str ) 
-		throws DMLRuntimeException 
-	{
+
+	public static ReplicateInstruction parseInstruction ( String str ) {
 		//check instruction format
 		InstructionUtils.checkNumFields ( str, 4 );
-		
 		//parse instruction
 		String[] parts = InstructionUtils.getInstructionParts ( str );
 		byte in = Byte.parseByte(parts[1]);
 		boolean repCols = Boolean.parseBoolean(parts[2]);
 		long len = Long.parseLong(parts[3]);
 		byte out = Byte.parseByte(parts[4]);
-		
 		//construct instruction
 		return new ReplicateInstruction(in, out, repCols, len, str);
 	}
 
-	/**
-	 * 
-	 */
 	@Override
 	public void processInstruction(Class<? extends MatrixValue> valueClass, CachedValueMap cachedValues, 
 			IndexedMatrixValue tempValue, IndexedMatrixValue zeroInput, int blockRowFactor, int blockColFactor)
-		throws DMLRuntimeException 
 	{
 		ArrayList<IndexedMatrixValue> blkList = cachedValues.get(input);
 		

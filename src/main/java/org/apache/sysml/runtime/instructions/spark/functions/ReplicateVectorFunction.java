@@ -20,6 +20,7 @@
 package org.apache.sysml.runtime.instructions.spark.functions;
 
 import java.util.ArrayList;
+import java.util.Iterator;
 
 import org.apache.spark.api.java.function.PairFlatMapFunction;
 
@@ -44,7 +45,7 @@ public class ReplicateVectorFunction implements PairFlatMapFunction<Tuple2<Matri
 	}
 	
 	@Override
-	public Iterable<Tuple2<MatrixIndexes, MatrixBlock>> call(Tuple2<MatrixIndexes, MatrixBlock> arg0) 
+	public Iterator<Tuple2<MatrixIndexes, MatrixBlock>> call(Tuple2<MatrixIndexes, MatrixBlock> arg0) 
 		throws Exception 
 	{
 		MatrixIndexes ix = arg0._1();
@@ -58,14 +59,13 @@ public class ReplicateVectorFunction implements PairFlatMapFunction<Tuple2<Matri
 			throw new Exception("Expected a column vector in ReplicateVector");
 		}
 		
-		ArrayList<Tuple2<MatrixIndexes, MatrixBlock>> retVal = new ArrayList<Tuple2<MatrixIndexes, MatrixBlock>>();
+		ArrayList<Tuple2<MatrixIndexes, MatrixBlock>> retVal = new ArrayList<>();
 		for(int i = 1; i <= _numReplicas; i++) {
 			if( _byRow )
-				retVal.add(new Tuple2<MatrixIndexes, MatrixBlock>(new MatrixIndexes(i, ix.getColumnIndex()), mb));
+				retVal.add(new Tuple2<>(new MatrixIndexes(i, ix.getColumnIndex()), mb));
 			else
-				retVal.add(new Tuple2<MatrixIndexes, MatrixBlock>(new MatrixIndexes(ix.getRowIndex(), i), mb));
+				retVal.add(new Tuple2<>(new MatrixIndexes(ix.getRowIndex(), i), mb));
 		}
-		
-		return retVal;
+		return retVal.iterator();
 	}
 }

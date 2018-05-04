@@ -30,51 +30,27 @@ import org.apache.sysml.runtime.matrix.mapred.CachedValueMap;
 import org.apache.sysml.runtime.matrix.mapred.IndexedMatrixValue;
 import org.apache.sysml.runtime.matrix.operators.Operator;
 
-
-/**
- * 
- * 
- */
-public class MMTSJMRInstruction extends UnaryInstruction
-{	
-	
+public class MMTSJMRInstruction extends UnaryInstruction {
 	private MMTSJType _type = null;
 
-	public MMTSJMRInstruction(Operator op, byte in, MMTSJType type, byte out, String istr)
-	{
-		super(op, in, out, istr);
-		mrtype = MRINSTRUCTION_TYPE.MMTSJ;
+	private MMTSJMRInstruction(Operator op, byte in, MMTSJType type, byte out, String istr) {
+		super(MRType.MMTSJ, op, in, out, istr);
 		instString = istr;
-		
 		_type = type;
 	}
-	
-	/**
-	 * 
-	 * @return
-	 */
+
 	public MMTSJType getMMTSJType()
 	{
 		return _type;
 	}
-	
-	/**
-	 * 
-	 * @param str
-	 * @return
-	 * @throws DMLRuntimeException
-	 */
-	public static MMTSJMRInstruction parseInstruction ( String str ) 
-		throws DMLRuntimeException 
-	{
+
+	public static MMTSJMRInstruction parseInstruction ( String str ) {
 		InstructionUtils.checkNumFields ( str, 3 );
-		
 		String[] parts = InstructionUtils.getInstructionParts(str);
 		String opcode = parts[0];
 		byte in = Byte.parseByte(parts[1]);
 		byte out = Byte.parseByte(parts[2]);
 		MMTSJType titype = MMTSJType.valueOf(parts[3]);
-		 
 		if(!opcode.equalsIgnoreCase("tsmm"))
 			throw new DMLRuntimeException("Unknown opcode while parsing an MMTIJMRInstruction: " + str);
 		else
@@ -85,8 +61,7 @@ public class MMTSJMRInstruction extends UnaryInstruction
 	public void processInstruction(Class<? extends MatrixValue> valueClass,
 			CachedValueMap cachedValues, IndexedMatrixValue tempValue,
 			IndexedMatrixValue zeroInput, int blockRowFactor, int blockColFactor)
-		throws DMLRuntimeException 
-	{		
+	{
 		ArrayList<IndexedMatrixValue> blkList = cachedValues.get(input);
 		if( blkList !=null )
 			for(IndexedMatrixValue imv : blkList)

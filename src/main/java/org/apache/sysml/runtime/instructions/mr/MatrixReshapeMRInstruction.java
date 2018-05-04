@@ -20,6 +20,7 @@
 package org.apache.sysml.runtime.instructions.mr;
 
 import java.util.ArrayList;
+import java.util.List;
 
 import org.apache.sysml.runtime.DMLRuntimeException;
 import org.apache.sysml.runtime.instructions.InstructionUtils;
@@ -31,50 +32,25 @@ import org.apache.sysml.runtime.matrix.mapred.IndexedMatrixValue;
 import org.apache.sysml.runtime.matrix.operators.Operator;
 import org.apache.sysml.runtime.util.UtilFunctions;
 
-
-/**
- * 
- * 
- */
-public class MatrixReshapeMRInstruction extends UnaryInstruction
-{	
-	
-	private long _rows = -1;
-	private long _cols = -1;
+public class MatrixReshapeMRInstruction extends UnaryInstruction {
 	private boolean _byrow = false;
-	
 	private MatrixCharacteristics _mcIn = null;
-	
-	//MB: cache should be integrated with tempValues, but for n blocks
-	private ArrayList<IndexedMatrixValue> _cache = null;
-	
-	public MatrixReshapeMRInstruction(Operator op, byte in, long rows, long cols, boolean byrow, byte out, String istr)
-	{
-		super(op, in, out, istr);
-		mrtype = MRINSTRUCTION_TYPE.MMTSJ;
+	private MatrixCharacteristics _mcOut = null;
+
+	private MatrixReshapeMRInstruction(Operator op, byte in, long rows, long cols, boolean byrow, byte out,
+			String istr) {
+		super(MRType.MMTSJ, op, in, out, istr);
 		instString = istr;
-		
-		_rows = rows;
-		_cols = cols;
+		_mcOut = new MatrixCharacteristics(rows, cols, -1, -1);
 		_byrow = byrow;
 	}
-	
-	public void setMatrixCharacteristics( MatrixCharacteristics mcIn, MatrixCharacteristics mcOut )
-	{
+
+	public void setMatrixCharacteristics( MatrixCharacteristics mcIn, MatrixCharacteristics mcOut ) {
 		_mcIn = mcIn;
 	}
-	
-	/**
-	 * 
-	 * @param str
-	 * @return
-	 * @throws DMLRuntimeException
-	 */
-	public static MatrixReshapeMRInstruction parseInstruction ( String str ) 
-		throws DMLRuntimeException 
-	{
+
+	public static MatrixReshapeMRInstruction parseInstruction ( String str ) {
 		InstructionUtils.checkNumFields ( str, 5 );
-		
 		String[] parts = InstructionUtils.getInstructionParts(str);
 		String opcode = parts[0];
 		byte in = Byte.parseByte(parts[1]);
@@ -82,7 +58,6 @@ public class MatrixReshapeMRInstruction extends UnaryInstruction
 		long cols = UtilFunctions.toLong(Double.parseDouble(parts[3])); //save cast
 		boolean byrow = Boolean.parseBoolean(parts[4]);
 		byte out = Byte.parseByte(parts[5]);
-		 
 		if(!opcode.equalsIgnoreCase("rshape"))
 			throw new DMLRuntimeException("Unknown opcode while parsing an MatrixReshapeMRInstruction: " + str);
 		else
@@ -93,39 +68,28 @@ public class MatrixReshapeMRInstruction extends UnaryInstruction
 	public void processInstruction(Class<? extends MatrixValue> valueClass,
 			CachedValueMap cachedValues, IndexedMatrixValue tempValue,
 			IndexedMatrixValue zeroInput, int brlen, int bclen )
-		throws DMLRuntimeException 
-	{		
+	{
 		ArrayList<IndexedMatrixValue> blkList = cachedValues.get(input);
 		if( blkList != null )
-			for(IndexedMatrixValue imv : blkList)
-			{
-				if( imv == null )
-					continue;
+			for(IndexedMatrixValue imv : blkList) {
+				if( imv == null ) continue;
 				
-				//get cached blocks
-				ArrayList<IndexedMatrixValue> out = _cache;
-	
 				//process instruction
-				out = LibMatrixReorg.reshape(imv, _mcIn.getRows(), _mcIn.getCols(), brlen, bclen,
-						                     out, _rows, _cols, brlen, bclen, _byrow);
+				_mcOut.setBlockSize(brlen, bclen);
+				List<IndexedMatrixValue> out =
+					LibMatrixReorg.reshape(imv, _mcIn, _mcOut, _byrow, true);
 				
 				//put the output values in the output cache
 				for( IndexedMatrixValue outBlk : out )
 					cachedValues.add(output, outBlk);
-				
-				//put blocks into own cache
-				if( LibMatrixReorg.ALLOW_BLOCK_REUSE )
-					_cache = out;	
 			}
 	}
 	
-	public long getNumRows()
-	{
-		return _rows;
+	public long getNumRows() {
+		return _mcOut.getRows();
 	}
 	
-	public long getNumColunms()
-	{
-		return _cols;
+	public long getNumColunms() {
+		return _mcOut.getCols();
 	}
 }

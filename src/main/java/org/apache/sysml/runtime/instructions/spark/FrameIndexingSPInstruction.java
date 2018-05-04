@@ -29,6 +29,8 @@ import org.apache.spark.api.java.function.PairFunction;
 import scala.Tuple2;
 
 import org.apache.sysml.hops.AggBinaryOp.SparkAggType;
+import org.apache.sysml.lops.LeftIndex;
+import org.apache.sysml.lops.RightIndex;
 import org.apache.sysml.hops.OptimizerUtils;
 import org.apache.sysml.runtime.DMLRuntimeException;
 import org.apache.sysml.runtime.controlprogram.context.ExecutionContext;
@@ -43,43 +45,27 @@ import org.apache.sysml.runtime.matrix.MatrixCharacteristics;
 import org.apache.sysml.runtime.matrix.data.FrameBlock;
 import org.apache.sysml.runtime.matrix.data.OperationsOnMatrixValues;
 import org.apache.sysml.runtime.matrix.data.Pair;
-import org.apache.sysml.runtime.matrix.operators.Operator;
 import org.apache.sysml.runtime.util.IndexRange;
 import org.apache.sysml.runtime.util.UtilFunctions;
 
-public class FrameIndexingSPInstruction  extends IndexingSPInstruction
-{
-	
-	/*
-	 * This class implements the frame indexing functionality inside Spark.  
-	 * Example instructions: 
-	 *     rangeReIndex:mVar1:Var2:Var3:Var4:Var5:mVar6
-	 *         input=mVar1, output=mVar6, 
-	 *         bounds = (Var2,Var3,Var4,Var5)
-	 *         rowindex_lower: Var2, rowindex_upper: Var3 
-	 *         colindex_lower: Var4, colindex_upper: Var5
-	 *     leftIndex:mVar1:mVar2:Var3:Var4:Var5:Var6:mVar7
-	 *         triggered by "mVar1[Var3:Var4, Var5:Var6] = mVar2"
-	 *         the result is stored in mVar7
-	 *  
-	 */
-	public FrameIndexingSPInstruction(Operator op, CPOperand in, CPOperand rl, CPOperand ru, CPOperand cl, CPOperand cu, 
-			                          CPOperand out, SparkAggType aggtype, String opcode, String istr)
-	{
-		super(op, in, rl, ru, cl, cu, out, aggtype, opcode, istr);
+/**
+ * This class implements the frame indexing functionality inside Spark.
+ *  
+ */
+public class FrameIndexingSPInstruction extends IndexingSPInstruction {
+
+	protected FrameIndexingSPInstruction(CPOperand in, CPOperand rl, CPOperand ru, CPOperand cl,
+			CPOperand cu, CPOperand out, SparkAggType aggtype, String opcode, String istr) {
+		super(in, rl, ru, cl, cu, out, aggtype, opcode, istr);
 	}
-	
-	public FrameIndexingSPInstruction(Operator op, CPOperand lhsInput, CPOperand rhsInput, CPOperand rl, CPOperand ru, CPOperand cl, CPOperand cu, 
-			                          CPOperand out, String opcode, String istr)
-	{
-		super(op, lhsInput, rhsInput, rl, ru, cl, cu, out, opcode, istr);
+
+	protected FrameIndexingSPInstruction(CPOperand lhsInput, CPOperand rhsInput, CPOperand rl,
+			CPOperand ru, CPOperand cl, CPOperand cu, CPOperand out, String opcode, String istr) {
+		super(lhsInput, rhsInput, rl, ru, cl, cu, out, opcode, istr);
 	}
-	
-	
+
 	@Override
-	public void processInstruction(ExecutionContext ec)
-			throws DMLRuntimeException 
-	{	
+	public void processInstruction(ExecutionContext ec) {
 		SparkExecutionContext sec = (SparkExecutionContext)ec;
 		String opcode = getOpcode();
 		
@@ -91,7 +77,7 @@ public class FrameIndexingSPInstruction  extends IndexingSPInstruction
 		IndexRange ixrange = new IndexRange(rl, ru, cl, cu);
 		
 		//right indexing
-		if( opcode.equalsIgnoreCase("rangeReIndex") )
+		if( opcode.equalsIgnoreCase(RightIndex.OPCODE) )
 		{
 			//update and check output dimensions
 			MatrixCharacteristics mcIn = sec.getMatrixCharacteristics(input1.getName());
@@ -120,7 +106,7 @@ public class FrameIndexingSPInstruction  extends IndexingSPInstruction
 				sec.getFrameObject(input1.getName()).getSchema((int)cl, (int)cu));
 		}
 		//left indexing
-		else if ( opcode.equalsIgnoreCase("leftIndex") || opcode.equalsIgnoreCase("mapLeftIndex"))
+		else if ( opcode.equalsIgnoreCase(LeftIndex.OPCODE) || opcode.equalsIgnoreCase("mapLeftIndex"))
 		{
 			JavaPairRDD<Long,FrameBlock> in1 = sec.getFrameBinaryBlockRDDHandleForVariable( input1.getName() );
 			PartitionedBroadcast<FrameBlock> broadcastIn2 = null;
@@ -174,36 +160,18 @@ public class FrameIndexingSPInstruction  extends IndexingSPInstruction
 		else
 			throw new DMLRuntimeException("Invalid opcode (" + opcode +") encountered in FrameIndexingSPInstruction.");		
 	}
-		
-	/**
-	 * 
-	 * @param mcIn
-	 * @param ixrange
-	 * @return
-	 */
-	private boolean isPartitioningPreservingRightIndexing(MatrixCharacteristics mcIn, IndexRange ixrange)
-	{
+
+	private static boolean isPartitioningPreservingRightIndexing(MatrixCharacteristics mcIn, IndexRange ixrange) {
 		return ( mcIn.dimsKnown() &&
-			(ixrange.rowStart==1 && ixrange.rowEnd==mcIn.getRows() ));   //Entire Column/s			 
+			(ixrange.rowStart==1 && ixrange.rowEnd==mcIn.getRows() ));   //Entire Column/s
 	}
-	
-	
-	/**
-	 * 
-	 * @param mcOut
-	 * @throws DMLRuntimeException
-	 */
-	private static void checkValidOutputDimensions(MatrixCharacteristics mcOut) 
-		throws DMLRuntimeException
-	{
+
+	private static void checkValidOutputDimensions(MatrixCharacteristics mcOut) {
 		if(!mcOut.dimsKnown()) {
 			throw new DMLRuntimeException("FrameIndexingSPInstruction: The updated output dimensions are invalid: " + mcOut);
 		}
 	}
-	
-	/**
-	 * 
-	 */
+
 	private static class SliceRHSForLeftIndexing implements PairFlatMapFunction<Tuple2<Long,FrameBlock>, Long, FrameBlock> 
 	{
 		private static final long serialVersionUID = 5724800998701216440L;
@@ -223,19 +191,16 @@ public class FrameIndexingSPInstruction  extends IndexingSPInstruction
 		}
 
 		@Override
-		public Iterable<Tuple2<Long, FrameBlock>> call(Tuple2<Long, FrameBlock> rightKV) 
+		public Iterator<Tuple2<Long, FrameBlock>> call(Tuple2<Long, FrameBlock> rightKV) 
 			throws Exception 
 		{
-			Pair<Long,FrameBlock> in = SparkUtils.toIndexedFrameBlock(rightKV);			
-			ArrayList<Pair<Long,FrameBlock>> out = new ArrayList<Pair<Long,FrameBlock>>();
+			Pair<Long,FrameBlock> in = SparkUtils.toIndexedFrameBlock(rightKV);
+			ArrayList<Pair<Long,FrameBlock>> out = new ArrayList<>();
 			OperationsOnMatrixValues.performShift(in, _ixrange, _brlen, _bclen, _rlen, _clen, out);
-			return SparkUtils.fromIndexedFrameBlock(out);
-		}		
+			return SparkUtils.fromIndexedFrameBlock(out).iterator();
+		}
 	}
-	
-	/**
-	 * 
-	 */
+
 	private static class ZeroOutLHS implements PairFlatMapFunction<Tuple2<Long,FrameBlock>, Long,FrameBlock> 
 	{
 		private static final long serialVersionUID = -2672267231152496854L;
@@ -255,10 +220,10 @@ public class FrameIndexingSPInstruction  extends IndexingSPInstruction
 		}
 		
 		@Override
-		public Iterable<Tuple2<Long, FrameBlock>> call(Tuple2<Long, FrameBlock> kv) 
+		public Iterator<Tuple2<Long, FrameBlock>> call(Tuple2<Long, FrameBlock> kv) 
 			throws Exception 
 		{
-			ArrayList<Pair<Long,FrameBlock>> out = new ArrayList<Pair<Long,FrameBlock>>();
+			ArrayList<Pair<Long,FrameBlock>> out = new ArrayList<>();
 
 			IndexRange curBlockRange = new IndexRange(_ixrange.rowStart, _ixrange.rowEnd, _ixrange.colStart, _ixrange.colEnd);
 			
@@ -270,7 +235,7 @@ public class FrameIndexingSPInstruction  extends IndexingSPInstruction
 			// Starting local location (0-based) of target block where to start copy. 
 			int iRowStartDest = UtilFunctions.computeCellInBlock(kv._1, _brlen);
 			for(int iRowStartSrc = 0; iRowStartSrc<kv._2.getNumRows(); iRowStartSrc += iMaxRowsToCopy, lGblStartRow += _brlen) {
-				IndexRange range = UtilFunctions.getSelectedRangeForZeroOut(new Pair<Long, FrameBlock>(kv._1, kv._2), _brlen, _bclen, curBlockRange, lGblStartRow-1, lGblStartRow);
+				IndexRange range = UtilFunctions.getSelectedRangeForZeroOut(new Pair<>(kv._1, kv._2), _brlen, _bclen, curBlockRange, lGblStartRow-1, lGblStartRow);
 				if(range.rowStart == -1 && range.rowEnd == -1 && range.colStart == -1 && range.colEnd == -1) {
 					throw new Exception("Error while getting range for zero-out");
 				}
@@ -283,17 +248,14 @@ public class FrameIndexingSPInstruction  extends IndexingSPInstruction
 				
 				// Zero out the applicable range in this block
 				zeroBlk = (FrameBlock) kv._2.zeroOutOperations(new FrameBlock(), range, _complement, iRowStartSrc, iRowStartDest, iMaxRows, iMaxRowsToCopy);
-				out.add(new Pair<Long, FrameBlock>(lGblStartRow, zeroBlk));
+				out.add(new Pair<>(lGblStartRow, zeroBlk));
 				curBlockRange.rowStart =  lGblStartRow + _brlen;
 				iRowStartDest = UtilFunctions.computeCellInBlock(iRowStartDest+iMaxRowsToCopy+1, _brlen);
 			}
-			return SparkUtils.fromIndexedFrameBlock(out);
+			return SparkUtils.fromIndexedFrameBlock(out).iterator();
 		}
 	}
-	
-	/**
-	 * 
-	 */
+
 	private static class LeftIndexPartitionFunction implements PairFlatMapFunction<Iterator<Tuple2<Long,FrameBlock>>, Long, FrameBlock> 
 	{
 		private static final long serialVersionUID = -911940376947364915L;
@@ -308,15 +270,12 @@ public class FrameIndexingSPInstruction  extends IndexingSPInstruction
 		}
 
 		@Override
-		public Iterable<Tuple2<Long, FrameBlock>> call(Iterator<Tuple2<Long, FrameBlock>> arg0)
+		public LazyIterableIterator<Tuple2<Long, FrameBlock>> call(Iterator<Tuple2<Long, FrameBlock>> arg0)
 			throws Exception 
 		{
 			return new LeftIndexPartitionIterator(arg0);
 		}
-		
-		/**
-		 * 
-		 */
+
 		private class LeftIndexPartitionIterator extends LazyIterableIterator<Tuple2<Long, FrameBlock>>
 		{
 			public LeftIndexPartitionIterator(Iterator<Tuple2<Long, FrameBlock>> in) {
@@ -357,7 +316,7 @@ public class FrameIndexingSPInstruction  extends IndexingSPInstruction
 				long rhs_ru_pb = Math.min(rhs_ru, (((rhs_rl-1)/brlen)+1)*brlen); 
 				while(rhs_rl_pb <= rhs_ru_pb) {
 					// Provide global zero-based index to sliceOperations, but only for one RHS partition block at a time.
-					FrameBlock slicedRHSMatBlock = _binput.sliceOperations(rhs_rl_pb, rhs_ru_pb, rhs_cl, rhs_cu, new FrameBlock());
+					FrameBlock slicedRHSMatBlock = _binput.slice(rhs_rl_pb, rhs_ru_pb, rhs_cl, rhs_cu, new FrameBlock());
 					
 					// Provide local zero-based index to leftIndexingOperations
 					int lhs_lrl_pb = (int) (lhs_lrl + (rhs_rl_pb - rhs_rl));
@@ -367,14 +326,11 @@ public class FrameIndexingSPInstruction  extends IndexingSPInstruction
 					rhs_ru_pb = Math.min(rhs_ru, rhs_ru_pb+brlen);
 				}
 				
-				return new Tuple2<Long, FrameBlock>(arg._1, ret);
+				return new Tuple2<>(arg._1, ret);
 			}
 		}
 	}
-	
-	/**
-	 * 
-	 */
+
 	private static class SliceBlock implements PairFunction<Tuple2<Long, FrameBlock>, Long, FrameBlock> 
 	{
 		private static final long serialVersionUID = -5270171193018691692L;
@@ -398,18 +354,15 @@ public class FrameIndexingSPInstruction  extends IndexingSPInstruction
 					in.getNumRows()-1 : _ixrange.rowEnd-rowindex);
 			
 			//slice out the block
-			FrameBlock out = in.sliceOperations(rl, ru, (int)(_ixrange.colStart-1), 
+			FrameBlock out = in.slice(rl, ru, (int)(_ixrange.colStart-1), 
 					(int)(_ixrange.colEnd-1), new FrameBlock());
 			
 			//return block with shifted row index
 			long rowindex2 = (rowindex > _ixrange.rowStart) ? rowindex-_ixrange.rowStart+1 : 1; 
-			return new Tuple2<Long,FrameBlock>(rowindex2, out);
+			return new Tuple2<>(rowindex2, out);
 		}		
 	}
 
-	/**
-	 * 
-	 */
 	private static class SliceBlockPartitionFunction implements PairFlatMapFunction<Iterator<Tuple2<Long, FrameBlock>>, Long, FrameBlock> 
 	{
 		private static final long serialVersionUID = -1655390518299307588L;
@@ -421,7 +374,7 @@ public class FrameIndexingSPInstruction  extends IndexingSPInstruction
 		}
 
 		@Override
-		public Iterable<Tuple2<Long, FrameBlock>> call(Iterator<Tuple2<Long, FrameBlock>> arg0)
+		public LazyIterableIterator<Tuple2<Long, FrameBlock>> call(Iterator<Tuple2<Long, FrameBlock>> arg0)
 			throws Exception 
 		{
 			return new SliceBlockPartitionIterator(arg0);
@@ -445,11 +398,11 @@ public class FrameIndexingSPInstruction  extends IndexingSPInstruction
 				FrameBlock in = arg._2();
 				
 				//slice out the block
-				FrameBlock out = in.sliceOperations(0, in.getNumRows()-1, 
+				FrameBlock out = in.slice(0, in.getNumRows()-1, 
 						(int)_ixrange.colStart-1, (int)_ixrange.colEnd-1, new FrameBlock());
 				
 				//return block with shifted row index
-				return new Tuple2<Long,FrameBlock>(rowindex, out);		
+				return new Tuple2<>(rowindex, out);
 			}			
 		}
 	}

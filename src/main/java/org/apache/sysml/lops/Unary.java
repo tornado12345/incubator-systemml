@@ -38,14 +38,15 @@ public class Unary extends Lop
 	
 	public enum OperationTypes {
 		ADD, SUBTRACT, SUBTRACTRIGHT, MULTIPLY, MULTIPLY2, DIVIDE, MODULUS, INTDIV, MINUS1_MULTIPLY, 
-		POW, POW2, LOG, MAX, MIN, NOT, ABS, SIN, COS, TAN, ASIN, ACOS, ATAN, SIGN, SQRT, EXP, Over, 
-		LESS_THAN, LESS_THAN_OR_EQUALS, GREATER_THAN, GREATER_THAN_OR_EQUALS, EQUALS, NOT_EQUALS, 
+		POW, POW2, LOG, MAX, MIN, NOT, ABS, SIN, COS, TAN, ASIN, ACOS, ATAN, SINH, COSH, TANH, SIGN, SQRT, EXP, Over, 
+		LESS_THAN, LESS_THAN_OR_EQUALS, GREATER_THAN, GREATER_THAN_OR_EQUALS, EQUALS, NOT_EQUALS,
+		AND, OR, XOR, BW_AND, BW_OR, BW_XOR, BW_SHIFTL, BW_SHIFTR,
 		ROUND, CEIL, FLOOR, MR_IQM, INVERSE, CHOLESKY,
 		CUMSUM, CUMPROD, CUMMIN, CUMMAX,
-		SPROP, SIGMOID, SELP, SUBTRACT_NZ, LOG_NZ,
+		SPROP, SIGMOID, SUBTRACT_NZ, LOG_NZ,
 		CAST_AS_MATRIX, CAST_AS_FRAME,
 		NOTSUPPORTED
-	};
+	}
 
 	private OperationTypes operation;
 	private Lop valInput;
@@ -68,12 +69,7 @@ public class Unary extends Lop
 		super(Lop.Type.UNARY, dt, vt);
 		init(input1, input2, op, dt, vt, et);
 	}
-	
-	public Unary(Lop input1, Lop input2, OperationTypes op, DataType dt, ValueType vt) {
-		super(Lop.Type.UNARY, dt, vt);
-		init(input1, input2, op, dt, vt, ExecType.MR);
-	}
-	
+
 	private void init(Lop input1, Lop input2, OperationTypes op, DataType dt, ValueType vt, ExecType et) {
 		operation = op;
 
@@ -100,12 +96,11 @@ public class Unary extends Lop
 			lps.addCompatibility(JobType.ANY);
 			lps.removeNonPiggybackableJobs();
 			lps.removeCompatibility(JobType.CM_COV); // CM_COV allows only reducer instructions but this is MapOrReduce. TODO: piggybacking should be updated to take this extra constraint.
-			lps.removeCompatibility(JobType.TRANSFORM);
-			this.lps.setProperties(inputs, et, ExecLocation.MapOrReduce, breaksAlignment, aligner, definesMRJob);
+			lps.setProperties(inputs, et, ExecLocation.MapOrReduce, breaksAlignment, aligner, definesMRJob);
 		}
 		else {
 			lps.addCompatibility(JobType.INVALID);
-			this.lps.setProperties(inputs, et, ExecLocation.ControlProgram, breaksAlignment, aligner, definesMRJob);
+			lps.setProperties(inputs, et, ExecLocation.ControlProgram, breaksAlignment, aligner, definesMRJob);
 		}
 	}
 
@@ -118,26 +113,14 @@ public class Unary extends Lop
 	 * @param vt value type
 	 * @param et execution type
 	 * @param numThreads number of threads
-	 * @throws LopsException if LopsException occurs
 	 */
-	public Unary(Lop input1, OperationTypes op, DataType dt, ValueType vt, ExecType et, int numThreads) 
-		throws LopsException 
-	{
+	public Unary(Lop input1, OperationTypes op, DataType dt, ValueType vt, ExecType et, int numThreads) {
 		super(Lop.Type.UNARY, dt, vt);
 		init(input1, op, dt, vt, et);
 		_numThreads = numThreads;
 	}
-	
-	public Unary(Lop input1, OperationTypes op, DataType dt, ValueType vt) 
-		throws LopsException 
-	{
-		super(Lop.Type.UNARY, dt, vt);
-		init(input1, op, dt, vt, ExecType.MR);
-	}
-	
-	private void init(Lop input1, OperationTypes op, DataType dt, ValueType vt, ExecType et) 
-		throws LopsException 
-	{
+
+	private void init(Lop input1, OperationTypes op, DataType dt, ValueType vt, ExecType et) {
 		//sanity check
 		if ( (op == OperationTypes.INVERSE || op == OperationTypes.CHOLESKY)
 			 && (et == ExecType.SPARK || et == ExecType.MR) ) {
@@ -162,12 +145,11 @@ public class Unary extends Lop
 			lps.addCompatibility(JobType.ANY);
 			lps.removeNonPiggybackableJobs();
 			lps.removeCompatibility(JobType.CM_COV); // CM_COV allows only reducer instructions but this is MapOrReduce. TODO: piggybacking should be updated to take this extra constraint.
-			lps.removeCompatibility(JobType.TRANSFORM);
-			this.lps.setProperties(inputs, et, ExecLocation.MapOrReduce, breaksAlignment, aligner, definesMRJob);
+			lps.setProperties(inputs, et, ExecLocation.MapOrReduce, breaksAlignment, aligner, definesMRJob);
 		}
 		else {
 			lps.addCompatibility(JobType.INVALID);
-			this.lps.setProperties(inputs, et, ExecLocation.ControlProgram, breaksAlignment, aligner, definesMRJob);
+			lps.setProperties(inputs, et, ExecLocation.ControlProgram, breaksAlignment, aligner, definesMRJob);
 		}
 	}
 
@@ -182,15 +164,11 @@ public class Unary extends Lop
 			return "Operation: " + operation + " " + "Label: N/A";
 	}
 
-	private String getOpcode() 
-		throws LopsException 
-	{
+	private String getOpcode() {
 		return getOpcode(operation);
 	}
 
-	public static String getOpcode(OperationTypes op) 
-		throws LopsException 
-	{
+	public static String getOpcode(OperationTypes op) {
 		switch (op) {
 		case NOT:
 			return "!";
@@ -208,6 +186,12 @@ public class Unary extends Lop
 			return "acos";
 		case ATAN:
 			return "atan";
+		case SINH:
+			return "sinh";
+		case COSH:
+			return "cosh";
+		case TANH:
+			return "tanh";
 		case SIGN:
 			return "sign";
 		case SQRT:
@@ -232,7 +216,7 @@ public class Unary extends Lop
 
 		case SUBTRACT_NZ:
 			return "-nz";
-				
+		
 		case SUBTRACTRIGHT:
 			return "s-r";
 
@@ -252,7 +236,7 @@ public class Unary extends Lop
 			return "%%";
 			
 		case INTDIV:
-			return "%/%";	
+			return "%/%";
 			
 		case Over:
 			return "so";
@@ -261,7 +245,7 @@ public class Unary extends Lop
 			return "^";
 		
 		case POW2:
-			return "^2";	
+			return "^2";
 
 		case GREATER_THAN:
 			return ">";
@@ -320,32 +304,39 @@ public class Unary extends Lop
 		case SIGMOID:
 			return "sigmoid";
 		
-		case SELP:
-			return "sel+";
-		
 		case CAST_AS_MATRIX:
 			return UnaryCP.CAST_AS_MATRIX_OPCODE;
 
 		case CAST_AS_FRAME:
 			return UnaryCP.CAST_AS_FRAME_OPCODE;
-			
+		
+		case AND: return "&&";
+		case OR:  return "||";
+		case XOR: return "xor";
+		case BW_AND: return "bitwAnd";
+		case BW_OR:  return "bitwOr";
+		case BW_XOR: return "bitwXor";
+		case BW_SHIFTL: return "bitwShiftL";
+		case BW_SHIFTR: return "bitwShiftR";
+		
 		default:
 			throw new LopsException(
 					"Instruction not defined for Unary operation: " + op);
 		}
 	}
 	
-	public static boolean isCumulativeOp(OperationTypes op) {
+	public static boolean isMultiThreadedOp(OperationTypes op) {
 		return op==OperationTypes.CUMSUM
 			|| op==OperationTypes.CUMPROD
 			|| op==OperationTypes.CUMMIN
-			|| op==OperationTypes.CUMMAX;
+			|| op==OperationTypes.CUMMAX
+			|| op==OperationTypes.EXP
+			|| op==OperationTypes.LOG
+			|| op==OperationTypes.SIGMOID;
 	}
 	
 	@Override
-	public String getInstructions(String input1, String output) 
-		throws LopsException 
-	{
+	public String getInstructions(String input1, String output) {
 		//sanity check number of operands
 		if( getInputs().size() != 1 ) {
 			throw new LopsException(printErrorLocation() + "Invalid number of operands ("
@@ -363,7 +354,7 @@ public class Unary extends Lop
 		sb.append( prepOutputOperand(output) );
 		
 		//num threads for cumulative cp ops
-		if( getExecType() == ExecType.CP && isCumulativeOp(operation) ) {
+		if( getExecType() == ExecType.CP && isMultiThreadedOp(operation) ) {
 			sb.append( OPERAND_DELIMITOR );
 			sb.append( _numThreads );
 		}
@@ -372,45 +363,38 @@ public class Unary extends Lop
 	}
 	
 	@Override
-	public String getInstructions(int input_index, int output_index)
-			throws LopsException {
-		return getInstructions(""+input_index, ""+output_index);
+	public String getInstructions(int input_index, int output_index) {
+		return getInstructions(String.valueOf(input_index), String.valueOf(output_index));
 	}
 
 	@Override
-	public String getInstructions(String input1, String input2, String output) 
-		throws LopsException 
-	{
+	public String getInstructions(String input1, String input2, String output) {
 		StringBuilder sb = new StringBuilder();
 		sb.append( getExecType() );
+		
 		sb.append( Lop.OPERAND_DELIMITOR );
 		sb.append( getOpcode() );
-		sb.append( OPERAND_DELIMITOR );
 		
-		if ( getInputs().get(0).getDataType() == DataType.SCALAR ) {
+		sb.append( OPERAND_DELIMITOR );
+		if ( getInputs().get(0).getDataType() == DataType.SCALAR )
 			sb.append( getInputs().get(0).prepScalarInputOperand(getExecType()));
-		}
-		else {
+		else
 			sb.append( getInputs().get(0).prepInputOperand(input1));
-		}
-		sb.append( OPERAND_DELIMITOR );
 		
-		if ( getInputs().get(1).getDataType() == DataType.SCALAR ) {
+		sb.append( OPERAND_DELIMITOR );
+		if ( getInputs().get(1).getDataType() == DataType.SCALAR )
 			sb.append( getInputs().get(1).prepScalarInputOperand(getExecType()));
-		}
-		else {
+		else 
 			sb.append( getInputs().get(1).prepInputOperand(input2));
-		}
-		sb.append( OPERAND_DELIMITOR );
 		
+		sb.append( OPERAND_DELIMITOR );
 		sb.append( this.prepOutputOperand(output));
 		
 		return sb.toString();
 	}
 	
 	@Override
-	public String getInstructions(int inputIndex1, int inputIndex2,
-			int outputIndex) throws LopsException {
+	public String getInstructions(int inputIndex1, int inputIndex2, int outputIndex) {
 		if (this.getInputs().size() == 2) {
 			// Unary operators with two inputs
 			// Determine the correct operation, depending on the scalar input
@@ -467,7 +451,7 @@ public class Unary extends Lop
 				sb.append( getInputs().get(scalarIndex).prepScalarInputOperand(getExecType()));
 				sb.append( OPERAND_DELIMITOR );
 			}
-			sb.append( this.prepOutputOperand(outputIndex+""));
+			sb.append( prepOutputOperand(outputIndex) );
 			
 			return sb.toString();
 			

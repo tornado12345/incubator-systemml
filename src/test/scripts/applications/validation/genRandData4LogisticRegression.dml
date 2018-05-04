@@ -50,7 +50,7 @@ w = Rand (rows=numFeatures, cols=1, min=-1, max=1, pdf="uniform", seed=0)
 
 if (b != 0) {
 	b_mat = Rand (rows=numSamples, cols=1, min=1, max=1);
-    X = append (X, b_mat);
+    X = cbind (X, b_mat);
     numFeatures_plus_one = numFeatures + 1;
     w = Rand (rows=numFeatures_plus_one, cols=1, min=-1, max=1, pdf="uniform", seed=0);
 }
@@ -82,7 +82,7 @@ if(addNoise == 1){
 
 print ("nrow(prob) = " + nrow(prob) + ", ncol(prob) = " + ncol(prob) + ";  nrow(r) = " + nrow(r) + ", ncol(r) = " + ncol(r));
 
-Y = 1 - 2*ppred(prob, r, "<")
+Y = 1 - 2*(prob < r)
 
 write (w, $5, format="text");
 write (X, $6, format="binary");

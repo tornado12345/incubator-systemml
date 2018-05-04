@@ -42,10 +42,6 @@ import org.apache.sysml.runtime.matrix.data.PartialBlock;
 import org.apache.sysml.runtime.matrix.data.TaggedAdaptivePartialBlock;
 import org.apache.sysml.runtime.util.MapReduceTool;
 
-/**
- * 
- * 
- */
 public class ReblockMapper extends MapperBase 
 	implements Mapper<Writable, Writable, Writable, Writable>
 {
@@ -53,12 +49,12 @@ public class ReblockMapper extends MapperBase
 	//state of reblock mapper
 	private OutputCollector<Writable, Writable> cachedCollector = null;
 	private JobConf cachedJobConf = null;
-	private HashMap<Byte, MatrixCharacteristics> dimensionsOut = new HashMap<Byte, MatrixCharacteristics>();
-	private HashMap<Byte, MatrixCharacteristics> dimensionsIn = new HashMap<Byte, MatrixCharacteristics>();
-	private HashMap<Byte, Boolean> emptyBlocks = new HashMap<Byte, Boolean>();
+	private HashMap<Byte, MatrixCharacteristics> dimensionsOut = new HashMap<>();
+	private HashMap<Byte, MatrixCharacteristics> dimensionsIn = new HashMap<>();
+	private HashMap<Byte, Boolean> emptyBlocks = new HashMap<>();
 	
 	//reblock buffer
-	private HashMap<Byte, ReblockBuffer> buffer = new HashMap<Byte,ReblockBuffer>();
+	private HashMap<Byte, ReblockBuffer> buffer = new HashMap<>();
 	private int buffersize =-1;
 	
 	@Override
@@ -83,8 +79,7 @@ public class ReblockMapper extends MapperBase
 			ReblockInstruction[] reblockInstructions = MRJobConfiguration.getReblockInstructions(job);
 		
 			//get dimension information
-			for(ReblockInstruction ins: reblockInstructions)
-			{
+			for(ReblockInstruction ins: reblockInstructions) {
 				dimensionsIn.put(ins.input, MRJobConfiguration.getMatrixCharacteristicsForInput(job, ins.input));
 				dimensionsOut.put(ins.output, MRJobConfiguration.getMatrixCharactristicsForReblock(job, ins.output));
 				emptyBlocks.put(ins.output, ins.outputEmptyBlocks);
@@ -94,7 +89,7 @@ public class ReblockMapper extends MapperBase
 			//(buffer size divided by max reblocks per input matrix, because those are shared in JVM)
 			int maxlen = 1;
 			for( ArrayList<ReblockInstruction> rinst : reblock_instructions )
-				maxlen = Math.max(maxlen, rinst.size()); //max reblocks per input				
+				maxlen = Math.max(maxlen, rinst.size()); //max reblocks per input
 			buffersize = ReblockBuffer.DEFAULT_BUFFER_SIZE/maxlen;
 		} 
 		catch (Exception e)
@@ -110,8 +105,7 @@ public class ReblockMapper extends MapperBase
 		super.close();
 		
 		//flush buffered data
-		for( Entry<Byte,ReblockBuffer> e : buffer.entrySet() )
-		{
+		for( Entry<Byte,ReblockBuffer> e : buffer.entrySet() ) {
 			ReblockBuffer rbuff = e.getValue();
 			rbuff.flushBuffer(e.getKey(), cachedCollector);
 		}
@@ -146,13 +140,12 @@ public class ReblockMapper extends MapperBase
 			
 			//output part of empty blocks (all mappers contribute for better load balance),
 			//where mapper responsibility is distributed over row blocks 
-			long numBlocks = (long)Math.ceil((double)rlen/brlen);
+			long numBlocks = (long)Math.ceil((double)Math.max(rlen,1)/brlen);
 			long len = (long)Math.ceil((double)numBlocks/numMap);
 			long start = mapID * len * brlen;
-			long end = Math.min((mapID+1) * len * brlen, rlen);
+			long end = Math.min((mapID+1) * len * brlen, Math.max(rlen,1));
 			for(long i=start, r=start/brlen+1; i<end; i+=brlen, r++)
-				for(long j=0, c=1; j<clen; j+=bclen, c++)
-				{
+				for(long j=0, c=1; j<Math.max(clen,1); j+=bclen, c++) {
 					tmpIx.setIndexes(r, c);
 					cachedCollector.collect(tmpIx, tmpVal);
 				}
@@ -172,15 +165,7 @@ public class ReblockMapper extends MapperBase
 		//apply reblock instructions and output
 		processReblockInMapperAndOutput(index, out);
 	}
-	
-	/**
-	 * 
-	 * @param index
-	 * @param indexBuffer
-	 * @param partialBuffer
-	 * @param out
-	 * @throws IOException
-	 */
+
 	protected void processReblockInMapperAndOutput(int index, OutputCollector<Writable, Writable> out) 
 		throws IOException
 	{

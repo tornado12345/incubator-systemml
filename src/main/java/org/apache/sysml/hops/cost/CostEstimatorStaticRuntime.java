@@ -24,8 +24,10 @@ import java.util.HashSet;
 
 import org.apache.sysml.conf.ConfigurationManager;
 import org.apache.sysml.lops.DataGen;
+import org.apache.sysml.lops.LeftIndex;
 import org.apache.sysml.lops.Lop;
 import org.apache.sysml.lops.MapMult;
+import org.apache.sysml.lops.RightIndex;
 import org.apache.sysml.lops.LopProperties.ExecType;
 import org.apache.sysml.lops.MMTSJ.MMTSJType;
 import org.apache.sysml.lops.compile.JobType;
@@ -39,7 +41,7 @@ import org.apache.sysml.runtime.instructions.InstructionUtils;
 import org.apache.sysml.runtime.instructions.MRInstructionParser;
 import org.apache.sysml.runtime.instructions.MRJobInstruction;
 import org.apache.sysml.runtime.instructions.cp.CPInstruction;
-import org.apache.sysml.runtime.instructions.cp.CPInstruction.CPINSTRUCTION_TYPE;
+import org.apache.sysml.runtime.instructions.cp.CPInstruction.CPType;
 import org.apache.sysml.runtime.instructions.cp.FunctionCallCPInstruction;
 import org.apache.sysml.runtime.instructions.cp.VariableCPInstruction;
 import org.apache.sysml.runtime.instructions.mr.BinaryMRInstructionBase;
@@ -53,8 +55,9 @@ import org.apache.sysml.runtime.instructions.mr.MapMultChainInstruction;
 import org.apache.sysml.runtime.instructions.mr.PickByCountInstruction;
 import org.apache.sysml.runtime.instructions.mr.RemoveEmptyMRInstruction;
 import org.apache.sysml.runtime.instructions.mr.TernaryInstruction;
+import org.apache.sysml.runtime.instructions.mr.CtableInstruction;
 import org.apache.sysml.runtime.instructions.mr.UnaryMRInstructionBase;
-import org.apache.sysml.runtime.instructions.mr.MRInstruction.MRINSTRUCTION_TYPE;
+import org.apache.sysml.runtime.instructions.mr.MRInstruction.MRType;
 import org.apache.sysml.runtime.matrix.data.MatrixBlock;
 import org.apache.sysml.runtime.matrix.mapred.DistributedCacheInput;
 import org.apache.sysml.runtime.matrix.operators.CMOperator;
@@ -96,8 +99,7 @@ public class CostEstimatorStaticRuntime extends CostEstimator
 	
 	@Override
 	@SuppressWarnings("unused")
-	protected double getCPInstTimeEstimate( Instruction inst, VarStats[] vs, String[] args ) 
-		throws DMLRuntimeException
+	protected double getCPInstTimeEstimate( Instruction inst, VarStats[] vs, String[] args )
 	{
 		CPInstruction cpinst = (CPInstruction)inst;
 		
@@ -107,7 +109,7 @@ public class CostEstimatorStaticRuntime extends CostEstimator
 			ltime += getHDFSReadTime( vs[0]._rlen, vs[0]._clen, vs[0].getSparsity() );
 			//eviction costs
 			if( CacheableData.CACHING_WRITE_CACHE_ON_READ &&
-				LazyWriteBuffer.getWriteBufferSize()<MatrixBlock.estimateSizeOnDisk(vs[0]._rlen, vs[0]._clen, (long)((vs[0]._nnz<0)? vs[0]._rlen*vs[0]._clen:vs[0]._nnz)) )
+				LazyWriteBuffer.getWriteBufferLimit()<MatrixBlock.estimateSizeOnDisk(vs[0]._rlen, vs[0]._clen, (long)((vs[0]._nnz<0)? vs[0]._rlen*vs[0]._clen:vs[0]._nnz)) )
 			{
 				ltime += Math.abs( getFSWriteTime( vs[0]._rlen, vs[0]._clen, vs[0].getSparsity() ));
 			}
@@ -117,7 +119,7 @@ public class CostEstimatorStaticRuntime extends CostEstimator
 			ltime += getHDFSReadTime( vs[1]._rlen, vs[1]._clen, vs[1].getSparsity() );
 			//eviction costs
 			if( CacheableData.CACHING_WRITE_CACHE_ON_READ &&
-				LazyWriteBuffer.getWriteBufferSize()<MatrixBlock.estimateSizeOnDisk(vs[1]._rlen, vs[1]._clen, (long)((vs[1]._nnz<0)? vs[1]._rlen*vs[1]._clen:vs[1]._nnz)) )
+				LazyWriteBuffer.getWriteBufferLimit()<MatrixBlock.estimateSizeOnDisk(vs[1]._rlen, vs[1]._clen, (long)((vs[1]._nnz<0)? vs[1]._rlen*vs[1]._clen:vs[1]._nnz)) )
 			{
 				ltime += Math.abs( getFSWriteTime( vs[1]._rlen, vs[1]._clen, vs[1].getSparsity()) );
 			}
@@ -153,7 +155,6 @@ public class CostEstimatorStaticRuntime extends CostEstimator
 	
 	@Override
 	protected double getMRJobInstTimeEstimate( Instruction inst, VarStats[] vs, String[] args ) 
-		throws DMLRuntimeException
 	{
 		MRJobInstruction jinst = (MRJobInstruction) inst;
 		
@@ -261,7 +262,7 @@ public class CostEstimatorStaticRuntime extends CostEstimator
 					if( instCat != null && instCat.length()>0 ) {
 						String[] linst = instCat.split( Lop.INSTRUCTION_DELIMITOR );
 						for( String tmp : linst ) {
-							if(InstructionUtils.getMRType(tmp)==MRINSTRUCTION_TYPE.Aggregate)
+							if(InstructionUtils.getMRType(tmp)==MRType.Aggregate)
 								shuffleCosts += numMap * getFSWriteTime(vs[mapOutIx[i]]._rlen, vs[mapOutIx[i]]._clen, vs[mapOutIx[i]].getSparsity()) / numEPMap
 										      + numPMap * getFSWriteTime(vs[mapOutIx[i]]._rlen, vs[mapOutIx[i]]._clen, vs[mapOutIx[i]].getSparsity()) / numEPMap
 										      + numPMap * getFSReadTime(vs[mapOutIx[i]]._rlen, vs[mapOutIx[i]]._clen, vs[mapOutIx[i]].getSparsity()) / numEPRed;
@@ -275,7 +276,7 @@ public class CostEstimatorStaticRuntime extends CostEstimator
 					String[] linst = instCat.split( Lop.INSTRUCTION_DELIMITOR );
 					for( String tmp : linst ){
 						Object[] o = extractMRInstStatistics(tmp, vs);
-						if(InstructionUtils.getMRType(tmp)==MRINSTRUCTION_TYPE.Aggregate)
+						if(InstructionUtils.getMRType(tmp)==MRType.Aggregate)
 							o[1] = new String[]{String.valueOf(numMap)};
 						String opcode = InstructionUtils.getOpCode(tmp);
 						reduceCosts += getInstTimeEstimate(opcode, (VarStats[])o[0], (String[])o[1], ExecType.MR);
@@ -312,7 +313,6 @@ public class CostEstimatorStaticRuntime extends CostEstimator
 	}		
 	
 	private Object[] extractMRInstStatistics( String inst, VarStats[] stats ) 
-		throws DMLRuntimeException
 	{
 		Object[] ret = new Object[2]; //stats, attrs
 		VarStats[] vs = new VarStats[3];
@@ -393,7 +393,7 @@ public class CostEstimatorStaticRuntime extends CostEstimator
 				vs[0] = stats[ binst.input1 ];
 				vs[1] = stats[ binst.input2 ];
 				vs[2] = stats[ binst.output ];
-								
+				
 				if( vs[0] == null ) //scalar input, 
 					vs[0] = _scalarStats;
 				if( vs[1] == null ) //scalar input, 
@@ -406,9 +406,22 @@ public class CostEstimatorStaticRuntime extends CostEstimator
 					attr = new String[]{rbinst.isRemoveRows()?"0":"1"};
 				}
 			}
-			else if( mrinst instanceof TernaryInstruction )
-			{
+			else if( mrinst instanceof TernaryInstruction ) {
 				TernaryInstruction tinst = (TernaryInstruction) mrinst;
+				byte[] ix = tinst.getAllIndexes();
+				for(int i=0; i<ix.length-1; i++)
+					vs[0] = stats[ ix[i] ];
+				vs[2] = stats[ ix[ix.length-1] ];
+				if( vs[0] == null ) //scalar input,
+					vs[0] = _scalarStats;
+				if( vs[1] == null ) //scalar input,
+					vs[1] = _scalarStats;
+				if( vs[2] == null ) //scalar output
+					vs[2] = _scalarStats;
+			}
+			else if( mrinst instanceof CtableInstruction )
+			{
+				CtableInstruction tinst = (CtableInstruction) mrinst;
 				vs[0] = stats[ tinst.input1 ];
 				vs[1] = stats[ tinst.input2 ];
 				vs[2] = stats[ tinst.input3 ];
@@ -464,21 +477,19 @@ public class CostEstimatorStaticRuntime extends CostEstimator
 	// Utilities       //
 	/////////////////////	
 	
-	private byte[] getInputIndexes(String[] inputVars)
-	{
+	private static byte[] getInputIndexes(String[] inputVars) {
 		byte[] inIx = new byte[inputVars.length];
 		for( int i=0; i<inIx.length; i++ )
 			inIx[i] = (byte)i;
 		return inIx;
 	}
 	
-	private byte[] getMapOutputIndexes( byte[] inIx, byte[] retIx, String rdInst, String mapInst, String shfInst, String aggInst, String otherInst ) 
-		throws DMLRuntimeException
+	private byte[] getMapOutputIndexes( byte[] inIx, byte[] retIx, String rdInst, String mapInst, String shfInst, String aggInst, String otherInst )
 	{
 		//note: this is a simplified version of MRJobConfiguration.setUpOutputIndexesForMapper
 		
 		//map indices
-		HashSet<Byte> ixMap = new HashSet<Byte>();
+		HashSet<Byte> ixMap = new HashSet<>();
 		for( byte ix : inIx )
 			ixMap.add(ix);
 		
@@ -499,7 +510,7 @@ public class CostEstimatorStaticRuntime extends CostEstimator
 		}
 		
 		//reduce indices
-		HashSet<Byte> ixRed = new HashSet<Byte>();
+		HashSet<Byte> ixRed = new HashSet<>();
 		for( byte ix : retIx )
 			ixRed.add(ix);
 	
@@ -540,7 +551,7 @@ public class CostEstimatorStaticRuntime extends CostEstimator
 		return ret;
 	}
 	
-	private int computeNumMapTasks( VarStats[] vs, byte[] inputIx, double blocksize, int maxPMap, JobType jobtype )
+	private static int computeNumMapTasks( VarStats[] vs, byte[] inputIx, double blocksize, int maxPMap, JobType jobtype )
 	{
 		//special cases
 		if( jobtype == JobType.DATAGEN )
@@ -563,7 +574,7 @@ public class CostEstimatorStaticRuntime extends CostEstimator
 		return Math.max(1, Math.min( (int)Math.ceil(mapInputSize/blocksize),numBlocks ));
 	}
 	
-	private int computeNumReduceTasks( VarStats[] vs, byte[] mapOutIx, JobType jobtype )
+	private static int computeNumReduceTasks( VarStats[] vs, byte[] mapOutIx, JobType jobtype )
 	{
 		int ret = -1;
 		
@@ -596,10 +607,8 @@ public class CostEstimatorStaticRuntime extends CostEstimator
 		return Math.max(1, ret);
 	}
 
-	private int getDistcacheIndex(String inst) 
-		throws DMLRuntimeException
-	{
-		ArrayList<Byte> indexes = new ArrayList<Byte>();
+	private static int getDistcacheIndex(String inst) {
+		ArrayList<Byte> indexes = new ArrayList<>();
 		
 		if( InstructionUtils.isDistributedCacheUsed(inst) ) {
 			MRInstruction mrinst = MRInstructionParser.parseSingleInstruction(inst);
@@ -627,7 +636,7 @@ public class CostEstimatorStaticRuntime extends CostEstimator
 	 * @param ds sparsity factor?
 	 * @return estimated HDFS read time
 	 */
-	private double getHDFSReadTime( long dm, long dn, double ds )
+	private static double getHDFSReadTime( long dm, long dn, double ds )
 	{
 		boolean sparse = MatrixBlock.evalSparseFormatOnDisk(dm, dn, (long)(ds*dm*dn));
 		double ret = ((double)MatrixBlock.estimateSizeOnDisk((long)dm, (long)dn, (long)(ds*dm*dn))) / (1024*1024);  		
@@ -640,12 +649,12 @@ public class CostEstimatorStaticRuntime extends CostEstimator
 		return ret;
 	}
 	
-	private double getHDFSWriteTime( long dm, long dn, double ds )
+	private static double getHDFSWriteTime( long dm, long dn, double ds )
 	{
 		boolean sparse = MatrixBlock.evalSparseFormatOnDisk(dm, dn, (long)(ds*dm*dn));
 		
-		double bytes = (double)MatrixBlock.estimateSizeOnDisk((long)dm, (long)dn, (long)(ds*dm*dn));
-		double mbytes = bytes / (1024*1024);  		
+		double bytes = (double)MatrixBlock.estimateSizeOnDisk(dm, dn, (long)(ds*dm*dn));
+		double mbytes = bytes / (1024*1024);
 		
 		double ret = -1;
 		if( sparse )
@@ -660,12 +669,12 @@ public class CostEstimatorStaticRuntime extends CostEstimator
 		return ret;
 	}
 	
-	private double getHDFSWriteTime( long dm, long dn, double ds, String format )
+	private static double getHDFSWriteTime( long dm, long dn, double ds, String format )
 	{
 		boolean sparse = MatrixBlock.evalSparseFormatOnDisk(dm, dn, (long)(ds*dm*dn));
 		
-		double bytes = (double)MatrixBlock.estimateSizeOnDisk((long)dm, (long)dn, (long)(ds*dm*dn));
-		double mbytes = bytes / (1024*1024);  		
+		double bytes = (double)MatrixBlock.estimateSizeOnDisk(dm, dn, (long)(ds*dm*dn));
+		double mbytes = bytes / (1024*1024);
 		
 		double ret = -1;
 		
@@ -700,11 +709,11 @@ public class CostEstimatorStaticRuntime extends CostEstimator
 	 * @param ds sparsity factor?
 	 * @return estimated local file system read time
 	 */
-	private double getFSReadTime( long dm, long dn, double ds )
+	private static double getFSReadTime( long dm, long dn, double ds )
 	{
 		boolean sparse = MatrixBlock.evalSparseFormatOnDisk(dm, dn, (long)(ds*dm*dn));
 		
-		double ret = ((double)MatrixBlock.estimateSizeOnDisk((long)dm, (long)dn, (long)(ds*dm*dn))) / (1024*1024);  		
+		double ret = ((double)MatrixBlock.estimateSizeOnDisk(dm, dn, (long)(ds*dm*dn))) / (1024*1024);
 		if( sparse )
 			ret /= DEFAULT_MBS_FSREAD_BINARYBLOCK_SPARSE;
 		else //dense
@@ -713,11 +722,11 @@ public class CostEstimatorStaticRuntime extends CostEstimator
 		return ret;
 	}
 
-	private double getFSWriteTime( long dm, long dn, double ds )
+	private static double getFSWriteTime( long dm, long dn, double ds )
 	{
 		boolean sparse = MatrixBlock.evalSparseFormatOnDisk(dm, dn, (long)(ds*dm*dn));
 		
-		double ret = ((double)MatrixBlock.estimateSizeOnDisk((long)dm, (long)dn, (long)(ds*dm*dn))) / (1024*1024);  		
+		double ret = ((double)MatrixBlock.estimateSizeOnDisk(dm, dn, (long)(ds*dm*dn))) / (1024*1024);
 		
 		if( sparse )
 			ret /= DEFAULT_MBS_FSWRITE_BINARYBLOCK_SPARSE;
@@ -732,15 +741,13 @@ public class CostEstimatorStaticRuntime extends CostEstimator
 	// Operation Costs //
 	/////////////////////
 	
-	private double getInstTimeEstimate(String opcode, VarStats[] vs, String[] args, ExecType et) 
-		throws DMLRuntimeException
-	{
+	private static double getInstTimeEstimate(String opcode, VarStats[] vs, String[] args, ExecType et) {
 		boolean inMR = (et == ExecType.MR);
-		return getInstTimeEstimate(opcode, inMR,  
-				                   vs[0]._rlen, vs[0]._clen, (vs[0]._nnz<0)? 1.0:(double)vs[0]._nnz/vs[0]._rlen/vs[0]._clen, 
-						           vs[1]._rlen, vs[1]._clen, (vs[1]._nnz<0)? 1.0:(double)vs[1]._nnz/vs[1]._rlen/vs[1]._clen, 
-						           vs[2]._rlen, vs[2]._clen, (vs[2]._nnz<0)? 1.0:(double)vs[2]._nnz/vs[2]._rlen/vs[2]._clen,
-						           args);
+		return getInstTimeEstimate(opcode, inMR,
+			vs[0]._rlen, vs[0]._clen, (vs[0]._nnz<0)? 1.0:(double)vs[0]._nnz/vs[0]._rlen/vs[0]._clen,
+			vs[1]._rlen, vs[1]._clen, (vs[1]._nnz<0)? 1.0:(double)vs[1]._nnz/vs[1]._rlen/vs[1]._clen,
+			vs[2]._rlen, vs[2]._clen, (vs[2]._nnz<0)? 1.0:(double)vs[2]._nnz/vs[2]._rlen/vs[2]._clen,
+			args);
 	}
 	
 	/**
@@ -762,9 +769,8 @@ public class CostEstimatorStaticRuntime extends CostEstimator
 	 * @param d3s ?
 	 * @param args ?
 	 * @return estimated instruction execution time
-	 * @throws DMLRuntimeException if DMLRuntimeException occurs
 	 */
-	private double getInstTimeEstimate( String opcode, boolean inMR, long d1m, long d1n, double d1s, long d2m, long d2n, double d2s, long d3m, long d3n, double d3s, String[] args ) throws DMLRuntimeException
+	private static double getInstTimeEstimate( String opcode, boolean inMR, long d1m, long d1n, double d1s, long d2m, long d2n, double d2s, long d3m, long d3n, double d3s, String[] args )
 	{
 		double nflops = getNFLOP(opcode, inMR, d1m, d1n, d1s, d2m, d2n, d2s, d3m, d3n, d3s, args);
 		double time = nflops / DEFAULT_FLOPS;
@@ -775,8 +781,7 @@ public class CostEstimatorStaticRuntime extends CostEstimator
 		return time;
 	}
 	
-	private double getNFLOP( String optype, boolean inMR, long d1m, long d1n, double d1s, long d2m, long d2n, double d2s, long d3m, long d3n, double d3s, String[] args ) 
-		throws DMLRuntimeException
+	private static double getNFLOP( String optype, boolean inMR, long d1m, long d1n, double d1s, long d2m, long d2n, double d2s, long d3m, long d3n, double d3s, String[] args )
 	{
 		//operation costs in FLOP on matrix block level (for CP and MR instructions)
 		//(excludes IO and parallelism; assumes known dims for all inputs, outputs )
@@ -788,7 +793,7 @@ public class CostEstimatorStaticRuntime extends CostEstimator
 		
 		//NOTE: all instruction types that are equivalent in CP and MR are only
 		//included in CP to prevent redundancy
-		CPINSTRUCTION_TYPE cptype = CPInstructionParser.String2CPInstructionType.get(optype);
+		CPType cptype = CPInstructionParser.String2CPInstructionType.get(optype);
 		if( cptype != null ) //for CP Ops and equivalent MR ops 
 		{
 			//general approach: count of floating point *, /, +, -, ^, builtin ;
@@ -869,17 +874,24 @@ public class CostEstimatorStaticRuntime extends CostEstimator
 				    		|| optype.equals("uarimax") || optype.equals("ua*") )
 				    	return d1m * d1n;
 					
-				    return 0;	
+				    return 0;
 				    
-				case ArithmeticBinary: //opcodes: +, -, *, /, ^ (incl. ^2, *2)
+				case Binary: //opcodes: +, -, *, /, ^ (incl. ^2, *2),
+					//max, min, solve, ==, !=, <, >, <=, >=  
+					//note: all relational ops are not sparsesafe
 					//note: covers scalar-scalar, scalar-matrix, matrix-matrix
 					if( optype.equals("+") || optype.equals("-") //sparse safe
 						&& ( leftSparse || rightSparse ) )
 						return d1m*d1n*d1s + d2m*d2n*d2s;
+					else if( optype.equals("solve") ) //see also MultiReturnBuiltin
+						return d1m * d1n * d1n; //for 1kx1k ~ 1GFLOP -> 0.5s
 					else
 						return d3m*d3n;
+				
+				case Ternary: //opcodes: +*, -*, ifelse
+					return 2 * d1m * d1n;
 					
-				case Ternary: //opcodes: ctable
+				case Ctable: //opcodes: ctable
 					if( optype.equals("ctable") ){
 						if( leftSparse )
 							return d1m * d1n * d1s; //add
@@ -887,13 +899,7 @@ public class CostEstimatorStaticRuntime extends CostEstimator
 							return d1m * d1n;
 					}
 					return 0;
-					
-				case BooleanBinary: //opcodes: &&, ||
-					return 1; //always scalar-scalar
-						
-				case BooleanUnary: //opcodes: !
-					return 1; //always scalar-scalar
-
+				
 				case Builtin: //opcodes: log 
 					//note: covers scalar-scalar, scalar-matrix, matrix-matrix
 					//note: can be unary or binary
@@ -902,15 +908,7 @@ public class CostEstimatorStaticRuntime extends CostEstimator
 					else //unary
 						return d3m * d3n;
 					
-				case BuiltinBinary: //opcodes: max, min, solve
-					//note: covers scalar-scalar, scalar-matrix, matrix-matrix
-					if( optype.equals("solve") ) //see also MultiReturnBuiltin
-						return d1m * d1n * d1n; //for 1kx1k ~ 1GFLOP -> 0.5s
-					else //default
-						return d3m * d3n;
-
-					
-				case BuiltinUnary: //opcodes: exp, abs, sin, cos, tan, sign, sqrt, plogp, print, round, sprop, sigmoid
+				case Unary: //opcodes: exp, abs, sin, cos, tan, sign, sqrt, plogp, print, round, sprop, sigmoid
 					//TODO add cost functions for commons math builtins: inverse, cholesky
 					if( optype.equals("print") ) //scalar only
 						return 1;
@@ -944,14 +942,7 @@ public class CostEstimatorStaticRuntime extends CostEstimator
 					return DEFAULT_NFLOP_CP * 
 					       (((leftSparse) ? d1m * d1n * d1s : d1m * d1n ) +
 					        ((rightSparse) ? d2m * d2n * d2s : d2m * d2n ));
-					
-				case RelationalBinary: //opcodes: ==, !=, <, >, <=, >=  
-					//note: all relational ops are not sparsesafe
-					return d3m * d3n; //covers all combinations of scalar and matrix  
-					
-				case File: //opcodes: rm, mv
-					return DEFAULT_NFLOP_NOOP;
-					
+				
 				case Variable: //opcodes: assignvar, cpvar, rmvar, rmfilevar, assignvarwithfile, attachfiletovar, valuepick, iqsize, read, write, createvar, setfilename, castAsMatrix
 					if( optype.equals("write") ){
 						boolean text = args[0].equals("textcell") || args[0].equals("csv");
@@ -997,13 +988,15 @@ public class CostEstimatorStaticRuntime extends CostEstimator
 					//note: should be invoked independently for multiple outputs
 					return d1m * d1n * d1s * DEFAULT_NFLOP_UNKNOWN;
 				
-				case MultiReturnBuiltin: //opcodes: qr, lu, eigen
+				case MultiReturnBuiltin: //opcodes: qr, lu, eigen, svd
 					//note: they all have cubic complexity, the scaling factor refers to commons.math
 					double xf = 2; //default e.g, qr
 					if( optype.equals("eigen") ) 
 						xf = 32;
 					else if ( optype.equals("lu") )
 						xf = 16;
+					else if ( optype.equals("svd"))
+						xf = 32;	// TODO - assuming worst case for now
 					return xf * d1m * d1n * d1n; //for 1kx1k ~ 2GFLOP -> 1s
 					
 				case ParameterizedBuiltin: //opcodes: cdf, invcdf, groupedagg, rmempty
@@ -1048,12 +1041,12 @@ public class CostEstimatorStaticRuntime extends CostEstimator
 					}
 					return 0;
 					
-				case MatrixIndexing: //opcodes: rangeReIndex, leftIndex
-					if( optype.equals("leftIndex") ){
+				case MatrixIndexing: //opcodes: rightIndex, leftIndex
+					if( optype.equals(LeftIndex.OPCODE) ){
 						return DEFAULT_NFLOP_CP * ((leftSparse)? d1m*d1n*d1s : d1m*d1n)
 						       + 2 * DEFAULT_NFLOP_CP * ((rightSparse)? d2m*d2n*d2s : d2m*d2n );
 					}
-					else if( optype.equals("rangeReIndex") ){
+					else if( optype.equals(RightIndex.OPCODE) ){
 						return DEFAULT_NFLOP_CP * ((leftSparse)? d2m*d2n*d2s : d2m*d2n );
 					}
 					return 0;
@@ -1063,7 +1056,7 @@ public class CostEstimatorStaticRuntime extends CostEstimator
 					//reduction by factor 2 because matrix mult better than
 					//average flop count
 					if( MMTSJType.valueOf(args[0]).isLeft() ) { //lefttranspose
-						if( !rightSparse ) //dense						
+						if( !rightSparse ) //dense
 							return d1m * d1n * d1s * d1n /2;
 						else //sparse
 							return d1m * d1n * d1s * d1n * d1s /2; 
@@ -1074,25 +1067,21 @@ public class CostEstimatorStaticRuntime extends CostEstimator
 						else //sparse
 							return   d1m * d1n * d1s //reorg sparse
 							       + d1m * d1n * d1s * d1n * d1s /2; //core tsmm
-					}					
+					}
 					return 0;
 				
 				case Partition:
 					return d1m * d1n * d1s + //partitioning costs
-						   (inMR ? 0 : //include write cost if in CP  	
+						   (inMR ? 0 : //include write cost if in CP
 							getHDFSWriteTime(d1m, d1n, d1s)* DEFAULT_FLOPS);
-					
-				case INVALID:
-					return 0;
 				
 				default: 
 					throw new DMLRuntimeException("CostEstimator: unsupported instruction type: "+optype);
 			}
-				
 		}
 		
 		//if not found in CP instructions
-		MRINSTRUCTION_TYPE mrtype = MRInstructionParser.String2MRInstructionType.get(optype);
+		MRType mrtype = MRInstructionParser.String2MRInstructionType.get(optype);
 		if ( mrtype != null ) //for specific MR ops
 		{
 			switch(mrtype)
@@ -1135,10 +1124,8 @@ public class CostEstimatorStaticRuntime extends CostEstimator
 					       + 2 * d2n * d1n * d1m * (leftSparse?d1s:1.0) //ba(+*)
 					       + d2n * d1n; //r(t)
 					
-				case ArithmeticBinary: //opcodes: s-r, so, max, min, 
-					                   //         >, >=, <, <=, ==, != 
-					//TODO Should be relational 
-				
+				case Binary: //opcodes: s-r, so, max, min, 
+					//         >, >=, <, <=, ==, != 
 					//note: all relational ops are not sparsesafe
 					return d3m * d3n; //covers all combinations of scalar and matrix  
 	
@@ -1149,7 +1136,7 @@ public class CostEstimatorStaticRuntime extends CostEstimator
 					return   d1m * d1n * d1s
 					       + d2m * d2n * d2s;
 					
-				case CombineTernary: //opcodes: combinetertiary
+				case CombineTernary: //opcodes: combineternary
 					return   d1m * d1n * d1s
 				           + d2m * d2n * d2s
 				           + d3m * d3n * d3s;
@@ -1159,7 +1146,7 @@ public class CostEstimatorStaticRuntime extends CostEstimator
 					//note: covers scalar, matrix, matrix-scalar
 					return d3m * d3n;
 					
-				case Ternary: //opcodes: ctabletransform, ctabletransformscalarweight, ctabletransformhistogram, ctabletransformweightedhistogram
+				case Ctable: //opcodes: ctabletransform, ctabletransformscalarweight, ctabletransformhistogram, ctabletransformweightedhistogram
 					//note: copy from cp
 					if( leftSparse )
 						return d1m * d1n * d1s; //add
@@ -1201,17 +1188,17 @@ public class CostEstimatorStaticRuntime extends CostEstimator
 					//String2MRInstructionType.put( "valuepick"  , MRINSTRUCTION_TYPE.PickByCount);  // for quantile()
 					//String2MRInstructionType.put( "rangepick"  , MRINSTRUCTION_TYPE.PickByCount);  // for interQuantile()
 					
-				case RangeReIndex: //opcodes: rangeReIndex, rangeReIndexForLeft
+				case RightIndex: //opcodes: rightIndex, rightIndexForLeft
 					//TODO: requires category consolidation
-					if( optype.equals("rangeReIndex") )
+					if( optype.equals(RightIndex.OPCODE) )
 						return DEFAULT_NFLOP_CP * ((leftSparse)? d2m*d2n*d2s : d2m*d2n );
-					else //rangeReIndexForLeft
+					else //rightIndexForLeft
 						return   DEFAULT_NFLOP_CP * ((leftSparse)? d1m*d1n*d1s : d1m*d1n)
 					           + DEFAULT_NFLOP_CP * ((rightSparse)? d2m*d2n*d2s : d2m*d2n );
 	
 				case ZeroOut: //opcodes: zeroOut
 					return   DEFAULT_NFLOP_CP * ((leftSparse)? d1m*d1n*d1s : d1m*d1n)
-				           + DEFAULT_NFLOP_CP * ((rightSparse)? d2m*d2n*d2s : d2m*d2n );								
+				           + DEFAULT_NFLOP_CP * ((rightSparse)? d2m*d2n*d2s : d2m*d2n );
 					
 				default:
 					return 0;
@@ -1221,9 +1208,6 @@ public class CostEstimatorStaticRuntime extends CostEstimator
 		{
 			throw new DMLRuntimeException("CostEstimator: unsupported instruction type: "+optype);
 		}
-		
-		//TODO Parameterized Builtin Functions
-		//String2CPFileInstructionType.put( "rmempty"	    , CPINSTRUCTION_TYPE.ParameterizedBuiltin);
 		
 		return -1; //should never come here.
 	}

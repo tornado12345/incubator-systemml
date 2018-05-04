@@ -39,13 +39,10 @@ import org.apache.sysml.runtime.matrix.data.IJV;
 import org.apache.sysml.runtime.matrix.data.MatrixBlock;
 import org.apache.sysml.runtime.util.MapReduceTool;
 
-/**
- * 
- */
 public class WriterMatrixMarket extends MatrixWriter
 {
 	@Override
-	public final void writeMatrixToHDFS(MatrixBlock src, String fname, long rlen, long clen, int brlen, int bclen, long nnz) 
+	public final void writeMatrixToHDFS(MatrixBlock src, String fname, long rlen, long clen, int brlen, int bclen, long nnz, boolean diag) 
 		throws IOException, DMLRuntimeException 
 	{
 		//validity check matrix dimensions
@@ -55,9 +52,9 @@ public class WriterMatrixMarket extends MatrixWriter
 				
 		//prepare file access
 		JobConf job = new JobConf(ConfigurationManager.getCachedJobConf());
-		FileSystem fs = FileSystem.get(job);
 		Path path = new Path( fname );
-
+		FileSystem fs = IOUtilFunctions.getFileSystem(path, job);
+		
 		//if the file already exists on HDFS, remove it.
 		MapReduceTool.deleteFileIfExistOnHDFS( fname );
 			
@@ -72,41 +69,27 @@ public class WriterMatrixMarket extends MatrixWriter
 		throws IOException, DMLRuntimeException 
 	{
 		Path path = new Path( fname );
-		FileSystem fs = FileSystem.get(ConfigurationManager.getCachedJobConf());
+		FileSystem fs = IOUtilFunctions.getFileSystem(path);
 		
-		FSDataOutputStream writer = fs.create(path);
-		writer.writeBytes("1 1 0");
-		writer.close();
-
+		FSDataOutputStream writer = null;
+		try {
+			writer = fs.create(path);
+			writer.writeBytes(IOUtilFunctions.EMPTY_TEXT_LINE);
+		}
+		finally {
+			IOUtilFunctions.closeSilently(writer);
+		}
 		IOUtilFunctions.deleteCrcFilesFromLocalFileSystem(fs, path);
 	}
-	
-	/**
-	 * 
-	 * @param fileName
-	 * @param src
-	 * @param rlen
-	 * @param clen
-	 * @param nnz
-	 * @throws IOException
-	 */
+
 	protected void writeMatrixMarketMatrixToHDFS( Path path, JobConf job, FileSystem fs, MatrixBlock src )
 		throws IOException
 	{
 		//sequential write
 		writeMatrixMarketMatrixToFile(path, job, fs, src, 0, src.getNumRows());
 	}
-	
-	/**
-	 * 
-	 * @param path
-	 * @param job
-	 * @param src
-	 * @param rl
-	 * @param ru
-	 * @throws IOException
-	 */
-	protected final void writeMatrixMarketMatrixToFile( Path path, JobConf job, FileSystem fs, MatrixBlock src, int rl, int ru )
+
+	protected static void writeMatrixMarketMatrixToFile( Path path, JobConf job, FileSystem fs, MatrixBlock src, int rl, int ru )
 		throws IOException
 	{
 		boolean sparse = src.isInSparseFormat();
@@ -173,38 +156,28 @@ public class WriterMatrixMarket extends MatrixWriter
 			}
 	
 			//handle empty result
-			if ( src.isEmptyBlock(false) && rl==0 ) {
-				br.write("1 1 0\n");
-			}
+			if ( src.isEmptyBlock(false) && rl==0 )
+				br.write(IOUtilFunctions.EMPTY_TEXT_LINE);
 		}
 		finally {
 			IOUtilFunctions.closeSilently(br);
 		}
 	}
-	
-	/**
-	 * 
-	 * @param srcFileName
-	 * @param fileName
-	 * @param rlen
-	 * @param clen
-	 * @param nnz
-	 * @throws IOException
-	 */
-	public final void mergeTextcellToMatrixMarket( String srcFileName, String fileName, long rlen, long clen, long nnz )
+
+	public static void mergeTextcellToMatrixMarket( String srcFileName, String fileName, long rlen, long clen, long nnz )
 		throws IOException
 	{
 		  Configuration conf = new Configuration(ConfigurationManager.getCachedJobConf());
 		
 		  Path src = new Path (srcFileName);
 	      Path merge = new Path (fileName);
-	      FileSystem hdfs = FileSystem.get(conf);
-	    
-	      if (hdfs.exists (merge)) {
-	    	hdfs.delete(merge, true);
+	      FileSystem fs = IOUtilFunctions.getFileSystem(src, conf);
+			
+	      if (fs.exists (merge)) {
+	    	fs.delete(merge, true);
 	      }
         
-	      OutputStream out = hdfs.create(merge, true);
+	      OutputStream out = fs.create(merge, true);
 
 	      // write out the header first 
 	      StringBuilder  sb = new StringBuilder();
@@ -215,12 +188,12 @@ public class WriterMatrixMarket extends MatrixWriter
 	      out.write (sb.toString().getBytes());
 
 	      // if the source is a directory
-	      if (hdfs.getFileStatus(src).isDirectory()) {
+	      if (fs.getFileStatus(src).isDirectory()) {
 	        try {
-	          FileStatus[] contents = hdfs.listStatus(src);
+	          FileStatus[] contents = fs.listStatus(src);
 	          for (int i = 0; i < contents.length; i++) {
 	            if (!contents[i].isDirectory()) {
-	               InputStream in = hdfs.open (contents[i].getPath());
+	               InputStream in = fs.open (contents[i].getPath());
 	               try {
 	                 IOUtils.copyBytes (in, out, conf, false);
 	               }  finally {
@@ -231,10 +204,10 @@ public class WriterMatrixMarket extends MatrixWriter
 	         } finally {
 	        	 IOUtilFunctions.closeSilently(out);
 	         }
-	      } else if (hdfs.isFile(src))  {
+	      } else if (fs.isFile(src))  {
 	        InputStream in = null;
 	        try {
-   	          in = hdfs.open (src);
+   	          in = fs.open (src);
 	          IOUtils.copyBytes (in, out, conf, true);
 	        } 
 	        finally {

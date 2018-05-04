@@ -31,7 +31,7 @@ import org.apache.hadoop.mapred.Reporter;
 
 import org.apache.sysml.runtime.instructions.mr.AppendRInstruction;
 import org.apache.sysml.runtime.instructions.mr.MRInstruction;
-import org.apache.sysml.runtime.instructions.mr.TernaryInstruction;
+import org.apache.sysml.runtime.instructions.mr.CtableInstruction;
 import org.apache.sysml.runtime.matrix.MatrixCharacteristics;
 import org.apache.sysml.runtime.matrix.data.MatrixCell;
 import org.apache.sysml.runtime.matrix.data.MatrixIndexes;
@@ -67,11 +67,7 @@ implements Reducer<MatrixIndexes, TaggedMatrixValue, MatrixIndexes, MatrixValue>
 
 		reporter.incrCounter(Counters.COMBINE_OR_REDUCE_TIME, System.currentTimeMillis()-start);
 	}
-	
-	/**
-	 * 
-	 * @throws IOException
-	 */
+
 	protected void processReducerInstructionsInGMR(MatrixIndexes indexes) 
 		throws IOException 
 	{
@@ -82,10 +78,10 @@ implements Reducer<MatrixIndexes, TaggedMatrixValue, MatrixIndexes, MatrixValue>
 		{		
 			for(MRInstruction ins: mixed_instructions)
 			{
-				if(ins instanceof TernaryInstruction)
+				if(ins instanceof CtableInstruction)
 				{  
-					MatrixCharacteristics dim = dimensions.get(((TernaryInstruction) ins).input1);
-					((TernaryInstruction) ins).processInstruction(valueClass, cachedValues, zeroInput, _buff.getMapBuffer(), _buff.getBlockBuffer(), dim.getRowsPerBlock(), dim.getColsPerBlock());
+					MatrixCharacteristics dim = dimensions.get(((CtableInstruction) ins).input1);
+					((CtableInstruction) ins).processInstruction(valueClass, cachedValues, zeroInput, _buff.getMapBuffer(), _buff.getBlockBuffer(), dim.getRowsPerBlock(), dim.getColsPerBlock());
 					if( _buff.getBufferSize() > GMRCtableBuffer.MAX_BUFFER_SIZE )
 						_buff.flushBuffer(cachedReporter); //prevent oom for large/many ctables
 				}
@@ -111,12 +107,7 @@ implements Reducer<MatrixIndexes, TaggedMatrixValue, MatrixIndexes, MatrixValue>
 			throw new IOException(e);
 		}
 	}
-	
-	/**
-	 * 
-	 * @param reporter
-	 * @throws IOException
-	 */
+
 	protected void outputResultsFromCachedValuesForGMR(Reporter reporter) throws IOException
 	{
 		for(int i=0; i<resultIndexes.length; i++)

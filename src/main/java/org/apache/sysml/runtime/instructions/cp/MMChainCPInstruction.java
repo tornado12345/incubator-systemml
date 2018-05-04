@@ -20,41 +20,26 @@
 package org.apache.sysml.runtime.instructions.cp;
 
 import org.apache.sysml.lops.MapMultChain.ChainType;
-import org.apache.sysml.runtime.DMLRuntimeException;
 import org.apache.sysml.runtime.controlprogram.context.ExecutionContext;
 import org.apache.sysml.runtime.instructions.InstructionUtils;
 import org.apache.sysml.runtime.matrix.data.MatrixBlock;
 import org.apache.sysml.runtime.matrix.operators.Operator;
 
-/**
- * 
- * 
- */
-public class MMChainCPInstruction extends UnaryCPInstruction
-{	
-	
-	private ChainType _type = null;
-	private int _numThreads = -1;
-	
-	public MMChainCPInstruction(Operator op, CPOperand in1, CPOperand in2, CPOperand in3, CPOperand out, ChainType type, int k, String opcode, String istr)
-	{
-		super(op, in1, in2, in3, out, opcode, istr);
-		_cptype = CPINSTRUCTION_TYPE.MMChain;
+public class MMChainCPInstruction extends UnaryCPInstruction {
+
+	private final ChainType _type;
+	private final int _numThreads;
+
+	private MMChainCPInstruction(Operator op, CPOperand in1, CPOperand in2, CPOperand in3, CPOperand out,
+			ChainType type, int k, String opcode, String istr) {
+		super(CPType.MMChain, op, in1, in2, in3, out, opcode, istr);
 		_type = type;
 		_numThreads = k;
 	}
-	
-	/**
-	 * 
-	 * @param str
-	 * @return
-	 * @throws DMLRuntimeException
-	 */
-	public static MMChainCPInstruction parseInstruction ( String str ) 
-		throws DMLRuntimeException 
-	{
+
+	public static MMChainCPInstruction parseInstruction ( String str ) {
 		//parse instruction parts (without exec type)
-		String[] parts = InstructionUtils.getInstructionPartsWithValueType( str );		
+		String[] parts = InstructionUtils.getInstructionPartsWithValueType( str );
 		InstructionUtils.checkNumFields( parts, 5, 6 );
 	
 		String opcode = parts[0];
@@ -81,24 +66,20 @@ public class MMChainCPInstruction extends UnaryCPInstruction
 	}
 	
 	@Override
-	public void processInstruction(ExecutionContext ec)
-		throws DMLRuntimeException 
-	{
+	public void processInstruction(ExecutionContext ec) {
 		//get inputs
-		MatrixBlock X = ec.getMatrixInput(input1.getName());
-		MatrixBlock v = ec.getMatrixInput(input2.getName());
+		MatrixBlock X = ec.getMatrixInput(input1.getName(), getExtendedOpcode());
+		MatrixBlock v = ec.getMatrixInput(input2.getName(), getExtendedOpcode());
 		MatrixBlock w = (_type==ChainType.XtwXv || _type==ChainType.XtXvy) ? 
-				ec.getMatrixInput(input3.getName()) : null;
-
+			ec.getMatrixInput(input3.getName(), getExtendedOpcode()) : null;
 		//execute mmchain operation 
 		 MatrixBlock out = (MatrixBlock) X.chainMatrixMultOperations(v, w, new MatrixBlock(), _type, _numThreads);
-				
 		//set output and release inputs
-		ec.setMatrixOutput(output.getName(), out);
-		ec.releaseMatrixInput(input1.getName());
-		ec.releaseMatrixInput(input2.getName());
+		ec.setMatrixOutput(output.getName(), out, getExtendedOpcode());
+		ec.releaseMatrixInput(input1.getName(), getExtendedOpcode());
+		ec.releaseMatrixInput(input2.getName(), getExtendedOpcode());
 		if( w !=null )
-			ec.releaseMatrixInput(input3.getName());
+			ec.releaseMatrixInput(input3.getName(), getExtendedOpcode());
 	}
 	
 	public ChainType getMMChainType()

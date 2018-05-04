@@ -22,6 +22,7 @@ package org.apache.sysml.runtime.matrix.mapred;
 
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.Iterator;
 import java.util.Map.Entry;
 
 import org.apache.hadoop.mapred.Reporter;
@@ -32,7 +33,7 @@ import org.apache.sysml.runtime.matrix.data.CTableMap;
 import org.apache.sysml.runtime.matrix.data.MatrixBlock;
 import org.apache.sysml.runtime.matrix.data.MatrixCell;
 import org.apache.sysml.runtime.matrix.data.MatrixIndexes;
-import org.apache.sysml.runtime.util.LongLongDoubleHashMap.LLDoubleEntry;
+import org.apache.sysml.runtime.util.LongLongDoubleHashMap.ADoubleEntry;
 
 
 public class GMRCtableBuffer 
@@ -56,20 +57,12 @@ public class GMRCtableBuffer
 	public GMRCtableBuffer( CollectMultipleConvertedOutputs collector, boolean outputDimsKnown )
 	{
 		if ( outputDimsKnown )
-			_blockBuffer = new HashMap<Byte, MatrixBlock>();
+			_blockBuffer = new HashMap<>();
 		else
-			_mapBuffer = new HashMap<Byte, CTableMap>();
+			_mapBuffer = new HashMap<>();
 		_collector = collector;
 	}
-	
-	/**
-	 * 
-	 * @param resultIndexes
-	 * @param resultsNonZeros
-	 * @param resultDimsUnknown
-	 * @param resultsMaxRowDims
-	 * @param resultsMaxColDims
-	 */
+
 	public void setMetadataReferences(byte[] resultIndexes, long[] resultsNonZeros, byte[] resultDimsUnknown, long[] resultsMaxRowDims, long[] resultsMaxColDims)
 	{
 		_resultIndexes = resultIndexes;
@@ -79,10 +72,6 @@ public class GMRCtableBuffer
 		_resultMaxColDims = resultsMaxColDims;
 	}
 
-	/**
-	 * 
-	 * @return
-	 */
 	public int getBufferSize()
 	{
 		if ( _mapBuffer != null ) {
@@ -106,11 +95,7 @@ public class GMRCtableBuffer
 			return 0;
 		}
 	}
-	
-	/**
-	 * 
-	 * @return
-	 */
+
 	public HashMap<Byte, CTableMap> getMapBuffer()
 	{
 		return _mapBuffer;
@@ -120,13 +105,7 @@ public class GMRCtableBuffer
 	{
 		return _blockBuffer;
 	}
-	
-	/**
-	 * 
-	 * @param reporter
-	 * @throws RuntimeException
-	 */
-	@SuppressWarnings("deprecation")
+
 	public void flushBuffer( Reporter reporter ) 
 		throws RuntimeException 
 	{
@@ -150,12 +129,13 @@ public class GMRCtableBuffer
 					}
 					
 					//output result data 
-					for(LLDoubleEntry e: resultMap.entrySet()) {
-						key = new MatrixIndexes(e.key1, e.key2);
+					Iterator<ADoubleEntry> iter = resultMap.getIterator();
+					while( iter.hasNext() ) {
+						ADoubleEntry e = iter.next();
+						key = new MatrixIndexes(e.getKey1(), e.getKey2());
 						value.setValue(e.value);
-						for(Integer i: resultIDs) {
+						for(Integer i: resultIDs)
 							_collector.collectOutput(key, value, i, reporter);
-						}
 					}
 				}
 			}
@@ -202,7 +182,7 @@ public class GMRCtableBuffer
 								MatrixBlock block = MatrixWriter.getMatrixBlockForReuse(blocks, maxRow, maxCol, brlen, bclen);
 			
 								//copy submatrix to block
-								outBlock.sliceOperations( row_offset, row_offset+maxRow-1, 
+								outBlock.slice( row_offset, row_offset+maxRow-1, 
 														  col_offset, col_offset+maxCol-1, block );
 								
 								// TODO: skip empty "block"

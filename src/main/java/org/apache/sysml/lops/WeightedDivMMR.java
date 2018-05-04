@@ -34,10 +34,8 @@ public class WeightedDivMMR extends Lop
 	private boolean _cacheU = false;
 	private boolean _cacheV = false;
 	
-	public WeightedDivMMR(Lop input1, Lop input2, Lop input3, Lop input4, DataType dt, ValueType vt, WDivMMType wt, boolean cacheU, boolean cacheV, ExecType et) 
-		throws LopsException 
-	{
-		super(Lop.Type.WeightedDivMM, dt, vt);		
+	public WeightedDivMMR(Lop input1, Lop input2, Lop input3, Lop input4, DataType dt, ValueType vt, WDivMMType wt, boolean cacheU, boolean cacheV, ExecType et)  {
+		super(Lop.Type.WeightedDivMM, dt, vt);
 		addInput(input1); //W
 		addInput(input2); //U
 		addInput(input3); //V
@@ -53,9 +51,7 @@ public class WeightedDivMMR extends Lop
 		setupLopProperties(et);
 	}
 	
-	private void setupLopProperties( ExecType et ) 
-		throws LopsException
-	{
+	private void setupLopProperties( ExecType et ) {
 		if( et == ExecType.MR )
 		{
 			//setup MR parameters 
@@ -77,6 +73,7 @@ public class WeightedDivMMR extends Lop
 		}
 	}
 
+	@Override
 	public String toString() {
 		return "Operation = WeightedDivMMR";
 	}
@@ -139,12 +136,8 @@ public class WeightedDivMMR extends Lop
 	}
 	
 	@Override
-	public boolean usesDistributedCache() 
-	{
-		if( _cacheU || _cacheV )
-			return true;
-		else
-			return false;
+	public boolean usesDistributedCache() {
+		return (_cacheU || _cacheV);
 	}
 	
 	@Override

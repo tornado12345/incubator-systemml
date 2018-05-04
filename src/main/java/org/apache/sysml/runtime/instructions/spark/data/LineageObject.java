@@ -28,19 +28,14 @@ public abstract class LineageObject
 {
 	//basic lineage information
 	protected int _numRef = -1;
-	protected List<LineageObject> _childs = null;
-	protected String _varName = null;
+	protected final List<LineageObject> _childs;
 	
 	//N:1 back reference to matrix/frame object
 	protected CacheableData<?> _cd = null;
 	
 	protected LineageObject() {
 		_numRef = 0;
-		_childs = new ArrayList<LineageObject>();
-	}
-	
-	public String getVarName() {
-		return _varName;
+		_childs = new ArrayList<>();
 	}
 	
 	public int getNumReferences() {

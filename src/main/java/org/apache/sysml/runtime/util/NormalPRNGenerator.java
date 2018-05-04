@@ -28,36 +28,25 @@ import java.util.Random;
  * RandNPair, which uses Box-Muller method.
  */
 
-
 public class NormalPRNGenerator extends PRNGenerator
 {
-	//private long seed;
-	Random r;
+	private final Random rnorm;
 	private RandNPair pair;
-	boolean flag = false; // we use pair.N1 if flag=false, and pair.N2 otherwise
+	private boolean flag = false; // we use pair.N1 if flag=false, and pair.N2 otherwise
 	
 	public NormalPRNGenerator() {
-		super();
+		rnorm = new Random();
 	}
 	
-	public NormalPRNGenerator(long sd) {
-		super();
-		setSeed(sd);
-	}
-	
-	/*public NormalPRNGenerator(Random random) {
-		init(random);
-	}*/
-	
-	public void setSeed(long sd) {
-		//seed = s;
-		seed = sd;
-		r = new Random(seed);
+	@Override
+	public void setSeed(long seed) {
+		rnorm.setSeed(seed);
 		pair = new RandNPair();
 		flag = false;
-		pair.compute(r);
+		pair.compute(rnorm);
 	}
 	
+	@Override
 	public double nextDouble() {
 		double d;
 		if (!flag) {
@@ -65,10 +54,9 @@ public class NormalPRNGenerator extends PRNGenerator
 		}
 		else {
 			d = pair.getSecond();
-			pair.compute(r);
+			pair.compute(rnorm);
 		}
 		flag = !flag;
 		return d;
 	}
-
 }

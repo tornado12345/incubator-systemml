@@ -49,12 +49,9 @@ public class BinaryUAggChain extends Lop
 	 * @param dt data type
 	 * @param vt value type
 	 * @param et execution type
-	 * @throws LopsException if LopsException occurs
 	 */
-	public BinaryUAggChain(Lop input1, Binary.OperationTypes bop, Aggregate.OperationTypes uaop, PartialAggregate.DirectionTypes uadir, DataType dt, ValueType vt, ExecType et) 
-		throws LopsException 
-	{
-		super(Lop.Type.BinUaggChain, dt, vt);		
+	public BinaryUAggChain(Lop input1, Binary.OperationTypes bop, Aggregate.OperationTypes uaop, PartialAggregate.DirectionTypes uadir, DataType dt, ValueType vt, ExecType et) {
+		super(Lop.Type.BinUaggChain, dt, vt);
 		addInput(input1); //X
 		input1.addOutput(this); 
 		
@@ -87,38 +84,16 @@ public class BinaryUAggChain extends Lop
 		}
 	}
 	
-
+	@Override
 	public String toString() {
 		return "Operation = BinUaggChain";
 	}
 	
 	@Override
-	public String getInstructions(int input_index1, int output_index)
-	{
-		StringBuilder sb = new StringBuilder();
-		
-		//exec type
-		sb.append(getExecType());
-		sb.append(Lop.OPERAND_DELIMITOR);
-		
-		//inst op code
-		sb.append(OPCODE);
-		sb.append(Lop.OPERAND_DELIMITOR);
-
-		//outer operation op code
-		sb.append(Binary.getOpcode(_binOp));
-		sb.append(Lop.OPERAND_DELIMITOR);
-		
-		//inner operation op code
-		sb.append(PartialAggregate.getOpcode(_uaggOp, _uaggDir));		
-		sb.append(Lop.OPERAND_DELIMITOR);
-
-		//inputs and outputs
-		sb.append( getInputs().get(0).prepInputOperand(input_index1));
-		sb.append(Lop.OPERAND_DELIMITOR);
-		sb.append( this.prepOutputOperand(output_index));
-				
-		return sb.toString();
+	public String getInstructions(int input_index1, int output_index) {
+		return getInstructions(
+				String.valueOf(input_index1), 
+				String.valueOf(output_index));
 	}
 	
 	@Override

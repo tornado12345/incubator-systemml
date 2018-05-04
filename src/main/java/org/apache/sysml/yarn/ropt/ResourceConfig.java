@@ -22,7 +22,6 @@ package org.apache.sysml.yarn.ropt;
 import java.util.ArrayList;
 import java.util.Collections;
 
-import org.apache.sysml.hops.HopsException;
 import org.apache.sysml.parser.ForStatementBlock;
 import org.apache.sysml.parser.IfStatementBlock;
 import org.apache.sysml.parser.WhileStatementBlock;
@@ -45,79 +44,53 @@ public class ResourceConfig
 		_mrres = mr;
 	}
 	
-	public ResourceConfig( ArrayList<ProgramBlock> prog, long init ) 
-		throws HopsException
-	{
+	public ResourceConfig( ArrayList<ProgramBlock> prog, long init ) {
 		//init cp memory
 		_cpres = init;
 		
 		//init mr memory
-		_mrres = new ArrayList<Long>();
+		_mrres = new ArrayList<>();
 		addProgramBlocks(prog, init);
 	}
 	
-	/**
-	 * 
-	 * @return
-	 */
-	public long getCPResource()
-	{
+	public long getCPResource() {
 		return (long)_cpres;
 	}
 	
-	public void setCPResource( long res )
-	{
+	public void setCPResource( long res ) {
 		_cpres = res;
 	}
 
 
-	public long getMRResources( int i ) 
-		throws DMLRuntimeException
-	{
+	public long getMRResources( int i ) {
 		if( _mrres.size() <= i )
 			throw new DMLRuntimeException("Memo table out-of-bounds: "+_mrres.size()+" vs "+i);
-			
 		return _mrres.get(i); 
 	}
 
-	public double[][] getMRResourcesMemo()
-	{
+	public double[][] getMRResourcesMemo() {
 		int len = _mrres.size();
 		double[][] ret = new double[len][2];
 		for( int i=0; i< len; i++ ){
 			ret[i][0] = _mrres.get(i);
 			ret[i][1] = -1;
 		}
-		
 		return ret;
 	}
 	
-	public void setMRResources( ArrayList<ProgramBlock> B, double[][] res ) 
-		throws DMLRuntimeException
-	{
+	public void setMRResources( ArrayList<ProgramBlock> B, double[][] res ) {
 		if( _mrres.size() != res.length )
 			throw new DMLRuntimeException("Memo table sizes do not match: "+_mrres.size()+" vs "+res.length);
-		
 		int len = res.length;
 		for( int i=0; i<len; i++ )
 			_mrres.set(i, (long)res[i][0]);
 	}
 
-	
-	/**
-	 * 
-	 * @return
-	 */
-	public long getMaxMRResource()
-	{
-		double val = Collections.max(_mrres);
+	public long getMaxMRResource() {
+		double val = (double) Collections.max(_mrres);
 		return (long)val;
 	}
 	
-	/**
-	 * 
-	 * @return
-	 */
 	public String serialize() 
 	{
 		StringBuilder ret = new StringBuilder();
@@ -145,7 +118,7 @@ public class ResourceConfig
 		long cp = YarnOptimizerUtils.toB(Long.valueOf(parts[0]));
 		
 		//deserialize mr
-		ArrayList<Long> mr = new ArrayList<Long>();
+		ArrayList<Long> mr = new ArrayList<>();
 		for (int i=1; i<parts.length; i++) 
 		{
 			long val = YarnOptimizerUtils.toB(Long.parseLong(parts[i]));
@@ -154,28 +127,13 @@ public class ResourceConfig
 		
 		return new ResourceConfig(cp, mr);
 	}
-	
-	/**
-	 * 
-	 * @param pbs
-	 * @param init
-	 * @throws HopsException 
-	 */
-	private void addProgramBlocks( ArrayList<ProgramBlock> pbs, long init ) 
-		throws HopsException
-	{
+
+	private void addProgramBlocks( ArrayList<ProgramBlock> pbs, long init ) {
 		for( ProgramBlock pb : pbs )
 			addProgramBlock(pb, init);
 	}
-	
-	/**
-	 * 
-	 * @param pb
-	 * @param init
-	 * @throws HopsException 
-	 */
+
 	private void addProgramBlock( ProgramBlock pb, long init ) 
-		throws HopsException
 	{
 		if (pb instanceof FunctionProgramBlock)
 		{

@@ -21,15 +21,14 @@ package org.apache.sysml.runtime.io;
 
 import java.io.EOFException;
 import java.io.IOException;
+import java.io.InputStream;
 import java.util.ArrayList;
-import java.util.LinkedList;
 import java.util.List;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Future;
 
-import org.apache.hadoop.fs.FileStatus;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
 import org.apache.sysml.hops.OptimizerUtils;
@@ -50,63 +49,31 @@ public abstract class MatrixReader
 {
 	//internal configuration
 	protected static final boolean AGGREGATE_BLOCK_NNZ = true;
+	protected static final boolean RETURN_EMPTY_NNZ0 = true;
 	
-	
-	/**
-	 * 
-	 * @param fname
-	 * @param rlen
-	 * @param clen
-	 * @param brlen
-	 * @param bclen
-	 * @param expNnz
-	 * @return
-	 */
 	public abstract MatrixBlock readMatrixFromHDFS( String fname, long rlen, long clen, int brlen, int bclen, long estnnz )
 		throws IOException, DMLRuntimeException;
-	
-	/**
-	 * 
-	 * @param file
-	 * @return
-	 * @throws IOException
-	 */
-	public static Path[] getSequenceFilePaths( FileSystem fs, Path file ) 
-		throws IOException
-	{
-		Path[] ret = null;
-		
-		if( fs.isDirectory(file) )
-		{
-			LinkedList<Path> tmp = new LinkedList<Path>();
-			FileStatus[] dStatus = fs.listStatus(file);
-			for( FileStatus fdStatus : dStatus )
-				if( !fdStatus.getPath().getName().startsWith("_") ) //skip internal files
-					tmp.add(fdStatus.getPath());
-			ret = tmp.toArray(new Path[0]);
-		}
-		else
-		{
-			ret = new Path[]{ file };
-		}
-		
-		return ret;
-	}
+
+	public abstract MatrixBlock readMatrixFromInputStream( InputStream is, long rlen, long clen, int brlen, int bclen, long estnnz )
+			throws IOException, DMLRuntimeException;
 	
 	/**
 	 * NOTE: mallocDense controls if the output matrix blocks is fully allocated, this can be redundant
 	 * if binary block read and single block. 
 	 * 
-	 * @param rlen
-	 * @param clen
-	 * @param estnnz
-	 * @param mallocDense
-	 * @return
-	 * @throws DMLRuntimeException 
-	 * @throws IOException 
+	 * @param rlen number of rows
+	 * @param clen number of columns
+	 * @param bclen number of columns in a block
+	 * @param brlen number of rows in a block
+	 * @param estnnz estimated number of non-zeros
+	 * @param mallocDense if true and not sparse, allocate dense block unsafe
+	 * @param mallocSparse if true and sparse, allocate sparse rows block
+	 * @return matrix block
+	 * @throws IOException if IOException occurs
 	 */
-	protected static MatrixBlock createOutputMatrixBlock( long rlen, long clen, int bclen, int brlen, long estnnz, boolean mallocDense, boolean mallocSparse ) 
-		throws IOException, DMLRuntimeException
+	protected static MatrixBlock createOutputMatrixBlock( long rlen, long clen, 
+			int bclen, int brlen, long estnnz, boolean mallocDense, boolean mallocSparse ) 
+		throws IOException
 	{
 		//check input dimension
 		if( !OptimizerUtils.isValidCPDimensions(rlen, clen) )
@@ -114,6 +81,8 @@ public abstract class MatrixReader
 		
 		//determine target representation (sparse/dense)
 		boolean sparse = MatrixBlock.evalSparseFormatInMemory(rlen, clen, estnnz); 
+		int numThreads = OptimizerUtils.getParallelBinaryReadParallelism();
+		long numBlocks = (long)Math.ceil((double)rlen / brlen);
 		
 		//prepare result matrix block
 		MatrixBlock ret = new MatrixBlock((int)rlen, (int)clen, sparse, estnnz);
@@ -124,21 +93,21 @@ public abstract class MatrixReader
 			SparseBlock sblock = ret.getSparseBlock();
 			//create synchronization points for MCSR (start row per block row)
 			if( sblock instanceof SparseBlockMCSR && clen > bclen      //multiple col blocks 
-				&& clen > 0 && bclen > 0 && rlen > 0 && brlen > 0 ) {  //all dims known
-				for( int i=0; i<rlen; i+=brlen )
-					ret.getSparseBlock().allocate(i, Math.min((int)(estnnz/rlen),1), (int)clen);
+				&& clen >= 0 && bclen > 0 && rlen >= 0 && brlen > 0 ) {  //all dims known
+				//note: allocate w/ min 2 nnz to ensure allocated row object because
+				//adaptive change from scalar to row could cause synchronization issues
+				if( numThreads <= numBlocks )
+					for( int i=0; i<rlen; i+=brlen )
+						sblock.allocate(i, Math.max((int)(estnnz/rlen),2), (int)clen);
+				else //allocate all rows to avoid contention
+					for( int i=0; i<rlen; i++ )
+						sblock.allocate(i, Math.max((int)(estnnz/rlen),2), (int)clen);
 			}
 		}
 		
 		return ret;
 	}
-	
-	/**
-	 * 
-	 * @param fs
-	 * @param path
-	 * @throws IOException 
-	 */
+
 	protected static void checkValidInputFile(FileSystem fs, Path path) 
 		throws IOException
 	{
@@ -147,27 +116,19 @@ public abstract class MatrixReader
 			throw new IOException("File "+path.toString()+" does not exist on HDFS/LFS.");
 	
 		//check for empty file
-		if( MapReduceTool.isFileEmpty( fs, path.toString() ) )
+		if( MapReduceTool.isFileEmpty(fs, path) )
 			throw new EOFException("Empty input file "+ path.toString() +".");
 		
 	}
-	
-	/**
-	 * 
-	 * @param dest
-	 * @param rlen
-	 * @param k
-	 * @param pool
-	 * @throws InterruptedException
-	 * @throws ExecutionException 
-	 */
+
 	protected static void sortSparseRowsParallel(MatrixBlock dest, long rlen, int k, ExecutorService pool) 
 		throws InterruptedException, ExecutionException
 	{
-		//create sort tasks
-		ArrayList<SortRowsTask> tasks = new ArrayList<SortRowsTask>();
-		int blklen = (int)(Math.ceil((double)rlen/k));
-		for( int i=0; i<k & i*blklen<rlen; i++ )
+		//create sort tasks (increase number of tasks for better load balance)
+		ArrayList<SortRowsTask> tasks = new ArrayList<>();
+		int k2 = (int) Math.min(8*k, rlen); 
+		int blklen = (int)(Math.ceil((double)rlen/k2));
+		for( int i=0; i<k2 & i*blklen<rlen; i++ )
 			tasks.add(new SortRowsTask(dest, i*blklen, Math.min((i+1)*blklen, (int)rlen)));
 		
 		//execute parallel sort and check for errors

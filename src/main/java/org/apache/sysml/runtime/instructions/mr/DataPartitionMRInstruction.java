@@ -19,7 +19,6 @@
 
 package org.apache.sysml.runtime.instructions.mr;
 
-import org.apache.sysml.runtime.DMLRuntimeException;
 import org.apache.sysml.runtime.instructions.InstructionUtils;
 import org.apache.sysml.runtime.matrix.operators.Operator;
 
@@ -27,25 +26,18 @@ import org.apache.sysml.runtime.matrix.operators.Operator;
  * Dummy instruction for cost estimation of data partition mr.
  * 
  */
-public class DataPartitionMRInstruction extends UnaryInstruction 
-{
-	
-	public DataPartitionMRInstruction(Operator op, byte in, byte out, String istr)
-	{
-		super(op, in, out, istr);
+public class DataPartitionMRInstruction extends UnaryInstruction {
+
+	private DataPartitionMRInstruction(Operator op, byte in, byte out, String istr) {
+		super(MRType.Partition, op, in, out, istr);
 	}
-	
-	public static DataPartitionMRInstruction parseInstruction ( String str ) 
-		throws DMLRuntimeException 
-	{
+
+	public static DataPartitionMRInstruction parseInstruction ( String str ) {
 		InstructionUtils.checkNumFields ( str, 3 );
-		
 		String[] parts = InstructionUtils.getInstructionParts ( str );
 		byte in, out;
 		in = Byte.parseByte(parts[1]);
 		out = Byte.parseByte(parts[2]);
-		
 		return new DataPartitionMRInstruction(null, in, out, str);
 	}
-
 }

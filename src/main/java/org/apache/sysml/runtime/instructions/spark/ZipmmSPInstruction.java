@@ -36,34 +36,23 @@ import org.apache.sysml.runtime.instructions.cp.CPOperand;
 import org.apache.sysml.runtime.instructions.spark.utils.RDDAggregateUtils;
 import org.apache.sysml.runtime.matrix.data.MatrixBlock;
 import org.apache.sysml.runtime.matrix.data.MatrixIndexes;
+import org.apache.sysml.runtime.matrix.data.OperationsOnMatrixValues;
 import org.apache.sysml.runtime.matrix.operators.AggregateBinaryOperator;
 import org.apache.sysml.runtime.matrix.operators.AggregateOperator;
 import org.apache.sysml.runtime.matrix.operators.Operator;
 import org.apache.sysml.runtime.matrix.operators.ReorgOperator;
 
-
-public class ZipmmSPInstruction extends BinarySPInstruction 
-{
-	//internal flag to apply left-transpose rewrite or not
+public class ZipmmSPInstruction extends BinarySPInstruction {
+	// internal flag to apply left-transpose rewrite or not
 	private boolean _tRewrite = true;
-	
-	public ZipmmSPInstruction(Operator op, CPOperand in1, CPOperand in2, CPOperand out, boolean tRewrite, String opcode, String istr )
-	{
-		super(op, in1, in2, out, opcode, istr);
-		_sptype = SPINSTRUCTION_TYPE.ZIPMM;
-		
+
+	private ZipmmSPInstruction(Operator op, CPOperand in1, CPOperand in2, CPOperand out, boolean tRewrite,
+			String opcode, String istr) {
+		super(SPType.ZIPMM, op, in1, in2, out, opcode, istr);
 		_tRewrite = tRewrite;
 	}
-	
-	/**
-	 * 
-	 * @param str
-	 * @return
-	 * @throws DMLRuntimeException
-	 */
-	public static ZipmmSPInstruction parseInstruction( String str ) 
-		throws DMLRuntimeException 
-	{
+
+	public static ZipmmSPInstruction parseInstruction( String str ) {
 		String[] parts = InstructionUtils.getInstructionPartsWithValueType(str);
 		String opcode = parts[0];
 
@@ -80,13 +69,10 @@ public class ZipmmSPInstruction extends BinarySPInstruction
 		else {
 			throw new DMLRuntimeException("ZipmmSPInstruction.parseInstruction():: Unknown opcode " + opcode);
 		}
-		
 	}
 	
 	@Override
-	public void processInstruction(ExecutionContext ec) 
-		throws DMLRuntimeException
-	{	
+	public void processInstruction(ExecutionContext ec) {
 		SparkExecutionContext sec = (SparkExecutionContext)ec;
 		
 		//get rdd inputs (for computing r = t(X)%*%y via r = t(t(y)%*%X))
@@ -109,13 +95,9 @@ public class ZipmmSPInstruction extends BinarySPInstruction
 		
 		//put output block into symbol table (no lineage because single block)
 		//this also includes implicit maintenance of matrix characteristics
-		sec.setMatrixOutput(output.getName(), out2);	
+		sec.setMatrixOutput(output.getName(), out2, getExtendedOpcode());	
 	}
 
-	/**
-	 * 
-	 *
-	 */
 	private static class ZipMultiplyFunction implements Function<Tuple2<MatrixBlock,MatrixBlock>, MatrixBlock> 
 	{
 		private static final long serialVersionUID = -6669267794926220287L;
@@ -141,9 +123,9 @@ public class ZipmmSPInstruction extends BinarySPInstruction
 			
 			//transpose right input (for vectors no-op)
 			MatrixBlock tmp = (MatrixBlock)in2.reorgOperations(_rop, new MatrixBlock(), 0, 0, 0);
-				
+			
 			//core matrix multiplication (for t(y)%*%X or t(X)%*%y)
-			return (MatrixBlock)tmp.aggregateBinaryOperations(tmp, in1, new MatrixBlock(), _abop);
+			return OperationsOnMatrixValues.matMult(tmp, in1, new MatrixBlock(), _abop);
 		}
 	}
 }

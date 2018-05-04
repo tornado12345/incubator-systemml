@@ -24,10 +24,10 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 
 import org.apache.hadoop.fs.FileSystem;
+import org.apache.hadoop.fs.LocalFileSystem;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.mapred.JobConf;
 import org.apache.sysml.conf.DMLConfig;
@@ -35,6 +35,7 @@ import org.apache.sysml.hops.OptimizerUtils;
 import org.apache.sysml.runtime.controlprogram.parfor.stat.InfrastructureAnalyzer;
 import org.apache.sysml.runtime.matrix.data.FrameBlock;
 import org.apache.sysml.runtime.matrix.data.OutputInfo;
+import org.apache.sysml.runtime.util.CommonThreadPool;
 import org.apache.sysml.runtime.util.MapReduceTool;
 
 /**
@@ -43,15 +44,6 @@ import org.apache.sysml.runtime.util.MapReduceTool;
  */
 public class FrameWriterTextCellParallel extends FrameWriterTextCell
 {
-	/**
-	 * 
-	 * @param path
-	 * @param job
-	 * @param src
-	 * @param rlen
-	 * @param clen
-	 * @throws IOException
-	 */
 	@Override
 	protected void writeTextCellFrameToHDFS( Path path, JobConf job, FrameBlock src, long rlen, long clen )
 		throws IOException
@@ -71,17 +63,17 @@ public class FrameWriterTextCellParallel extends FrameWriterTextCell
 		}
 		
 		//create directory for concurrent tasks
-		MapReduceTool.createDirIfNotExistOnHDFS(path.toString(), DMLConfig.DEFAULT_SHARED_DIR_PERMISSION);
-		FileSystem fs = FileSystem.get(job);
+		MapReduceTool.createDirIfNotExistOnHDFS(path, DMLConfig.DEFAULT_SHARED_DIR_PERMISSION);
+		FileSystem fs = IOUtilFunctions.getFileSystem(path, job);
 		
 		//create and execute tasks
 		try 
 		{
-			ExecutorService pool = Executors.newFixedThreadPool(numThreads);
-			ArrayList<WriteFileTask> tasks = new ArrayList<WriteFileTask>();
+			ExecutorService pool = CommonThreadPool.get(numThreads);
+			ArrayList<WriteFileTask> tasks = new ArrayList<>();
 			int blklen = (int)Math.ceil((double)rlen / numThreads);
 			for(int i=0; i<numThreads & i*blklen<rlen; i++) {
-				Path newPath = new Path(path, String.format("0-m-%05d",i));
+				Path newPath = new Path(path, IOUtilFunctions.getPartFileName(i));
 				tasks.add(new WriteFileTask(newPath, job, fs, src, i*blklen, (int)Math.min((i+1)*blklen, rlen)));
 			}
 
@@ -92,15 +84,19 @@ public class FrameWriterTextCellParallel extends FrameWriterTextCell
 			//check for exceptions 
 			for( Future<Object> task : rt )
 				task.get();
+			
+			// delete crc files if written to local file system
+			if (fs instanceof LocalFileSystem) {
+				for(int i=0; i<numThreads & i*blklen<rlen; i++) 
+					IOUtilFunctions.deleteCrcFilesFromLocalFileSystem(fs,
+						new Path(path, IOUtilFunctions.getPartFileName(i)));
+			}
 		} 
 		catch (Exception e) {
 			throw new IOException("Failed parallel write of text output.", e);
 		}
 	}	
-	
-	/**
-	 * 
-	 */
+
 	private class WriteFileTask implements Callable<Object> 
 	{
 		private Path _path = null;

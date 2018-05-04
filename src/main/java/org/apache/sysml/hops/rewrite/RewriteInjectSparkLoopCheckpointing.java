@@ -20,14 +20,16 @@
 package org.apache.sysml.hops.rewrite;
 
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
 
 import org.apache.sysml.hops.DataOp;
 import org.apache.sysml.hops.Hop;
-import org.apache.sysml.hops.HopsException;
 import org.apache.sysml.hops.Hop.DataOpTypes;
 import org.apache.sysml.hops.OptimizerUtils;
 import org.apache.sysml.parser.DataIdentifier;
 import org.apache.sysml.parser.ForStatementBlock;
+import org.apache.sysml.parser.IndexedIdentifier;
 import org.apache.sysml.parser.StatementBlock;
 import org.apache.sysml.parser.VariableSet;
 import org.apache.sysml.parser.WhileStatementBlock;
@@ -46,21 +48,21 @@ public class RewriteInjectSparkLoopCheckpointing extends StatementBlockRewriteRu
 {
 	private boolean _checkCtx = false;
 	
-	public RewriteInjectSparkLoopCheckpointing(boolean checkParForContext)
-	{
+	public RewriteInjectSparkLoopCheckpointing(boolean checkParForContext) {
 		_checkCtx = checkParForContext;
 	}
 	
 	@Override
-	public ArrayList<StatementBlock> rewriteStatementBlock(StatementBlock sb, ProgramRewriteStatus status)
-		throws HopsException 
+	public boolean createsSplitDag() {
+		return true;
+	}
+	
+	@Override
+	public List<StatementBlock> rewriteStatementBlock(StatementBlock sb, ProgramRewriteStatus status)
 	{
-		ArrayList<StatementBlock> ret = new ArrayList<StatementBlock>();
-		
-		if( !OptimizerUtils.isSparkExecutionMode() ) 
-		{
-			ret.add(sb); // nothing to do here
-			return ret; //return original statement block
+		if( !OptimizerUtils.isSparkExecutionMode() ) {
+			// nothing to do here, return original statement block
+			return Arrays.asList(sb);
 		}
 		
 		//1) We currently add checkpoint operations without information about the global program structure,
@@ -68,6 +70,7 @@ public class RewriteInjectSparkLoopCheckpointing extends StatementBlockRewriteRu
 		//2) Also, we do not take size information into account right now. This means that all candidates
 		//are checkpointed even if they are only used by CP operations.
 		
+		ArrayList<StatementBlock> ret = new ArrayList<>();
 		int blocksize = status.getBlocksize(); //block size set by reblock rewrite
 		
 		//apply rewrite for while, for, and parfor (the decision for parfor loop bodies is deferred until parfor
@@ -76,7 +79,7 @@ public class RewriteInjectSparkLoopCheckpointing extends StatementBlockRewriteRu
 		    && (_checkCtx ? !status.isInParforContext() : true)  )
 		{
 			//step 1: determine checkpointing candidates
-			ArrayList<String> candidates = new ArrayList<String>(); 
+			ArrayList<String> candidates = new ArrayList<>();
 			VariableSet read = sb.variablesRead();
 			VariableSet updated = sb.variablesUpdated();
 			
@@ -89,25 +92,27 @@ public class RewriteInjectSparkLoopCheckpointing extends StatementBlockRewriteRu
 			{
 				StatementBlock sb0 = new StatementBlock();
 				sb0.setDMLProg(sb.getDMLProg());
-				sb0.setAllPositions(sb.getFilename(), sb.getBeginLine(), sb.getBeginColumn(), sb.getEndLine(), sb.getEndColumn());
-				ArrayList<Hop> hops = new ArrayList<Hop>();
+				sb0.setParseInfo(sb);
+				ArrayList<Hop> hops = new ArrayList<>();
 				VariableSet livein = new VariableSet();
 				VariableSet liveout = new VariableSet();
 				for( String var : candidates ) 
 				{
 					DataIdentifier dat = read.getVariable(var);
+					long dim1 = (dat instanceof IndexedIdentifier) ? ((IndexedIdentifier)dat).getOrigDim1() : dat.getDim1();
+					long dim2 = (dat instanceof IndexedIdentifier) ? ((IndexedIdentifier)dat).getOrigDim2() : dat.getDim2();
 					DataOp tread = new DataOp(var, DataType.MATRIX, ValueType.DOUBLE, DataOpTypes.TRANSIENTREAD, 
-							            dat.getFilename(), dat.getDim1(), dat.getDim2(), dat.getNnz(), blocksize, blocksize);
-					tread.setRequiresCheckpoint( true );
-					DataOp twrite = new DataOp(var, DataType.MATRIX, ValueType.DOUBLE, tread, DataOpTypes.TRANSIENTWRITE, null);
-					HopRewriteUtils.setOutputParameters(twrite, dat.getDim1(), dat.getDim2(), blocksize, blocksize, dat.getNnz());					
+						dat.getFilename(), dim1, dim2, dat.getNnz(), blocksize, blocksize);
+					tread.setRequiresCheckpoint(true);
+					DataOp twrite = HopRewriteUtils.createTransientWrite(var, tread);
 					hops.add(twrite);
 					livein.addVariable(var, read.getVariable(var));
 					liveout.addVariable(var, read.getVariable(var));
 				}
-				sb0.set_hops(hops);
+				sb0.setHops(hops);
 				sb0.setLiveIn(livein);
 				sb0.setLiveOut(liveout);
+				sb0.setSplitDag(true);
 				ret.add(sb0);
 				
 				//maintain rewrite status
@@ -119,5 +124,10 @@ public class RewriteInjectSparkLoopCheckpointing extends StatementBlockRewriteRu
 		ret.add(sb);
 		
 		return ret;
+	}
+	
+	@Override
+	public List<StatementBlock> rewriteStatementBlocks(List<StatementBlock> sbs, ProgramRewriteStatus sate) {
+		return sbs;
 	}
 }

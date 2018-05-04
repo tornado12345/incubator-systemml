@@ -26,7 +26,6 @@ import java.util.Map.Entry;
 import org.apache.sysml.hops.DataOp;
 import org.apache.sysml.hops.Hop;
 import org.apache.sysml.hops.Hop.DataOpTypes;
-import org.apache.sysml.hops.HopsException;
 import org.apache.sysml.hops.LiteralOp;
 import org.apache.sysml.parser.DataExpression;
 
@@ -44,14 +43,13 @@ public class RewriteRemoveReadAfterWrite extends HopRewriteRule
 	@Override
 	@SuppressWarnings("unchecked")
 	public ArrayList<Hop> rewriteHopDAGs(ArrayList<Hop> roots, ProgramRewriteStatus state)
-		throws HopsException
 	{
 		if( roots == null )
 			return null;
 		
 		//collect all persistent reads and writes
-		HashMap<String,Hop> reads = new HashMap<String,Hop>();
-		HashMap<String,Hop> writes = new HashMap<String,Hop>();
+		HashMap<String,Hop> reads = new HashMap<>();
+		HashMap<String,Hop> writes = new HashMap<>();
 		for( Hop h : roots ) 
 			collectPersistentReadWriteOps( h, writes, reads );
 		
@@ -69,11 +67,8 @@ public class RewriteRemoveReadAfterWrite extends HopRewriteRule
 				//rewire read consumers to write input
 				Hop input = writes.get(rfname).getInput().get(0);
 				ArrayList<Hop> parents = (ArrayList<Hop>) rhop.getParent().clone();
-				for( Hop p : parents ) {
-					int pos = HopRewriteUtils.getChildReferencePos(p, rhop);
-					HopRewriteUtils.removeChildReferenceByPos(p, rhop, pos);
-					HopRewriteUtils.addChildReference(p, input, pos);
-				}
+				for( Hop p : parents )
+					HopRewriteUtils.replaceChildReference(p, rhop, input);
 			}
 		}
 		
@@ -81,18 +76,13 @@ public class RewriteRemoveReadAfterWrite extends HopRewriteRule
 	}
 
 	@Override
-	public Hop rewriteHopDAG(Hop root, ProgramRewriteStatus state) 
-		throws HopsException
-	{
+	public Hop rewriteHopDAG(Hop root, ProgramRewriteStatus state) {
 		//do noting, read/write do not occur in predicates
-		
 		return root;
 	}
 
-	private void collectPersistentReadWriteOps(Hop hop, HashMap<String,Hop> pWrites, HashMap<String,Hop> pReads) 
-		throws HopsException 
-	{
-		if( hop.getVisited() == Hop.VisitStatus.DONE )
+	private void collectPersistentReadWriteOps(Hop hop, HashMap<String,Hop> pWrites, HashMap<String,Hop> pReads) {
+		if( hop.isVisited() )
 			return;
 		
 		//process childs
@@ -114,6 +104,6 @@ public class RewriteRemoveReadAfterWrite extends HopRewriteRule
 			}
 		}
 		
-		hop.setVisited(Hop.VisitStatus.DONE);
+		hop.setVisited();
 	}
 }

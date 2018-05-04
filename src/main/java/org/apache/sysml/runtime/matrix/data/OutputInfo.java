@@ -21,6 +21,7 @@
 package org.apache.sysml.runtime.matrix.data;
 
 import java.io.Serializable;
+import java.util.Arrays;
 
 import org.apache.hadoop.io.DoubleWritable;
 import org.apache.hadoop.io.IntWritable;
@@ -36,12 +37,9 @@ import org.apache.sysml.runtime.DMLRuntimeException;
 import org.apache.sysml.runtime.matrix.mapred.CSVWriteReducer.RowBlockForTextOutput;
 import org.apache.sysml.runtime.matrix.sort.CompactOutputFormat;
 
-
-
 @SuppressWarnings("rawtypes")
 public class OutputInfo implements Serializable 
 {
-
 	private static final long serialVersionUID = -3115943514779675817L;
 
 	public Class<? extends OutputFormat> outputFormatClass;
@@ -73,7 +71,7 @@ public class OutputInfo implements Serializable
 	public static final OutputInfo CSVOutputInfo=new OutputInfo(UnPaddedOutputFormat.class, 
 			NullWritable.class, RowBlockForTextOutput.class);
 
-	public static InputInfo getMatchingInputInfo(OutputInfo oi) throws DMLRuntimeException {
+	public static InputInfo getMatchingInputInfo(OutputInfo oi) {
 		if ( oi == OutputInfo.BinaryBlockOutputInfo )
 			return InputInfo.BinaryBlockInputInfo;
 		else if ( oi == OutputInfo.MatrixMarketOutputInfo )
@@ -118,9 +116,7 @@ public class OutputInfo implements Serializable
 		return null;
 	}
 	
-	public static String outputInfoToString (OutputInfo oi) 
-		throws DMLRuntimeException
-	{
+	public static String outputInfoToString (OutputInfo oi) {
 		if ( oi == TextCellOutputInfo )
 			return "textcell";
 		else if ( oi == MatrixMarketOutputInfo)
@@ -140,12 +136,7 @@ public class OutputInfo implements Serializable
 		else
 			throw new DMLRuntimeException("Unrecognized outputInfo: " + oi);
 	}
-	
-	/**
-	 * 
-	 * @param oinfo
-	 * @return
-	 */
+
 	public static String outputInfoToStringExternal(OutputInfo oinfo) 
 	{
 		if( oinfo == OutputInfo.TextCellOutputInfo )
@@ -159,6 +150,15 @@ public class OutputInfo implements Serializable
 			return DataExpression.FORMAT_TYPE_VALUE_BINARY;
 		else
 			return "specialized";
+	}
+	
+	@Override 
+	public int hashCode() {
+		return Arrays.hashCode(new int[] {
+			outputFormatClass.hashCode(),
+			outputKeyClass.hashCode(),
+			outputValueClass.hashCode()
+		});
 	}
 	
 	@Override

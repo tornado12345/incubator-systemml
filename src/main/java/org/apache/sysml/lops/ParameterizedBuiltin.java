@@ -22,13 +22,11 @@ package org.apache.sysml.lops;
 import java.util.HashMap;
 import java.util.Map.Entry;
 
-import org.apache.sysml.hops.HopsException;
 import org.apache.sysml.lops.LopProperties.ExecLocation;
 import org.apache.sysml.lops.LopProperties.ExecType;
 import org.apache.sysml.lops.compile.JobType;
 import org.apache.sysml.parser.Expression.DataType;
 import org.apache.sysml.parser.Expression.ValueType;
-import org.apache.sysml.parser.ParameterizedBuiltinFunctionExpression;
 
 
 /**
@@ -37,51 +35,24 @@ import org.apache.sysml.parser.ParameterizedBuiltinFunctionExpression;
  */
 public class ParameterizedBuiltin extends Lop 
 {
-	
 	public enum OperationTypes { 
-		INVALID, CDF, INVCDF, RMEMPTY, REPLACE, REXPAND, 
-		PNORM, QNORM, PT, QT, PF, QF, PCHISQ, QCHISQ, PEXP, QEXP,
-		TRANSFORM, TRANSFORMAPPLY, TRANSFORMDECODE, TRANSFORMMETA,
+		CDF, INVCDF, RMEMPTY, REPLACE, REXPAND, LOWER_TRI, UPPER_TRI,
+		TRANSFORMAPPLY, TRANSFORMDECODE, TRANSFORMCOLMAP, TRANSFORMMETA,
 		TOSTRING
-	};
+	}
 	
 	private OperationTypes _operation;
 	private HashMap<String, Lop> _inputParams;
 	private boolean _bRmEmptyBC;
 
-	/**
-	 * Creates a new builtin function LOP.
-	 * 
-	 * @param paramLops map of parameter lops
-	 * @param op operation type
-	 * @param dt data type
-	 * @param vt value type
-	 */
-	public ParameterizedBuiltin(HashMap<String, Lop> paramLops, OperationTypes op, DataType dt, ValueType vt) 
-	{
-		super(Lop.Type.ParameterizedBuiltin, dt, vt);
-		_operation = op;
-		
-		for (Lop lop : paramLops.values()) {
-			this.addInput(lop);
-			lop.addOutput(this);
-		}
-		
-		_inputParams = paramLops;
-		
-		/*
-		 * This lop is executed in control program. 
-		 */
-		boolean breaksAlignment = false;
-		boolean aligner = false;
-		boolean definesMRJob = false;
-		lps.addCompatibility(JobType.INVALID);
-		lps.setProperties(inputs, ExecType.CP, ExecLocation.ControlProgram, breaksAlignment, aligner, definesMRJob);
+	//cp-specific parameters
+	private int _numThreads = 1;
+	
+	public ParameterizedBuiltin(HashMap<String, Lop> paramLops, OperationTypes op, DataType dt, ValueType vt, ExecType et) {
+		this(paramLops, op, dt, vt, et, 1);
 	}
 	
-	public ParameterizedBuiltin(HashMap<String, Lop> paramLops, OperationTypes op, DataType dt, ValueType vt, ExecType et) 
-		throws HopsException 
-	{
+	public ParameterizedBuiltin(HashMap<String, Lop> paramLops, OperationTypes op, DataType dt, ValueType vt, ExecType et, int k) {
 		super(Lop.Type.ParameterizedBuiltin, dt, vt);
 		_operation = op;
 		
@@ -91,6 +62,7 @@ public class ParameterizedBuiltin extends Lop
 		}
 		
 		_inputParams = paramLops;
+		_numThreads = k;
 		
 		boolean breaksAlignment = false;
 		boolean aligner = false;
@@ -120,11 +92,6 @@ public class ParameterizedBuiltin extends Lop
 			lps.addCompatibility(JobType.REBLOCK);
 			breaksAlignment=true;
 		}
-		else if ( _operation == OperationTypes.TRANSFORM && et == ExecType.MR ) {
-			definesMRJob = true;
-			eloc = ExecLocation.MapAndReduce;
-			lps.addCompatibility(JobType.TRANSFORM);
-		}
 		else //executed in CP / CP_FILE / SPARK
 		{
 			eloc = ExecLocation.ControlProgram;
@@ -133,9 +100,7 @@ public class ParameterizedBuiltin extends Lop
 		lps.setProperties(inputs, et, eloc, breaksAlignment, aligner, definesMRJob);
 	}
 
-	public ParameterizedBuiltin(HashMap<String, Lop> paramLops, OperationTypes op, DataType dt, ValueType vt, ExecType et, boolean bRmEmptyBC) 
-			throws HopsException 
-	{
+	public ParameterizedBuiltin(HashMap<String, Lop> paramLops, OperationTypes op, DataType dt, ValueType vt, ExecType et, boolean bRmEmptyBC) {
 		this(paramLops, op, dt, vt, et);
 		_bRmEmptyBC = bRmEmptyBC;
 	}
@@ -157,8 +122,7 @@ public class ParameterizedBuiltin extends Lop
 	}
 	
 	@Override
-	public String getInstructions(String output) 
-		throws LopsException 
+	public String getInstructions(String output)
 	{
 		StringBuilder sb = new StringBuilder();
 		sb.append( getExecType() );
@@ -212,6 +176,20 @@ public class ParameterizedBuiltin extends Lop
 				break;
 			}
 			
+			case LOWER_TRI: {
+				sb.append( "lowertri" );
+				sb.append( OPERAND_DELIMITOR );
+				sb.append(compileGenericParamMap(_inputParams));
+				break;
+			}
+			
+			case UPPER_TRI: {
+				sb.append( "uppertri" );
+				sb.append( OPERAND_DELIMITOR );
+				sb.append(compileGenericParamMap(_inputParams));
+				break;
+			}
+			
 			case REXPAND:
 				sb.append("rexpand");
 				sb.append(OPERAND_DELIMITOR);
@@ -233,11 +211,11 @@ public class ParameterizedBuiltin extends Lop
 				}
 				
 				break;
-				
-			case TRANSFORM: 
+			
 			case TRANSFORMAPPLY:
 			case TRANSFORMDECODE:
-			case TRANSFORMMETA:	{
+			case TRANSFORMCOLMAP:
+			case TRANSFORMMETA: {
 				sb.append(_operation.toString().toLowerCase()); //opcode
 				sb.append(OPERAND_DELIMITOR);
 				sb.append(compileGenericParamMap(_inputParams));
@@ -260,15 +238,21 @@ public class ParameterizedBuiltin extends Lop
 			sb.append( _bRmEmptyBC );
 			sb.append(OPERAND_DELIMITOR);
 		}
-
-		sb.append(this.prepOutputOperand(output));
+		
+		if( getExecType()==ExecType.CP && _operation == OperationTypes.REXPAND ) {
+			sb.append( "k" );
+			sb.append( Lop.NAME_VALUE_SEPARATOR );
+			sb.append( _numThreads );	
+			sb.append(OPERAND_DELIMITOR);
+		}
+		
+		sb.append(prepOutputOperand(output));
 		
 		return sb.toString();
 	}
 
 	@Override 
-	public String getInstructions(int input_index1, int input_index2, int input_index3, int output_index) 
-		throws LopsException
+	public String getInstructions(int input_index1, int input_index2, int input_index3, int output_index)
 	{
 		StringBuilder sb = new StringBuilder();
 		sb.append( getExecType() );
@@ -309,164 +293,63 @@ public class ParameterizedBuiltin extends Lop
 	}
 
 	@Override 
-	public String getInstructions(int input_index1, int input_index2, int input_index3, int input_index4, int output_index) 
-		throws LopsException
+	public String getInstructions(int input_index1, int input_index2, int input_index3, int input_index4, int input_index5, int output_index)
 	{
+		int[] tmp = new int[]{input_index1, input_index2,
+			input_index3, input_index4, input_index5};
+		
 		StringBuilder sb = new StringBuilder();
 		sb.append( getExecType() );
 		sb.append( Lop.OPERAND_DELIMITOR );
-
-		switch(_operation) 
-		{
-			case RMEMPTY:
-			{
+		
+		switch(_operation) {
+			case RMEMPTY: {
 				sb.append("rmempty");
-				
 				sb.append(OPERAND_DELIMITOR);
-				
 				Lop iLop1 = _inputParams.get("target");
-				int pos1 = getInputs().indexOf(iLop1);
-				int index1 = (pos1==0)? input_index1 : (pos1==1)? input_index2 : (pos1==2)? input_index3 : input_index4;
-				sb.append(prepInputOperand(index1));
-				
+				sb.append(prepInputOperand(tmp[getInputs().indexOf(iLop1)]));
 				sb.append(OPERAND_DELIMITOR);
-				
 				Lop iLop2 = _inputParams.get("offset");
-				int pos2 = getInputs().indexOf(iLop2);
-				int index2 = (pos2==0)? input_index1 : (pos2==1)? input_index2 : (pos1==2)? input_index3 : input_index4;
-				sb.append(prepInputOperand(index2));
-				
+				sb.append(prepInputOperand(tmp[getInputs().indexOf(iLop2)]));
 				sb.append(OPERAND_DELIMITOR);
-				
 				Lop iLop3 = _inputParams.get("maxdim");
 				sb.append( iLop3.prepScalarLabel() );
-				
 				sb.append(OPERAND_DELIMITOR);
-				
 				Lop iLop4 = _inputParams.get("margin");
 				sb.append( iLop4.prepScalarLabel() );
-				
-				sb.append( OPERAND_DELIMITOR );
-				
+				sb.append(OPERAND_DELIMITOR);
+				Lop iLop5 = _inputParams.get("empty.return");
+				sb.append( iLop5.prepScalarLabel() );
 				break;
 			}
-				
-			default:
-				throw new LopsException(this.printErrorLocation() + "In ParameterizedBuiltin Lop, Unknown operation: " + _operation);
-		}
-		
-		sb.append( prepOutputOperand(output_index));
-		
-		return sb.toString();
-	}
-	
-	@Override 
-	public String getInstructions(int input_index1, int input_index2, int input_index3, int input_index4, int input_index5, int output_index) 
-		throws LopsException
-	{
-		StringBuilder sb = new StringBuilder();
-		sb.append( getExecType() );
-		sb.append( Lop.OPERAND_DELIMITOR );
-
-		switch(_operation) 
-		{
-			case REXPAND:
-			{
+			case REXPAND: {
 				sb.append("rexpand");
-				
 				sb.append(OPERAND_DELIMITOR);
-				
 				Lop iLop1 = _inputParams.get("target");
-				int pos1 = getInputs().indexOf(iLop1);
-				int index1 = (pos1==0)? input_index1 : (pos1==1)? input_index2 : (pos1==2)? input_index3 : (pos1==3)? input_index4 : input_index5;
-				sb.append(prepInputOperand(index1));
-				
+				sb.append(prepInputOperand(tmp[getInputs().indexOf(iLop1)]));
 				sb.append(OPERAND_DELIMITOR);
-				
 				Lop iLop2 = _inputParams.get("max");
 				sb.append( iLop2.prepScalarLabel() );
-				
 				sb.append(OPERAND_DELIMITOR);
-				
 				Lop iLop3 = _inputParams.get("dir");
 				sb.append( iLop3.prepScalarLabel() );
-				
 				sb.append(OPERAND_DELIMITOR);
-				
 				Lop iLop4 = _inputParams.get("cast");
 				sb.append( iLop4.prepScalarLabel() );
-				
 				sb.append( OPERAND_DELIMITOR );
-				
 				Lop iLop5 = _inputParams.get("ignore");
 				sb.append( iLop5.prepScalarLabel() );
-				
-				sb.append( OPERAND_DELIMITOR );
-				
 				break;
 			}
-				
 			default:
 				throw new LopsException(this.printErrorLocation() + "In ParameterizedBuiltin Lop, Unknown operation: " + _operation);
 		}
 		
+		sb.append( OPERAND_DELIMITOR );
 		sb.append( prepOutputOperand(output_index));
 		
 		return sb.toString();
 	}
-	
-	@Override 
-	public String getInstructions(int output_index) 
-		throws LopsException
-	{
-		StringBuilder sb = new StringBuilder();
-		sb.append( getExecType() );
-		sb.append( Lop.OPERAND_DELIMITOR );
-
-		if(_operation== OperationTypes.TRANSFORM) 
-		{
-			sb.append( "transform" );
-			sb.append( OPERAND_DELIMITOR );
-			
-			Lop iLop = _inputParams.get(ParameterizedBuiltinFunctionExpression.TF_FN_PARAM_DATA);
-			sb.append(iLop.prepInputOperand(getInputIndex("target")));
-			sb.append( OPERAND_DELIMITOR );
-			
-			Lop iLop2 = _inputParams.get(ParameterizedBuiltinFunctionExpression.TF_FN_PARAM_MTD);
-			sb.append(iLop2.prepScalarLabel());
-			sb.append( OPERAND_DELIMITOR );
-			
-			// apply transform
-			Lop iLop3a = _inputParams.get(ParameterizedBuiltinFunctionExpression.TF_FN_PARAM_APPLYMTD);
-			if ( iLop3a != null ) {
-				sb.append("applymtd=");
-				sb.append(iLop3a.prepScalarLabel());
-				sb.append( OPERAND_DELIMITOR );
-			}
-			
-			// transform specification (transform: mandatory, transformapply: optional)
-			Lop iLop3b = _inputParams.get(ParameterizedBuiltinFunctionExpression.TF_FN_PARAM_SPEC);
-			if ( iLop3b != null ) {
-				sb.append("spec=");
-				sb.append(iLop3b.prepScalarLabel());
-				sb.append( OPERAND_DELIMITOR );
-			}
-			
-			Lop iLop4 = _inputParams.get(ParameterizedBuiltinFunctionExpression.TF_FN_PARAM_OUTNAMES);
-			if( iLop4 != null ) {
-				sb.append("outnames=");
-				sb.append(iLop4.prepScalarLabel());
-				sb.append( OPERAND_DELIMITOR );
-			}
-			
-			sb.append( prepOutputOperand(output_index));
-		}
-		else
-			throw new LopsException(this.printErrorLocation() + "In ParameterizedBuiltin Lop, Unknown operation: " + _operation);
-	
-		return sb.toString();
-	}
-	
 
 	@Override
 	public String toString() {

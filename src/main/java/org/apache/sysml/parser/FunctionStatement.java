@@ -21,8 +21,6 @@ package org.apache.sysml.parser;
 
 import java.util.ArrayList;
 
-import org.apache.sysml.lops.Lop;
-
 
 public class FunctionStatement extends Statement
 {
@@ -32,16 +30,17 @@ public class FunctionStatement extends Statement
 	protected ArrayList <DataIdentifier> _inputParams;
 	protected ArrayList <DataIdentifier> _outputParams;
 	
-	public Statement rewriteStatement(String prefix) throws LanguageException{
+	@Override
+	public Statement rewriteStatement(String prefix) {
 		LOG.error(this.printErrorLocation() + "should not call rewriteStatement for FunctionStatement");
 		throw new LanguageException(this.printErrorLocation() + "should not call rewriteStatement for FunctionStatement");
 	}
 	
 	public FunctionStatement(){
-		 _body = new ArrayList<StatementBlock>();
+		 _body = new ArrayList<>();
 		 _name = null;
-		 _inputParams = new ArrayList<DataIdentifier>();
-		 _outputParams = new ArrayList<DataIdentifier>();
+		 _inputParams = new ArrayList<>();
+		 _outputParams = new ArrayList<>();
 	}
 	
 	public ArrayList<DataIdentifier> getInputParams(){
@@ -67,11 +66,7 @@ public class FunctionStatement extends Statement
 	public String getName(){
 		return _name;
 	}
-	
-	public void addStatementBlock(StatementBlock sb){
-		_body.add(sb);
-	}
-	
+
 	public ArrayList<StatementBlock> getBody(){
 		return _body;
 	}
@@ -90,6 +85,7 @@ public class FunctionStatement extends Statement
 		_body = StatementBlock.mergeStatementBlocks(_body);
 	}
 	
+	@Override
 	public String toString(){
 		StringBuilder sb = new StringBuilder();
 		sb.append(_name + " = ");
@@ -99,7 +95,6 @@ public class FunctionStatement extends Statement
 		for (int i=0; i<_inputParams.size(); i++){
 			DataIdentifier curr = _inputParams.get(i);
 			sb.append(curr.getName());
-			if (curr.getDefaultValue() != null) sb.append(" = " + curr.getDefaultValue());
 			if (i < _inputParams.size()-1) sb.append(", ");
 		}
 		sb.append(") return (");
@@ -117,15 +112,16 @@ public class FunctionStatement extends Statement
 		return sb.toString();
 	}
 
-	public void initializeforwardLV(VariableSet activeIn) throws LanguageException{
+	@Override
+	public void initializeforwardLV(VariableSet activeIn) {
 		LOG.error(this.printErrorLocation() + "should never call initializeforwardLV for FunctionStatement");
 		throw new LanguageException(this.printErrorLocation() + "should never call initializeforwardLV for FunctionStatement");
 	}
 	
-	public VariableSet initializebackwardLV(VariableSet lo) throws LanguageException{
+	@Override
+	public VariableSet initializebackwardLV(VariableSet lo) {
 		LOG.error(this.printErrorLocation() + "should never call initializeforwardLV for FunctionStatement");
 		throw new LanguageException(this.printErrorLocation() + "should never call initializeforwardLV for FunctionStatement");
-		
 	}
 	
 	@Override
@@ -138,19 +134,5 @@ public class FunctionStatement extends Statement
 	public VariableSet variablesUpdated() {
 		LOG.warn(this.printWarningLocation() + " -- should not call variablesRead from FunctionStatement ");
 		return new VariableSet();
-	}
-	
-	public static String[] createFunctionCallVariables( ArrayList<Lop> lops )
-	{
-		String[] ret = new String[lops.size()]; //vars in order
-		
-		for( int i=0; i<lops.size(); i++ )
-		{	
-			Lop llops = lops.get(i);
-			if( llops.getType()==Lop.Type.Data )
-				ret[i] = llops.getOutputParameters().getLabel(); 
-		}
-		
-		return ret;
 	}
 }
