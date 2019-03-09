@@ -25,7 +25,6 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 
-import org.apache.sysml.api.DMLScript;
 import org.apache.sysml.api.DMLScript.RUNTIME_PLATFORM;
 import org.apache.sysml.conf.ConfigurationManager;
 import org.apache.sysml.hops.AggBinaryOp;
@@ -75,7 +74,7 @@ public class RewriteSplitDagDataDependentOperators extends StatementBlockRewrite
 	public List<StatementBlock> rewriteStatementBlock(StatementBlock sb, ProgramRewriteStatus state)
 	{
 		//DAG splits not required for forced single node
-		if( DMLScript.rtplatform == RUNTIME_PLATFORM.SINGLE_NODE
+		if( ConfigurationManager.getExecutionMode() == RUNTIME_PLATFORM.SINGLE_NODE
 			|| !HopRewriteUtils.isLastLevelStatementBlock(sb) )
 			return Arrays.asList(sb);
 		
@@ -173,6 +172,7 @@ public class RewriteSplitDagDataDependentOperators extends StatementBlockRewrite
 					diVar.setValueType(c.getValueType());
 					sb1.liveOut().addVariable(varname, new DataIdentifier(diVar));
 					sb.liveIn().addVariable(varname, new DataIdentifier(diVar));
+					sb.variablesRead().addVariable(varname, new DataIdentifier(diVar));
 				}
 				
 				//ensure disjoint operators across DAGs (prevent replicated operations)
@@ -192,27 +192,23 @@ public class RewriteSplitDagDataDependentOperators extends StatementBlockRewrite
 				ret.add(sb); //statement block with remaining hops
 				sb.setSplitDag(true); //avoid later merge by other rewrites
 			}
-			catch(Exception ex)
-			{
+			catch(Exception ex) {
 				throw new HopsException("Failed to split hops dag for data dependent operators with unknown size.", ex);
 			}
 			
 			LOG.debug("Applied splitDagDataDependentOperators (lines "+sb.getBeginLine()+"-"+sb.getEndLine()+").");
 		}
 		//keep original hop dag
-		else
-		{
+		else {
 			ret.add(sb);
 		}
 		
 		return ret;
 	}
 	
-	private void collectDataDependentOperators( ArrayList<Hop> roots, ArrayList<Hop> cand )
-	{
+	private void collectDataDependentOperators( ArrayList<Hop> roots, ArrayList<Hop> cand ) {
 		if( roots == null )
 			return;
-		
 		Hop.resetVisitStatus(roots);
 		for( Hop root : roots )
 			rCollectDataDependentOperators(root, cand);

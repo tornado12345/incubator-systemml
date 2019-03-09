@@ -29,10 +29,12 @@ import java.util.List;
 import java.util.Map.Entry;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.DoubleAdder;
 import java.util.concurrent.atomic.LongAdder;
 
 import org.apache.sysml.api.DMLScript;
 import org.apache.sysml.conf.ConfigurationManager;
+import org.apache.sysml.conf.DMLConfig;
 import org.apache.sysml.hops.OptimizerUtils;
 import org.apache.sysml.runtime.controlprogram.caching.CacheStatistics;
 import org.apache.sysml.runtime.controlprogram.context.SparkExecutionContext;
@@ -68,6 +70,15 @@ public class Statistics
 	// number of compiled/executed SP instructions
 	private static final LongAdder numExecutedSPInst = new LongAdder();
 	private static final LongAdder numCompiledSPInst = new LongAdder();
+
+	// number and size of pinned objects in scope
+	private static final DoubleAdder sizeofPinnedObjects = new DoubleAdder();
+	private static long maxNumPinnedObjects = 0;
+	private static double maxSizeofPinnedObjects = 0;
+
+	// Maps to keep track of CP memory objects for JMLC (e.g. in memory matrices and frames)
+	private static final ConcurrentHashMap<String,Double> _cpMemObjs = new ConcurrentHashMap<>();
+	private static final ConcurrentHashMap<Integer,Double> _currCPMemObjs = new ConcurrentHashMap<>();
 
 	//JVM stats (low frequency updates)
 	private static long jitCompileTime = 0; //in milli sec
@@ -106,6 +117,16 @@ public class Statistics
 	private static final LongAdder sparkCollectCount = new LongAdder();
 	private static final LongAdder sparkBroadcast = new LongAdder();
 	private static final LongAdder sparkBroadcastCount = new LongAdder();
+
+	// Paramserv function stats (time is in milli sec)
+	private static final LongAdder psNumWorkers = new LongAdder();
+	private static final LongAdder psSetupTime = new LongAdder();
+	private static final LongAdder psGradientComputeTime = new LongAdder();
+	private static final LongAdder psAggregationTime = new LongAdder();
+	private static final LongAdder psLocalModelUpdateTime = new LongAdder();
+	private static final LongAdder psModelBroadcastTime = new LongAdder();
+	private static final LongAdder psBatchIndexTime = new LongAdder();
+	private static final LongAdder psRpcRequestTime = new LongAdder();
 
 	//PARFOR optimization stats (low frequency updates)
 	private static long parforOptTime = 0; //in milli sec
@@ -221,7 +242,7 @@ public class Statistics
 		numExecutedSPInst.reset();
 		numExecutedMRJobs.reset();
 		
-		if( DMLScript.USE_ACCELERATOR )
+		if( ConfigurationManager.isGPU() )
 			GPUStatistics.setNoOfExecutedGPUInst(0);
 	}
 	
@@ -380,12 +401,12 @@ public class Statistics
 	}
 
 	public static void startCompileTimer() {
-		if( DMLScript.STATISTICS )
+		if( ConfigurationManager.isStatistics() )
 			compileStartTime = System.nanoTime();
 	}
 
 	public static void stopCompileTimer() {
-		if( DMLScript.STATISTICS )
+		if( ConfigurationManager.isStatistics() )
 			compileEndTime = System.nanoTime();
 	}
 
@@ -516,8 +537,43 @@ public class Statistics
 	public static void incSparkBroadcastCount(long c) {
 		sparkBroadcastCount.add(c);
 	}
-	
-	
+
+	public static void incWorkerNumber() {
+		psNumWorkers.increment();
+	}
+
+	public static void incWorkerNumber(long n) {
+		psNumWorkers.add(n);
+	}
+
+	public static void accPSSetupTime(long t) {
+		psSetupTime.add(t);
+	}
+
+	public static void accPSGradientComputeTime(long t) {
+		psGradientComputeTime.add(t);
+	}
+
+	public static void accPSAggregationTime(long t) {
+		psAggregationTime.add(t);
+	}
+
+	public static void accPSLocalModelUpdateTime(long t) {
+		psLocalModelUpdateTime.add(t);
+	}
+
+	public static void accPSModelBroadcastTime(long t) {
+		psModelBroadcastTime.add(t);
+	}
+
+	public static void accPSBatchIndexingTime(long t) {
+		psBatchIndexTime.add(t);
+	}
+
+	public static void accPSRpcRequestTime(long t) {
+		psRpcRequestTime.add(t);
+	}
+
 	public static String getCPHeavyHitterCode( Instruction inst )
 	{
 		String opcode = null;
@@ -545,6 +601,49 @@ public class Statistics
 		}
 		
 		return opcode;
+	}
+
+	public static void addCPMemObject(int hash, double sizeof) {
+		double sizePrev = _currCPMemObjs.getOrDefault(hash, 0.0);
+		_currCPMemObjs.put(hash, sizeof);
+		sizeofPinnedObjects.add(sizeof - sizePrev);
+		maintainMemMaxStats();
+	}
+
+	/**
+	 * Helper method to keep track of the maximum number of pinned
+	 * objects and total size yet seen
+	 */
+	private static void maintainMemMaxStats() {
+		if (maxSizeofPinnedObjects < sizeofPinnedObjects.doubleValue())
+			maxSizeofPinnedObjects = sizeofPinnedObjects.doubleValue();
+		if (maxNumPinnedObjects < _currCPMemObjs.size())
+			maxNumPinnedObjects = _currCPMemObjs.size();
+	}
+
+	/**
+	 * Helper method to remove a memory object which has become unpinned
+	 * @param hash hash of data object
+	 */
+	public static void removeCPMemObject( int hash ) {
+		if (_currCPMemObjs.containsKey(hash)) {
+			double sizeof = _currCPMemObjs.remove(hash);
+			sizeofPinnedObjects.add(-1.0 * sizeof);
+		}
+	}
+
+	/**
+	 * Helper method which keeps track of the heaviest weight objects (by total memory used)
+	 * throughout execution of the program. Only reported if JMLC memory statistics are enabled and
+	 * finegrained statistics are enabled. We only keep track of the -largest- instance of data associated with a
+	 * particular string identifier so no need to worry about multiple bindings to the same name
+	 * @param name String denoting the variables name
+	 * @param sizeof objects size (estimated bytes)
+	 */
+	public static void maintainCPHeavyHittersMem( String name, double sizeof ) {
+		double prevSize = _cpMemObjs.getOrDefault(name, 0.0);
+		if (prevSize < sizeof)
+			_cpMemObjs.put(name, sizeof);
 	}
 
 	/**
@@ -624,11 +723,12 @@ public class Statistics
 
 			maxCountLen = Math.max(maxCountLen, String.valueOf(hh.getValue().count.longValue()).length());
 		}
-		maxInstLen = Math.min(maxInstLen, DMLScript.STATISTICS_MAX_WRAP_LEN);
+		int statsMaxWrapLength = ConfigurationManager.getDMLConfig().getIntValue(DMLConfig.STATS_MAX_WRAP_LEN);
+		maxInstLen = Math.min(maxInstLen, statsMaxWrapLength);
 		sb.append(String.format(
 				" %" + maxNumLen + "s  %-" + maxInstLen + "s  %" + maxTimeSLen + "s  %" + maxCountLen + "s", numCol,
 				instCol, timeSCol, countCol));
-		if (DMLScript.FINEGRAINED_STATISTICS) {
+		if (ConfigurationManager.isFinegrainedStatistics()) {
 			sb.append("  ");
 			sb.append(gpuCol);
 		}
@@ -645,15 +745,15 @@ public class Statistics
 			int numLines = wrappedInstruction.length;
 			String [] miscTimers = null;
 			
-			if (DMLScript.FINEGRAINED_STATISTICS) {
-				miscTimers = wrap(GPUStatistics.getStringForCPMiscTimesPerInstruction(instruction), DMLScript.STATISTICS_MAX_WRAP_LEN);
+			if (ConfigurationManager.isFinegrainedStatistics()) {
+				miscTimers = wrap(GPUStatistics.getStringForCPMiscTimesPerInstruction(instruction), statsMaxWrapLength);
 				numLines = Math.max(numLines, miscTimers.length);
 			}
 			
-			String miscFormatString = (DMLScript.FINEGRAINED_STATISTICS) ? " %" + DMLScript.STATISTICS_MAX_WRAP_LEN + "s" : "%s";
+			String miscFormatString = (ConfigurationManager.isFinegrainedStatistics()) ? " %" + statsMaxWrapLength + "s" : "%s";
 			for(int wrapIter = 0; wrapIter < numLines; wrapIter++) {
 				String instStr = (wrapIter < wrappedInstruction.length) ? wrappedInstruction[wrapIter] : "";
-				String miscTimerStr = ( (DMLScript.FINEGRAINED_STATISTICS) && wrapIter < miscTimers.length) ? miscTimers[wrapIter] : ""; 
+				String miscTimerStr = ( (ConfigurationManager.isFinegrainedStatistics()) && wrapIter < miscTimers.length) ? miscTimers[wrapIter] : ""; 
 				if(wrapIter == 0) {
 					// Display instruction count
 					sb.append(String.format(
@@ -670,6 +770,56 @@ public class Statistics
 		}
 
 		return sb.toString();
+	}
+
+	@SuppressWarnings("unchecked")
+	public static String getCPHeavyHittersMem(int num) {
+		int n = _cpMemObjs.size();
+		if ((n <= 0) || (num <= 0))
+			return "-";
+
+		Entry<String,Double>[] entries = _cpMemObjs.entrySet().toArray(new Entry[_cpMemObjs.size()]);
+		Arrays.sort(entries, new Comparator<Entry<String, Double>>() {
+			@Override
+			public int compare(Entry<String, Double> a, Entry<String, Double> b) {
+				return b.getValue().compareTo(a.getValue());
+			}
+		});
+
+		int numHittersToDisplay = Math.min(num, n);
+		int numPadLen = String.format("%d", numHittersToDisplay).length();
+		int maxNameLength = 0;
+		for (String name : _cpMemObjs.keySet())
+			maxNameLength = Math.max(name.length(), maxNameLength);
+
+		maxNameLength = Math.max(maxNameLength, "Object".length());
+		StringBuilder res = new StringBuilder();
+		res.append(String.format("  %-" + numPadLen + "s" + "  %-" + maxNameLength + "s" + "  %s\n",
+				"#", "Object", "Memory"));
+
+		for (int ix = 1; ix <= numHittersToDisplay; ix++) {
+			String objName = entries[ix-1].getKey();
+			String objSize = byteCountToDisplaySize(entries[ix-1].getValue());
+			String numStr = String.format("  %-" + numPadLen + "s", ix);
+			String objNameStr = String.format("  %-" + maxNameLength + "s ", objName);
+			res.append(numStr + objNameStr + String.format("  %s", objSize) + "\n");
+		}
+
+		return res.toString();
+	}
+
+	/**
+	 * Helper method to create a nice representation of byte counts - this was copied from
+	 * GPUMemoryManager and should eventually be refactored probably...
+	 */
+	private static String byteCountToDisplaySize(double numBytes) {
+		if (numBytes < 1024) {
+			return numBytes + " bytes";
+		}
+		else {
+			int exp = (int) (Math.log(numBytes) / 6.931471805599453);
+			return String.format("%.3f %sB", ((double)numBytes) / Math.pow(1024, exp), "KMGTP".charAt(exp-1));
+		}
 	}
 
 	/**
@@ -750,12 +900,16 @@ public class Statistics
 		return parforMergeTime;
 	}
 
+	public static long getNumPinnedObjects() { return maxNumPinnedObjects; }
+
+	public static double getSizeofPinnedObjects() { return maxSizeofPinnedObjects; }
+
 	/**
 	 * Returns statistics of the DML program that was recently completed as a string
 	 * @return statistics as a string
 	 */
 	public static String display() {
-		return display(DMLScript.STATISTICS_COUNT);
+		return display(ConfigurationManager.getDMLOptions().getStatisticsMaxHeavyHitters());
 	}
 	
 	
@@ -777,62 +931,64 @@ public class Statistics
 	public static String display(int maxHeavyHitters)
 	{
 		StringBuilder sb = new StringBuilder();
-		
+
 		sb.append("SystemML Statistics:\n");
-		if( DMLScript.STATISTICS ) {
+		if( ConfigurationManager.isStatistics() ) {
 			sb.append("Total elapsed time:\t\t" + String.format("%.3f", (getCompileTime()+getRunTime())*1e-9) + " sec.\n"); // nanoSec --> sec
 			sb.append("Total compilation time:\t\t" + String.format("%.3f", getCompileTime()*1e-9) + " sec.\n"); // nanoSec --> sec
 		}
 		sb.append("Total execution time:\t\t" + String.format("%.3f", getRunTime()*1e-9) + " sec.\n"); // nanoSec --> sec
 		if( OptimizerUtils.isSparkExecutionMode() ) {
-			if( DMLScript.STATISTICS ) //moved into stats on Shiv's request
+			if( ConfigurationManager.isStatistics() ) //moved into stats on Shiv's request
 				sb.append("Number of compiled Spark inst:\t" + getNoOfCompiledSPInst() + ".\n");
 			sb.append("Number of executed Spark inst:\t" + getNoOfExecutedSPInst() + ".\n");
 		}
 		else {
-			if( DMLScript.STATISTICS ) //moved into stats on Shiv's request
+			if( ConfigurationManager.isStatistics() ) //moved into stats on Shiv's request
 				sb.append("Number of compiled MR Jobs:\t" + getNoOfCompiledMRJobs() + ".\n");
-			sb.append("Number of executed MR Jobs:\t" + getNoOfExecutedMRJobs() + ".\n");	
+			sb.append("Number of executed MR Jobs:\t" + getNoOfExecutedMRJobs() + ".\n");
 		}
 
-		if( DMLScript.USE_ACCELERATOR && DMLScript.STATISTICS)
+		if( ConfigurationManager.isGPU() && ConfigurationManager.isStatistics())
 			sb.append(GPUStatistics.getStringForCudaTimers());
-		
+
 		//show extended caching/compilation statistics
-		if( DMLScript.STATISTICS ) 
+		if( ConfigurationManager.isStatistics() )
 		{
 			if(NativeHelper.CURRENT_NATIVE_BLAS_STATE == NativeHelper.NativeBlasState.SUCCESSFULLY_LOADED_NATIVE_BLAS_AND_IN_USE) {
-				String blas = NativeHelper.getCurrentBLAS(); 
-				sb.append("Native " + blas + " calls (dense mult/conv/bwdF/bwdD):\t" + numNativeLibMatrixMultCalls.longValue()  + "/" + 
+				String blas = NativeHelper.getCurrentBLAS();
+				sb.append("Native " + blas + " calls (dense mult/conv/bwdF/bwdD):\t" + numNativeLibMatrixMultCalls.longValue()  + "/" +
 						numNativeConv2dCalls.longValue() + "/" + numNativeConv2dBwdFilterCalls.longValue()
 						+ "/" + numNativeConv2dBwdDataCalls.longValue() + ".\n");
-				sb.append("Native " + blas + " calls (sparse conv/bwdF/bwdD):\t" +  
+				sb.append("Native " + blas + " calls (sparse conv/bwdF/bwdD):\t" +
 						numNativeSparseConv2dCalls.longValue() + "/" + numNativeSparseConv2dBwdFilterCalls.longValue()
 						+ "/" + numNativeSparseConv2dBwdDataCalls.longValue() + ".\n");
 				sb.append("Native " + blas + " times (dense mult/conv/bwdF/bwdD):\t" + String.format("%.3f", nativeLibMatrixMultTime*1e-9) + "/" +
-						String.format("%.3f", nativeConv2dTime*1e-9) + "/" + String.format("%.3f", nativeConv2dBwdFilterTime*1e-9) + "/" + 
+						String.format("%.3f", nativeConv2dTime*1e-9) + "/" + String.format("%.3f", nativeConv2dBwdFilterTime*1e-9) + "/" +
 						String.format("%.3f", nativeConv2dBwdDataTime*1e-9) + ".\n");
 			}
 			if(recomputeNNZTime != 0 || examSparsityTime != 0 || allocateDoubleArrTime != 0) {
 				sb.append("MatrixBlock times (recomputeNNZ/examSparsity/allocateDoubleArr):\t" + String.format("%.3f", recomputeNNZTime*1e-9) + "/" +
-					String.format("%.3f", examSparsityTime*1e-9) + "/" + String.format("%.3f", allocateDoubleArrTime*1e-9)  + ".\n");
+						String.format("%.3f", examSparsityTime*1e-9) + "/" + String.format("%.3f", allocateDoubleArrTime*1e-9)  + ".\n");
 			}
-			
+
 			sb.append("Cache hits (Mem, WB, FS, HDFS):\t" + CacheStatistics.displayHits() + ".\n");
 			sb.append("Cache writes (WB, FS, HDFS):\t" + CacheStatistics.displayWrites() + ".\n");
 			sb.append("Cache times (ACQr/m, RLS, EXP):\t" + CacheStatistics.displayTime() + " sec.\n");
+			if (ConfigurationManager.isJMLCMemStatistics())
+				sb.append("Max size of live objects:\t" + byteCountToDisplaySize(getSizeofPinnedObjects()) + " ("  + getNumPinnedObjects() + " total objects)" + "\n");
 			sb.append("HOP DAGs recompiled (PRED, SB):\t" + getHopRecompiledPredDAGs() + "/" + getHopRecompiledSBDAGs() + ".\n");
 			sb.append("HOP DAGs recompile time:\t" + String.format("%.3f", ((double)getHopRecompileTime())/1000000000) + " sec.\n");
 			if( getFunRecompiles()>0 ) {
 				sb.append("Functions recompiled:\t\t" + getFunRecompiles() + ".\n");
-				sb.append("Functions recompile time:\t" + String.format("%.3f", ((double)getFunRecompileTime())/1000000000) + " sec.\n");	
+				sb.append("Functions recompile time:\t" + String.format("%.3f", ((double)getFunRecompileTime())/1000000000) + " sec.\n");
 			}
 			if( ConfigurationManager.isCodegenEnabled() ) {
 				sb.append("Codegen compile (DAG,CP,JC):\t" + getCodegenDAGCompile() + "/"
 						+ getCodegenCPlanCompile() + "/" + getCodegenClassCompile() + ".\n");
 				sb.append("Codegen enum (ALLt/p,EVALt/p):\t" + getCodegenEnumAll() + "/" +
 						getCodegenEnumAllP() + "/" + getCodegenEnumEval() + "/" + getCodegenEnumEvalP() + ".\n");
-				sb.append("Codegen compile times (DAG,JC):\t" + String.format("%.3f", (double)getCodegenCompileTime()/1000000000) + "/" + 
+				sb.append("Codegen compile times (DAG,JC):\t" + String.format("%.3f", (double)getCodegenCompileTime()/1000000000) + "/" +
 						String.format("%.3f", (double)getCodegenClassCompileTime()/1000000000)  + " sec.\n");
 				sb.append("Codegen enum plan cache hits:\t" + getCodegenPlanCacheHits() + "/" + getCodegenPlanCacheTotal() + ".\n");
 				sb.append("Codegen op plan cache hits:\t" + getCodegenOpCacheHits() + "/" + getCodegenOpCacheTotal() + ".\n");
@@ -842,19 +998,29 @@ public class Statistics
 				sb.append("Spark ctx create time "+lazy+":\t"+
 						String.format("%.3f", ((double)sparkCtxCreateTime)*1e-9)  + " sec.\n" ); // nanoSec --> sec
 				sb.append("Spark trans counts (par,bc,col):" +
-						String.format("%d/%d/%d.\n", sparkParallelizeCount.longValue(), 
+						String.format("%d/%d/%d.\n", sparkParallelizeCount.longValue(),
 								sparkBroadcastCount.longValue(), sparkCollectCount.longValue()));
 				sb.append("Spark trans times (par,bc,col):\t" +
-						String.format("%.3f/%.3f/%.3f secs.\n", 
-								 ((double)sparkParallelize.longValue())*1e-9,
-								 ((double)sparkBroadcast.longValue())*1e-9,
-								 ((double)sparkCollect.longValue())*1e-9));
+						String.format("%.3f/%.3f/%.3f secs.\n",
+								((double)sparkParallelize.longValue())*1e-9,
+								((double)sparkBroadcast.longValue())*1e-9,
+								((double)sparkCollect.longValue())*1e-9));
+			}
+			if (psNumWorkers.longValue() > 0) {
+				sb.append(String.format("Paramserv total num workers:\t%d.\n", psNumWorkers.longValue()));
+				sb.append(String.format("Paramserv setup time:\t\t%.3f secs.\n", psSetupTime.doubleValue() / 1000));
+				sb.append(String.format("Paramserv grad compute time:\t%.3f secs.\n", psGradientComputeTime.doubleValue() / 1000));
+				sb.append(String.format("Paramserv model update time:\t%.3f/%.3f secs.\n",
+						psLocalModelUpdateTime.doubleValue() / 1000, psAggregationTime.doubleValue() / 1000));
+				sb.append(String.format("Paramserv model broadcast time:\t%.3f secs.\n", psModelBroadcastTime.doubleValue() / 1000));
+				sb.append(String.format("Paramserv batch slice time:\t%.3f secs.\n", psBatchIndexTime.doubleValue() / 1000));
+				sb.append(String.format("Paramserv RPC request time:\t%.3f secs.\n", psRpcRequestTime.doubleValue() / 1000));
 			}
 			if( parforOptCount>0 ){
 				sb.append("ParFor loops optimized:\t\t" + getParforOptCount() + ".\n");
-				sb.append("ParFor optimize time:\t\t" + String.format("%.3f", ((double)getParforOptTime())/1000) + " sec.\n");	
-				sb.append("ParFor initialize time:\t\t" + String.format("%.3f", ((double)getParforInitTime())/1000) + " sec.\n");	
-				sb.append("ParFor result merge time:\t" + String.format("%.3f", ((double)getParforMergeTime())/1000) + " sec.\n");	
+				sb.append("ParFor optimize time:\t\t" + String.format("%.3f", ((double)getParforOptTime())/1000) + " sec.\n");
+				sb.append("ParFor initialize time:\t\t" + String.format("%.3f", ((double)getParforInitTime())/1000) + " sec.\n");
+				sb.append("ParFor result merge time:\t" + String.format("%.3f", ((double)getParforMergeTime())/1000) + " sec.\n");
 				sb.append("ParFor total update in-place:\t" + lTotalUIPVar + "/" + lTotalLixUIP + "/" + lTotalLix + "\n");
 			}
 
@@ -863,8 +1029,10 @@ public class Statistics
 			sb.append("Total JVM GC time:\t\t" + ((double)getJVMgcTime())/1000 + " sec.\n");
 			LibMatrixDNN.appendStatistics(sb);
 			sb.append("Heavy hitter instructions:\n" + getHeavyHitters(maxHeavyHitters));
+			if (ConfigurationManager.isJMLCMemStatistics() && ConfigurationManager.isFinegrainedStatistics())
+				sb.append("Heavy hitter objects:\n" + getCPHeavyHittersMem(maxHeavyHitters));
 		}
-		
+
 		return sb.toString();
 	}
 }

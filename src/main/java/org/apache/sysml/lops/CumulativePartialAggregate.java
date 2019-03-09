@@ -27,20 +27,19 @@ import org.apache.sysml.parser.Expression.*;
 
 public class CumulativePartialAggregate extends Lop 
 {
-	
 	private OperationTypes _op;
 	
 	public CumulativePartialAggregate(Lop input, DataType dt, ValueType vt, OperationTypes op, ExecType et) {
 		super(Lop.Type.CumulativePartialAggregate, dt, vt);
 		
 		//sanity check for supported aggregates
-		if( !(op == OperationTypes.KahanSum || op == OperationTypes.Product ||
-			  op == OperationTypes.Min || op == OperationTypes.Max) )
+		if( !( op == OperationTypes.KahanSum || op == OperationTypes.Product 
+			|| op == OperationTypes.SumProduct
+			|| op == OperationTypes.Min || op == OperationTypes.Max) )
 		{
 			throw new LopsException("Unsupported aggregate operation type: "+op);
 		}
 		_op = op;
-		
 		init(input, dt, vt, et);
 	}
 	
@@ -62,12 +61,8 @@ public class CumulativePartialAggregate extends Lop
 		}
 		else //Spark/CP
 		{
-			//setup Spark parameters 
-			boolean breaksAlignment = false;
-			boolean aligner = false;
-			boolean definesMRJob = false;
 			lps.addCompatibility(JobType.INVALID);
-			lps.setProperties( inputs, et, ExecLocation.ControlProgram, breaksAlignment, aligner, definesMRJob );
+			lps.setProperties( inputs, et, ExecLocation.ControlProgram, false, false, false );
 		}
 	}
 
@@ -76,14 +71,14 @@ public class CumulativePartialAggregate extends Lop
 		return "CumulativePartialAggregate";
 	}
 	
-	private String getOpcode() 
-	{
+	private String getOpcode() {
 		switch( _op ) {
-			case KahanSum: 	return "ucumack+";
-			case Product: 	return "ucumac*";
-			case Min:		return "ucumacmin";
-			case Max: 		return "ucumacmax";
-			default: 		return null;
+			case KahanSum:   return "ucumack+";
+			case Product:    return "ucumac*";
+			case SumProduct: return "ucumac+*";
+			case Min:        return "ucumacmin";
+			case Max:        return "ucumacmax";
+			default:         return null;
 		}
 	}
 	

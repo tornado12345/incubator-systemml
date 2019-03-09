@@ -25,6 +25,7 @@ import org.apache.sysml.lops.LopProperties.ExecType;
 import org.apache.sysml.lops.Nary;
 import org.apache.sysml.parser.Expression.DataType;
 import org.apache.sysml.parser.Expression.ValueType;
+import org.apache.sysml.runtime.matrix.MatrixCharacteristics;
 
 /**
  * The NaryOp Hop allows for a variable number of operands. Functionality
@@ -61,6 +62,7 @@ public class NaryOp extends Hop {
 			getInput().add(i, inputs[i]);
 			inputs[i].getParent().add(this);
 		}
+		refreshSizeInformation();
 	}
 
 	/** MultipleOp may have any number of inputs. */
@@ -121,6 +123,19 @@ public class NaryOp extends Hop {
 	}
 
 	@Override
+	public void computeMemEstimate(MemoTable memo) {
+		//overwrites default hops behavior
+		super.computeMemEstimate(memo);
+
+		//specific case for function call
+		if( _op == OpOpN.EVAL ) {
+			_memEstimate = OptimizerUtils.INT_SIZE;
+			_outputMemEstimate = OptimizerUtils.INT_SIZE;
+			_processingMemEstimate = 0;
+		}
+	}
+	
+	@Override
 	protected double computeOutputMemEstimate(long dim1, long dim2, long nnz) {
 		double sparsity = OptimizerUtils.getSparsity(dim1, dim2, nnz);
 		return OptimizerUtils.estimateSizeExactSparsity(dim1, dim2, sparsity);
@@ -155,7 +170,7 @@ public class NaryOp extends Hop {
 		setRequiresRecompileIfNecessary();
 		
 		//ensure cp exec type for single-node operations
-		if ( _op == OpOpN.PRINTF  || _op == OpOpN.EVAL)
+		if ( _op == OpOpN.PRINTF  || _op == OpOpN.EVAL || _op == OpOpN.LIST)
 			_etype = ExecType.CP;
 		
 		return _etype;
@@ -167,7 +182,27 @@ public class NaryOp extends Hop {
 	}
 
 	@Override
+	@SuppressWarnings("incomplete-switch")
 	protected long[] inferOutputCharacteristics(MemoTable memo) {
+		if( !getDataType().isScalar() ) {
+			MatrixCharacteristics[] mc = memo.getAllInputStats(getInput());
+			
+			switch( _op ) {
+				case CBIND: return new long[]{
+					HopRewriteUtils.getMaxInputDim(mc, true),
+					HopRewriteUtils.getSumValidInputDims(mc, false),
+					HopRewriteUtils.getSumValidInputNnz(mc, true)};
+				case RBIND: return new long[]{
+					HopRewriteUtils.getSumValidInputDims(mc, true),
+					HopRewriteUtils.getMaxInputDim(mc, false),
+					HopRewriteUtils.getSumValidInputNnz(mc, true)};
+				case MIN:
+				case MAX: return new long[]{
+					HopRewriteUtils.getMaxInputDim(this, true),
+					HopRewriteUtils.getMaxInputDim(this, false), -1};
+				case LIST: return new long[]{getInput().size(), 1, -1};
+			}
+		}
 		return null; //do nothing
 	}
 	
@@ -177,11 +212,21 @@ public class NaryOp extends Hop {
 			case CBIND:
 				setDim1(HopRewriteUtils.getMaxInputDim(this, true));
 				setDim2(HopRewriteUtils.getSumValidInputDims(this, false));
+				setNnz(HopRewriteUtils.getSumValidInputNnz(this));
 				break;
 			case RBIND:
 				setDim1(HopRewriteUtils.getSumValidInputDims(this, true));
 				setDim2(HopRewriteUtils.getMaxInputDim(this, false));
+				setNnz(HopRewriteUtils.getSumValidInputNnz(this));
 				break;
+			case MIN:
+			case MAX:
+				setDim1(getDataType().isScalar() ? 0 : HopRewriteUtils.getMaxInputDim(this, true));
+				setDim2(getDataType().isScalar() ? 0 : HopRewriteUtils.getMaxInputDim(this, false));
+				break;
+			case LIST:
+				setDim1(getInput().size());
+				setDim2(1);
 			case PRINTF:
 			case EVAL:
 				//do nothing:

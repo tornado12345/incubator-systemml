@@ -21,7 +21,10 @@ package org.apache.sysml.hops.rewrite;
 
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Set;
 
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
@@ -172,13 +175,18 @@ public class RewriteAlgebraicSimplificationStatic extends HopRewriteRule
 			hi = simplifyTransposeAggBinBinaryChains(hop, hi, i);//e.g., t(t(A)%*%t(B)+C) -> B%*%A+t(C)
 			hi = simplifyReplaceZeroOperation(hop, hi, i);       //e.g., X + (X==0) * s -> replace(X, 0, s)
 			hi = removeUnnecessaryMinus(hop, hi, i);             //e.g., -(-X)->X; potentially introduced by simplify binary or dyn rewrites
-			hi = simplifyGroupedAggregate(hi);          	     //e.g., aggregate(target=X,groups=y,fn="count") -> aggregate(target=y,groups=y,fn="count")
+			hi = simplifyGroupedAggregate(hi);                   //e.g., aggregate(target=X,groups=y,fn="count") -> aggregate(target=y,groups=y,fn="count")
 			if(OptimizerUtils.ALLOW_OPERATOR_FUSION) {
 				hi = fuseMinusNzBinaryOperation(hop, hi, i);         //e.g., X-mean*ppred(X,0,!=) -> X -nz mean
 				hi = fuseLogNzUnaryOperation(hop, hi, i);            //e.g., ppred(X,0,"!=")*log(X) -> log_nz(X)
 				hi = fuseLogNzBinaryOperation(hop, hi, i);           //e.g., ppred(X,0,"!=")*log(X,0.5) -> log_nz(X,0.5)
 			}
 			hi = simplifyOuterSeqExpand(hop, hi, i);             //e.g., outer(v, seq(1,m), "==") -> rexpand(v, max=m, dir=row, ignore=true, cast=false)
+			hi = simplifyBinaryComparisonChain(hop, hi, i);      //e.g., outer(v1,v2,"==")==1 -> outer(v1,v2,"=="), outer(v1,v2,"==")==0 -> outer(v1,v2,"!="), 
+			hi = simplifyCumsumColOrFullAggregates(hi);          //e.g., colSums(cumsum(X)) -> cumSums(X*seq(nrow(X),1))
+			hi = simplifyCumsumReverse(hop, hi, i);              //e.g., rev(cumsum(rev(X))) -> X + colSums(X) - cumsum(X)
+			
+			
 			//hi = removeUnecessaryPPred(hop, hi, i);            //e.g., ppred(X,X,"==")->matrix(1,rows=nrow(X),cols=ncol(X))
 
 			//process childs recursively after rewrites (to investigate pattern newly created by rewrites)
@@ -1474,16 +1482,19 @@ public class RewriteAlgebraicSimplificationStatic extends HopRewriteRule
 			boolean desc = HopRewriteUtils.getBooleanValue((LiteralOp)hi.getInput().get(2));
 			
 			//find chain of order operations with same desc/ixret configuration and single consumers
+			Set<String> probe = new HashSet<>();
 			ArrayList<LiteralOp> byList = new ArrayList<LiteralOp>();
-			byList.add(by);
+			byList.add(by); probe.add(by.getStringValue());
 			Hop input = hi.getInput().get(0);
 			while( HopRewriteUtils.isReorg(input, ReOrgOp.SORT)
 				&& input.getInput().get(1) instanceof LiteralOp //scalar by
+				&& !probe.contains(input.getInput().get(1).getName())
 				&& HopRewriteUtils.isLiteralOfValue(input.getInput().get(2), desc)
 				&& HopRewriteUtils.isLiteralOfValue(hi.getInput().get(3), false)
 				&& input.getParent().size() == 1 ) 
 			{
 				byList.add((LiteralOp)input.getInput().get(1));
+				probe.add(input.getInput().get(1).getName());
 				input = input.getInput().get(0);
 			}
 			
@@ -1568,7 +1579,7 @@ public class RewriteAlgebraicSimplificationStatic extends HopRewriteRule
 			&& HopRewriteUtils.isBinaryMatrixScalar(hi.getInput().get(1).getInput().get(0), OpOp2.EQUAL, 0)
 			&& hi.getInput().get(1).getInput().get(0).getInput().contains(hi.getInput().get(0)) )
 		{
-			HashMap<String, Hop> args = new HashMap<>();
+			LinkedHashMap<String, Hop> args = new LinkedHashMap<>();
 			args.put("target", hi.getInput().get(0));
 			args.put("pattern", new LiteralOp(0));
 			args.put("replacement", hi.getInput().get(1).getInput().get(1));
@@ -1767,7 +1778,7 @@ public class RewriteAlgebraicSimplificationStatic extends HopRewriteRule
 		//pattern: outer(v, t(seq(1,m)), "==") -> rexpand(v, max=m, dir=row, ignore=true, cast=false)
 		//note: this rewrite supports both left/right sequence 
 		
-		if( HopRewriteUtils.isBinary(hi, OpOp2.EQUAL) && ((BinaryOp)hi).isOuterVectorOperator() )
+		if( HopRewriteUtils.isBinary(hi, OpOp2.EQUAL) && ((BinaryOp)hi).isOuter() )
 		{
 			if(   ( HopRewriteUtils.isTransposeOperation(hi.getInput().get(1)) //pattern a: outer(v, t(seq(1,m)), "==")
 				    && HopRewriteUtils.isBasic1NSequence(hi.getInput().get(1).getInput().get(0))) 
@@ -1775,7 +1786,7 @@ public class RewriteAlgebraicSimplificationStatic extends HopRewriteRule
 			{
 				//determine variable parameters for pattern a/b
 				boolean isPatternB = HopRewriteUtils.isBasic1NSequence(hi.getInput().get(0));
-				boolean isTransposeRight = HopRewriteUtils.isTransposeOperation(hi.getInput().get(1));				
+				boolean isTransposeRight = HopRewriteUtils.isTransposeOperation(hi.getInput().get(1));
 				Hop trgt = isPatternB ? (isTransposeRight ? 
 						hi.getInput().get(1).getInput().get(0) :                  //get v from t(v)
 						HopRewriteUtils.createTranspose(hi.getInput().get(1)) ) : //create v via t(v')
@@ -1785,7 +1796,7 @@ public class RewriteAlgebraicSimplificationStatic extends HopRewriteRule
 				String direction = HopRewriteUtils.isBasic1NSequence(hi.getInput().get(0)) ? "rows" : "cols";
 				
 				//setup input parameter hops
-				HashMap<String,Hop> inputargs = new HashMap<>();
+				LinkedHashMap<String,Hop> inputargs = new LinkedHashMap<>();
 				inputargs.put("target", trgt);
 				inputargs.put("max", HopRewriteUtils.getBasic1NSequenceMax(seq));
 				inputargs.put("dir", new LiteralOp(direction));
@@ -1800,10 +1811,81 @@ public class RewriteAlgebraicSimplificationStatic extends HopRewriteRule
 				HopRewriteUtils.replaceChildReference(parent, hi, pbop, pos);
 				hi = pbop;
 				
-				LOG.debug("Applied simplifyOuterSeqExpand (line "+hi.getBeginLine()+")");	
+				LOG.debug("Applied simplifyOuterSeqExpand (line "+hi.getBeginLine()+")");
 			}
 		}
 	
+		return hi;
+	}
+	
+	private static Hop simplifyBinaryComparisonChain(Hop parent, Hop hi, int pos) {
+		if( HopRewriteUtils.isBinaryPPred(hi) 
+			&& HopRewriteUtils.isLiteralOfValue(hi.getInput().get(1), 0d, 1d)
+			&& HopRewriteUtils.isBinaryPPred(hi.getInput().get(0)) ) {
+			BinaryOp bop = (BinaryOp) hi;
+			BinaryOp bop2 = (BinaryOp) hi.getInput().get(0);
+			
+			//pattern: outer(v1,v2,"!=") == 1 -> outer(v1,v2,"!=")
+			if( HopRewriteUtils.isLiteralOfValue(bop.getInput().get(1), 1) ) {
+				HopRewriteUtils.replaceChildReference(parent, bop, bop2, pos);
+				HopRewriteUtils.cleanupUnreferenced(bop);
+				hi = bop2;
+				LOG.debug("Applied simplifyBinaryComparisonChain1 (line "+hi.getBeginLine()+")");
+			}
+			//pattern: outer(v1,v2,"!=") == 0 -> outer(v1,v2,"==")
+			else {
+				OpOp2 optr = bop2.getComplementPPredOperation();
+				BinaryOp tmp = HopRewriteUtils.createBinary(bop2.getInput().get(0),
+					bop2.getInput().get(1), optr, bop2.isOuter());
+				HopRewriteUtils.replaceChildReference(parent, bop, tmp, pos);
+				HopRewriteUtils.cleanupUnreferenced(bop, bop2);
+				hi = tmp;
+				LOG.debug("Applied simplifyBinaryComparisonChain0 (line "+hi.getBeginLine()+")");
+			}
+		}
+		
+		return hi;
+	}
+	
+	private static Hop simplifyCumsumColOrFullAggregates(Hop hi) {
+		//pattern: colSums(cumsum(X)) -> cumSums(X*seq(nrow(X),1))
+		if( (HopRewriteUtils.isAggUnaryOp(hi, AggOp.SUM, Direction.Col)
+			|| HopRewriteUtils.isAggUnaryOp(hi, AggOp.SUM, Direction.RowCol))
+			&& HopRewriteUtils.isUnary(hi.getInput().get(0), OpOp1.CUMSUM)
+			&& hi.getInput().get(0).getParent().size()==1)
+		{
+			Hop cumsumX = hi.getInput().get(0);
+			Hop X = cumsumX.getInput().get(0);
+			Hop mult = HopRewriteUtils.createBinary(X,
+				HopRewriteUtils.createSeqDataGenOp(X, false), OpOp2.MULT);
+			HopRewriteUtils.replaceChildReference(hi, cumsumX, mult);
+			HopRewriteUtils.removeAllChildReferences(cumsumX);
+			LOG.debug("Applied simplifyCumsumColOrFullAggregates (line "+hi.getBeginLine()+")");
+		}
+		return hi;
+	}
+	
+	private static Hop simplifyCumsumReverse(Hop parent, Hop hi, int pos) {
+		//pattern: rev(cumsum(rev(X))) -> X + colSums(X) - cumsum(X)
+		if( HopRewriteUtils.isReorg(hi, ReOrgOp.REV)
+			&& HopRewriteUtils.isUnary(hi.getInput().get(0), OpOp1.CUMSUM)
+			&& hi.getInput().get(0).getParent().size()==1
+			&& HopRewriteUtils.isReorg(hi.getInput().get(0).getInput().get(0), ReOrgOp.REV)
+			&& hi.getInput().get(0).getInput().get(0).getParent().size()==1)
+		{
+			Hop cumsumX = hi.getInput().get(0);
+			Hop revX = cumsumX.getInput().get(0);
+			Hop X = revX.getInput().get(0);
+			Hop plus = HopRewriteUtils.createBinary(X, HopRewriteUtils
+				.createAggUnaryOp(X, AggOp.SUM, Direction.Col), OpOp2.PLUS);
+			Hop minus = HopRewriteUtils.createBinary(plus,
+				HopRewriteUtils.createUnary(X, OpOp1.CUMSUM), OpOp2.MINUS);
+			HopRewriteUtils.replaceChildReference(parent, hi, minus, pos);
+			HopRewriteUtils.cleanupUnreferenced(hi, cumsumX, revX);
+			
+			hi = minus;
+			LOG.debug("Applied simplifyCumsumReverse (line "+hi.getBeginLine()+")");
+		}
 		return hi;
 	}
 	

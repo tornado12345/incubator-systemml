@@ -22,7 +22,6 @@ package org.apache.sysml.test.integration.functions.codegen;
 import java.io.File;
 import java.util.HashMap;
 
-import org.junit.Assert;
 import org.junit.Test;
 import org.apache.sysml.api.DMLScript;
 import org.apache.sysml.api.DMLScript.RUNTIME_PLATFORM;
@@ -77,6 +76,12 @@ public class RowAggTmplTest extends AutomatedTestBase
 	private static final String TEST_NAME38 = TEST_NAME+"38"; //sigmoid(X/rowSums)
 	private static final String TEST_NAME39 = TEST_NAME+"39"; //BitwAnd operation
 	private static final String TEST_NAME40 = TEST_NAME+"40"; //relu operation -> (X>0)* dout
+	private static final String TEST_NAME41 = TEST_NAME+"41"; //X*rowSums(X/seq(1,N)+t(seq(M,1)))
+	private static final String TEST_NAME42 = TEST_NAME+"42"; //X/rowSums(min(X, Y, Z))
+	private static final String TEST_NAME43 = TEST_NAME+"43"; //bias_add(X,B) + bias_mult(X,B)
+	private static final String TEST_NAME44 = TEST_NAME+"44"; //maxpool(X - mean(X)) + 7;
+	private static final String TEST_NAME45 = TEST_NAME+"45"; //vector allocation;
+	private static final String TEST_NAME46 = TEST_NAME+"46"; //conv2d(X - mean(X), F1) + conv2d(X - mean(X), F2);
 	
 	private static final String TEST_DIR = "functions/codegen/";
 	private static final String TEST_CLASS_DIR = TEST_DIR + RowAggTmplTest.class.getSimpleName() + "/";
@@ -88,7 +93,7 @@ public class RowAggTmplTest extends AutomatedTestBase
 	@Override
 	public void setUp() {
 		TestUtils.clearAssertionInformation();
-		for(int i=1; i<=40; i++)
+		for(int i=1; i<=46; i++)
 			addTestConfiguration( TEST_NAME+i, new TestConfiguration(TEST_CLASS_DIR, TEST_NAME+i, new String[] { String.valueOf(i) }) );
 	}
 	
@@ -691,21 +696,106 @@ public class RowAggTmplTest extends AutomatedTestBase
 	public void testCodegenRowAgg40SP() {
 		testCodegenIntegration( TEST_NAME40, false, ExecType.SPARK );
 	}
+	
+	@Test
+	public void testCodegenRowAggRewrite41CP() {
+		testCodegenIntegration( TEST_NAME41, true, ExecType.CP );
+	}
+
+	@Test
+	public void testCodegenRowAgg41CP() {
+		testCodegenIntegration( TEST_NAME41, false, ExecType.CP );
+	}
+
+	@Test
+	public void testCodegenRowAgg41SP() {
+		testCodegenIntegration( TEST_NAME41, false, ExecType.SPARK );
+	}
+	
+	@Test
+	public void testCodegenRowAggRewrite42CP() {
+		testCodegenIntegration( TEST_NAME42, true, ExecType.CP );
+	}
+
+	@Test
+	public void testCodegenRowAgg42CP() {
+		testCodegenIntegration( TEST_NAME42, false, ExecType.CP );
+	}
+
+	@Test
+	public void testCodegenRowAgg42SP() {
+		testCodegenIntegration( TEST_NAME42, false, ExecType.SPARK );
+	}
+	
+	@Test
+	public void testCodegenRowAggRewrite43CP() {
+		testCodegenIntegration( TEST_NAME43, true, ExecType.CP );
+	}
+
+	@Test
+	public void testCodegenRowAgg43CP() {
+		testCodegenIntegration( TEST_NAME43, false, ExecType.CP );
+	}
+
+	@Test
+	public void testCodegenRowAgg43SP() {
+		testCodegenIntegration( TEST_NAME43, false, ExecType.SPARK );
+	}
+	
+	@Test
+	public void testCodegenRowAggRewrite44CP() {
+		testCodegenIntegration( TEST_NAME44, true, ExecType.CP );
+	}
+
+	@Test
+	public void testCodegenRowAgg44CP() {
+		testCodegenIntegration( TEST_NAME44, false, ExecType.CP );
+	}
+
+	@Test
+	public void testCodegenRowAgg44SP() {
+		testCodegenIntegration( TEST_NAME44, false, ExecType.SPARK );
+	}
+	
+	@Test
+	public void testCodegenRowAggRewrite45CP() {
+		testCodegenIntegration( TEST_NAME45, true, ExecType.CP );
+	}
+
+	@Test
+	public void testCodegenRowAgg45CP() {
+		testCodegenIntegration( TEST_NAME45, false, ExecType.CP );
+	}
+
+	@Test
+	public void testCodegenRowAgg45SP() {
+		testCodegenIntegration( TEST_NAME45, false, ExecType.SPARK );
+	}
+	
+	@Test
+	public void testCodegenRowAggRewrite46CP() {
+		testCodegenIntegration( TEST_NAME46, true, ExecType.CP );
+	}
+
+	@Test
+	public void testCodegenRowAgg46CP() {
+		testCodegenIntegration( TEST_NAME46, false, ExecType.CP );
+	}
+
+	@Test
+	public void testCodegenRowAgg46SP() {
+		testCodegenIntegration( TEST_NAME46, false, ExecType.SPARK );
+	}
 
 	private void testCodegenIntegration( String testname, boolean rewrites, ExecType instType )
-	{
-		boolean oldFlag = OptimizerUtils.ALLOW_ALGEBRAIC_SIMPLIFICATION;
-		RUNTIME_PLATFORM platformOld = rtplatform;
-		switch( instType ) {
-			case MR: rtplatform = RUNTIME_PLATFORM.HADOOP; break;
-			case SPARK: rtplatform = RUNTIME_PLATFORM.SPARK; break;
-			default: rtplatform = RUNTIME_PLATFORM.HYBRID_SPARK; break;
-		}
-
+	{	
 		boolean sparkConfigOld = DMLScript.USE_LOCAL_SPARK_CONFIG;
-		if( rtplatform == RUNTIME_PLATFORM.SPARK || rtplatform == RUNTIME_PLATFORM.HYBRID_SPARK )
-			DMLScript.USE_LOCAL_SPARK_CONFIG = true;
+		RUNTIME_PLATFORM platformOld = setRuntimePlatform(instType);
+		if(shouldSkipTest())
+			return;
 
+		boolean oldFlag = OptimizerUtils.ALLOW_ALGEBRAIC_SIMPLIFICATION;
+		
 		try
 		{
 			TestConfiguration config = getTestConfiguration(testname);
@@ -713,41 +803,53 @@ public class RowAggTmplTest extends AutomatedTestBase
 			
 			String HOME = SCRIPT_DIR + TEST_DIR;
 			fullDMLScriptName = HOME + testname + ".dml";
-			programArgs = new String[]{"-explain", "recompile_runtime", "-stats", "-args", output("S") };
+			programArgs = new String[]{"-explain", "-stats", "-args", output("S") };
 			
 			fullRScriptName = HOME + testname + ".R";
 			rCmd = getRCmd(inputDir(), expectedDir());
 
 			OptimizerUtils.ALLOW_ALGEBRAIC_SIMPLIFICATION = rewrites;
 			
-			runTest(true, false, null, -1); 
-			runRScript(true); 
+			runTest(true, false, null, -1);
+			runRScript(true);
 			
-			//compare matrices 
+			//compare matrices
 			HashMap<CellIndex, Double> dmlfile = readDMLMatrixFromHDFS("S");
 			HashMap<CellIndex, Double> rfile  = readRMatrixFromFS("S");
 			TestUtils.compareMatrices(dmlfile, rfile, eps, "Stat-DML", "Stat-R");
-			Assert.assertTrue(heavyHittersContainsSubString("spoofRA") 
+			assertTrue(heavyHittersContainsSubString("spoofRA") 
 				|| heavyHittersContainsSubString("sp_spoofRA"));
 			
 			//ensure full aggregates for certain patterns
 			if( testname.equals(TEST_NAME15) )
-				Assert.assertTrue(!heavyHittersContainsSubString("uark+"));
+				assertTrue(!heavyHittersContainsSubString("uark+"));
 			if( testname.equals(TEST_NAME17) )
-				Assert.assertTrue(!heavyHittersContainsSubString(RightIndex.OPCODE));
-			if( testname.equals(TEST_NAME28) )
-				Assert.assertTrue(!heavyHittersContainsSubString("spoofRA", 2)
+				assertTrue(!heavyHittersContainsSubString(RightIndex.OPCODE));
+			if( testname.equals(TEST_NAME28) || testname.equals(TEST_NAME45) )
+				assertTrue(!heavyHittersContainsSubString("spoofRA", 2)
 					&& !heavyHittersContainsSubString("sp_spoofRA", 2));
 			if( testname.equals(TEST_NAME30) )
-				Assert.assertTrue(!heavyHittersContainsSubString("spoofRA", 2)
+				assertTrue(!heavyHittersContainsSubString("spoofRA", 2)
 					&& !heavyHittersContainsSubString(RightIndex.OPCODE));
 			if( testname.equals(TEST_NAME31) )
-				Assert.assertTrue(!heavyHittersContainsSubString("spoofRA", 2));
+				assertTrue(!heavyHittersContainsSubString("spoofRA", 2));
 			if( testname.equals(TEST_NAME35) )
-				Assert.assertTrue(!heavyHittersContainsSubString("spoofRA", 2)
+				assertTrue(!heavyHittersContainsSubString("spoofRA", 2)
 					&& !heavyHittersContainsSubString("cbind"));
 			if( testname.equals(TEST_NAME36) )
-				Assert.assertTrue(!heavyHittersContainsSubString("xor"));
+				assertTrue(!heavyHittersContainsSubString("xor"));
+			if( testname.equals(TEST_NAME41) )
+				assertTrue(!heavyHittersContainsSubString("seq"));
+			if( testname.equals(TEST_NAME42) )
+				assertTrue(!heavyHittersContainsSubString("min","nmin") 
+					&& !heavyHittersContainsSubString("spoof", 2));
+			if( testname.equals(TEST_NAME44) )
+				assertTrue(!heavyHittersContainsSubString("maxpooling") 
+					&& !heavyHittersContainsSubString("spoof", 2));
+			if( testname.equals(TEST_NAME46) )
+				assertTrue(!heavyHittersContainsSubString("conv2d") 
+					&& !heavyHittersContainsSubString("spoof", 2));
+			
 		}
 		finally {
 			rtplatform = platformOld;

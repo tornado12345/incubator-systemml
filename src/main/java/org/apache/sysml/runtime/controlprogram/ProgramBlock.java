@@ -137,7 +137,7 @@ public class ProgramBlock implements ParseInfo
 			if( DMLScript.isActiveAM() ) //set program block specific remote memory
 				DMLAppMasterUtils.setupProgramBlockRemoteMaxMemory(this);
 
-			long t0 = DMLScript.STATISTICS ? System.nanoTime() : 0;
+			long t0 = ConfigurationManager.isStatistics() ? System.nanoTime() : 0;
 			if(    ConfigurationManager.isDynamicRecompilation()
 				&& _sb != null
 				&& _sb.requiresRecompilation() )
@@ -145,7 +145,7 @@ public class ProgramBlock implements ParseInfo
 				tmp = Recompiler.recompileHopsDag(
 					_sb, _sb.getHops(), ec.getVariables(), null, false, true, _tid);
 			}
-			if( DMLScript.STATISTICS ){
+			if( ConfigurationManager.isStatistics() ){
 				long t1 = System.nanoTime();
 				Statistics.incrementHOPRecompileTime(t1-t0);
 				if( tmp!=_inst )
@@ -177,7 +177,7 @@ public class ProgramBlock implements ParseInfo
 
 		//dynamically recompile instructions if enabled and required
 		try {
-			long t0 = DMLScript.STATISTICS ? System.nanoTime() : 0;
+			long t0 = ConfigurationManager.isStatistics() ? System.nanoTime() : 0;
 			if(    ConfigurationManager.isDynamicRecompilation()
 				&& requiresRecompile )
 			{
@@ -185,7 +185,7 @@ public class ProgramBlock implements ParseInfo
 					hops, ec.getVariables(), null, false, true, _tid);
 				tmp = JMLCUtils.cleanupRuntimeInstructions(tmp, PRED_VAR);
 			}
-			if( DMLScript.STATISTICS ){
+			if( ConfigurationManager.isStatistics() ){
 				long t1 = System.nanoTime();
 				Statistics.incrementHOPRecompileTime(t1-t0);
 				if( tmp!=inst )
@@ -242,7 +242,7 @@ public class ProgramBlock implements ParseInfo
 		try
 		{
 			// start time measurement for statistics
-			long t0 = (DMLScript.STATISTICS || LOG.isTraceEnabled()) ?
+			long t0 = (ConfigurationManager.isStatistics() || LOG.isTraceEnabled()) ?
 				System.nanoTime() : 0;
 
 			// pre-process instruction (debug state, inst patching, listeners)
@@ -255,10 +255,12 @@ public class ProgramBlock implements ParseInfo
 			tmp.postprocessInstruction( ec );
 
 			// maintain aggregate statistics
-			if( DMLScript.STATISTICS) {
+			if( ConfigurationManager.isStatistics()) {
 				Statistics.maintainCPHeavyHitters(
 					tmp.getExtendedOpcode(), System.nanoTime()-t0);
 			}
+			if (ConfigurationManager.isJMLCMemStatistics() && ConfigurationManager.isFinegrainedStatistics())
+				ec.getVariables().getPinnedDataSize();
 
 			// optional trace information (instruction and runtime)
 			if( LOG.isTraceEnabled() ) {
@@ -308,11 +310,11 @@ public class ProgramBlock implements ParseInfo
 					new MatrixBlock(mbVar, MatrixBlock.DEFAULT_INPLACE_SPARSEBLOCK, true) );
 				moNew.setFileName(mo.getFileName()+Lop.UPDATE_INPLACE_PREFIX+tid);
 				mo.release();
-				moNew.release();
-				moNew.setUpdateType(UpdateType.INPLACE);
 				//cleanup old variable (e.g., remove from buffer pool)
 				if( ec.removeVariable(varname) != null )
 					ec.cleanupCacheableData(mo);
+				moNew.release(); //after old removal to avoid unnecessary evictions
+				moNew.setUpdateType(UpdateType.INPLACE);
 				ec.setVariable(varname, moNew);
 			}
 		}

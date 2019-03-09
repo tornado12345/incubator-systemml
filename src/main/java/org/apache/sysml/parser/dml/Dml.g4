@@ -99,7 +99,7 @@ functionStatement returns [ org.apache.sysml.parser.common.StatementInfo info ]
     // ------------------------------------------
     // FunctionStatement & ExternalFunctionStatement
     // small change: only allow typed arguments here ... instead of data identifier
-    name=ID ('<-'|'=') 'function' '(' ( inputParams+=typedArgNoAssign (',' inputParams+=typedArgNoAssign)* )? ')'  ( 'return' '(' ( outputParams+=typedArgNoAssign (',' outputParams+=typedArgNoAssign)* )? ')' )? '{' (body+=statement ';'*)* '}' ';'* # InternalFunctionDefExpression
+    name=ID ('<-'|'=') 'function' '(' ( inputParams+=typedArgAssign (',' inputParams+=typedArgAssign)* )? ')'  ( 'return' '(' ( outputParams+=typedArgNoAssign (',' outputParams+=typedArgNoAssign)* )? ')' )? '{' (body+=statement ';'*)* '}' ';'* # InternalFunctionDefExpression
     | name=ID ('<-'|'=') 'externalFunction' '(' ( inputParams+=typedArgNoAssign (',' inputParams+=typedArgNoAssign)* )? ')'  ( 'return' '(' ( outputParams+=typedArgNoAssign (',' outputParams+=typedArgNoAssign)* )? ')' )?   'implemented' 'in' '(' ( otherParams+=strictParameterizedKeyValueString (',' otherParams+=strictParameterizedKeyValueString)* )? ')' ';'*    # ExternalFunctionDefExpression
     // ------------------------------------------
 ;
@@ -114,7 +114,7 @@ dataIdentifier returns [ org.apache.sysml.parser.common.ExpressionInfo dataInfo 
 } :
     // ------------------------------------------
     // IndexedIdentifier
-    name=ID '[' (rowLower=expression (':' rowUpper=expression)?)? ',' (colLower=expression (':' colUpper=expression)?)? ']' # IndexedExpression
+    name=ID '[' (rowLower=expression (':' rowUpper=expression)?)? (',' (colLower=expression (':' colUpper=expression)?)?)? ']' # IndexedExpression
     // ------------------------------------------
     | ID                                            # SimpleDataIdentifierExpression
     | COMMANDLINE_NAMED_ID                          # CommandlineParamExpression
@@ -176,6 +176,8 @@ expression returns [ org.apache.sysml.parser.common.ExpressionInfo info ]
 ;
 
 typedArgNoAssign : paramType=ml_type paramName=ID;
+typedArgAssign : paramType=ml_type (paramName=ID | (paramName=ID '=')? paramVal=expression);
+
 parameterizedExpression : (paramName=ID '=')? paramVal=expression;
 strictParameterizedExpression : paramName=ID '=' paramVal=expression ;
 strictParameterizedKeyValueString : paramName=ID '=' paramVal=STRING ;
@@ -190,8 +192,8 @@ ID : (ALPHABET (ALPHABET|DIGIT|'_')*  '::')? ALPHABET (ALPHABET|DIGIT|'_')*
 ml_type :  valueType | dataType '[' valueType ']';
 // Note to reduce number of keywords, these are case-sensitive,
 // To allow case-insenstive,  'int' becomes: ('i' | 'I') ('n' | 'N') ('t' | 'T')
-valueType: 'int' | 'integer' | 'string' | 'boolean' | 'double'
-            | 'Int' | 'Integer' | 'String' | 'Boolean' | 'Double';
+valueType: 'int' | 'integer' | 'string' | 'boolean' | 'double' | 'unknown'
+            | 'Int' | 'Integer' | 'String' | 'Boolean' | 'Double' | 'Unknown';
 dataType:
         // 'scalar' # ScalarDataTypeDummyCheck
         // |
@@ -214,6 +216,6 @@ COMMANDLINE_POSITION_ID: '$' DIGIT+;
 STRING: '"' ( ESC | ~[\\"] )*? '"' | '\'' ( ESC | ~[\\'] )*? '\'';
 fragment ESC : '\\' [btnfr"'\\] ;
 // Comments, whitespaces and new line
-LINE_COMMENT : '#' .*? '\r'? '\n' -> skip ;
-MULTILINE_BLOCK_COMMENT : '/*' .*? '*/' -> skip ;
-WHITESPACE : (' ' | '\t' | '\r' | '\n')+ -> skip ;
+LINE_COMMENT : '#' .*? '\r'? '\n' -> channel(HIDDEN) ;
+MULTILINE_BLOCK_COMMENT : '/*' .*? '*/' -> channel(HIDDEN) ;
+WHITESPACE : (' ' | '\t' | '\r' | '\n')+ -> channel(HIDDEN) ;

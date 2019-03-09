@@ -96,11 +96,12 @@ public class InterProceduralAnalysis
 	protected static final boolean PROPAGATE_SCALAR_LITERALS      = true; //propagate and replace scalar literals into functions
 	protected static final boolean APPLY_STATIC_REWRITES          = true; //apply static hop dag and statement block rewrites
 	protected static final int     INLINING_MAX_NUM_OPS           = 10;    //inline single-statement functions w/ #ops <= threshold, other than dataops and literals
+	protected static final boolean ELIMINATE_DEAD_CODE            = true; //remove dead code (e.g., assigments) not used later on
 	
 	static {
 		// for internal debugging only
 		if( LDEBUG ) {
-			Logger.getLogger("org.apache.sysml.hops.ipa.InterProceduralAnalysis")
+			Logger.getLogger("org.apache.sysml.hops.ipa")
 				.setLevel((Level) Level.DEBUG);
 		}
 	}
@@ -135,8 +136,12 @@ public class InterProceduralAnalysis
 		_passes.add(new IPAPassRemoveUnnecessaryCheckpoints());
 		_passes.add(new IPAPassRemoveConstantBinaryOps());
 		_passes.add(new IPAPassPropagateReplaceLiterals());
-		_passes.add(new IPAPassApplyStaticHopRewrites());
 		_passes.add(new IPAPassInlineFunctions());
+		_passes.add(new IPAPassEliminateDeadCode());
+		//note: apply rewrites last because statement block rewrites
+		//might merge relevant statement blocks in special cases, which 
+		//would require an update of the function call graph
+		_passes.add(new IPAPassApplyStaticHopRewrites());
 	}
 	
 	public InterProceduralAnalysis(StatementBlock sb) {
@@ -311,7 +316,7 @@ public class InterProceduralAnalysis
 			IfStatementBlock isb = (IfStatementBlock) sb;
 			IfStatement istmt = (IfStatement)isb.getStatement(0);
 			//old stats into predicate
-			propagateStatisticsAcrossPredicateDAG(isb.getPredicateHops(), callVars);			
+			propagateStatisticsAcrossPredicateDAG(isb.getPredicateHops(), callVars);
 			//check and propagate stats into body
 			LocalVariableMap oldCallVars = (LocalVariableMap) callVars.clone();
 			LocalVariableMap callVarsElse = (LocalVariableMap) callVars.clone();
@@ -474,8 +479,8 @@ public class InterProceduralAnalysis
 				FunctionStatementBlock fsb = prog.getFunctionStatementBlock(fop.getFunctionNamespace(), fop.getFunctionName());
 				FunctionStatement fstmt = (FunctionStatement)fsb.getStatement(0);
 				
-				if(  fcallSizes.isValidFunction(fkey) && 
-				    !fnStack.contains(fkey)  ) //prevent recursion	
+				if( fcallSizes.isValidFunction(fkey) && 
+					!fnStack.contains(fkey)  ) //prevent recursion
 				{
 					//maintain function call stack
 					fnStack.add(fkey);
@@ -488,7 +493,7 @@ public class InterProceduralAnalysis
 					propagateStatisticsAcrossBlock(fsb, tmpVars, fcallSizes, fnStack);
 					
 					//extract vars from symbol table, re-map and refresh main program
-					extractFunctionCallReturnStatistics(fstmt, fop, tmpVars, callVars, true);		
+					extractFunctionCallReturnStatistics(fstmt, fop, tmpVars, callVars, true);
 					
 					//maintain function call stack
 					fnStack.remove(fkey);
@@ -518,26 +523,28 @@ public class InterProceduralAnalysis
 	
 	private static void populateLocalVariableMapForFunctionCall( FunctionStatement fstmt, FunctionOp fop, LocalVariableMap callvars, LocalVariableMap vars, FunctionCallSizeInfo fcallSizes ) 
 	{
-		ArrayList<DataIdentifier> inputVars = fstmt.getInputParams();
+		//note: due to arbitrary binding sequences of named function arguments,
+		//we cannot use the sequence as defined in the function signature
+		String[] funArgNames = fop.getInputVariableNames();
 		ArrayList<Hop> inputOps = fop.getInput();
 		String fkey = fop.getFunctionKey();
 		
-		for( int i=0; i<inputVars.size(); i++ )
+		for( int i=0; i<funArgNames.length; i++ )
 		{
 			//create mapping between input hops and vars
-			DataIdentifier dat = inputVars.get(i);
+			DataIdentifier dat = fstmt.getInputParam(funArgNames[i]);
 			Hop input = inputOps.get(i);
 			
 			if( input.getDataType()==DataType.MATRIX )
 			{
 				//propagate matrix characteristics
 				MatrixObject mo = new MatrixObject(ValueType.DOUBLE, null);
-				MatrixCharacteristics mc = new MatrixCharacteristics( input.getDim1(), input.getDim2(), 
+				MatrixCharacteristics mc = new MatrixCharacteristics( input.getDim1(), input.getDim2(),
 					ConfigurationManager.getBlocksize(), ConfigurationManager.getBlocksize(),
 					fcallSizes.isSafeNnz(fkey, i)?input.getNnz():-1 );
 				MetaDataFormat meta = new MetaDataFormat(mc,null,null);
-				mo.setMetaData(meta);	
-				vars.put(dat.getName(), mo);	
+				mo.setMetaData(meta);
+				vars.put(dat.getName(), mo);
 			}
 			else if( input.getDataType()==DataType.SCALAR )
 			{
@@ -551,7 +558,7 @@ public class InterProceduralAnalysis
 				//and input scalar is existing variable in symbol table
 				else if( PROPAGATE_SCALAR_VARS_INTO_FUN 
 					&& fcallSizes.getFunctionCallCount(fkey) == 1
-					&& input instanceof DataOp  ) 
+					&& input instanceof DataOp )
 				{
 					Data scalar = callvars.get(input.getName()); 
 					if( scalar != null && scalar instanceof ScalarObject ) {
@@ -581,8 +588,11 @@ public class InterProceduralAnalysis
 		
 		try
 		{
-			for( int i=0; i<foutputOps.size(); i++ )
-			{
+			for( int i=0; i<foutputOps.size(); i++ ) {
+				//robustness for unbound outputs
+				if( outputVars.length <= i )
+					break;
+				
 				DataIdentifier di = foutputOps.get(i);
 				String fvarname = di.getName(); //name in function signature
 				String pvarname = outputVars[i]; //name in calling program
@@ -600,64 +610,50 @@ public class InterProceduralAnalysis
 					}
 				}
 				// Update or add to the calling program's variable map.
-				if( di.getDataType()==DataType.MATRIX && tmpVars.keySet().contains(fvarname) )
-				{
+				if( di.getDataType()==DataType.MATRIX && tmpVars.keySet().contains(fvarname) ) {
 					MatrixObject moIn = (MatrixObject) tmpVars.get(fvarname);
-					
-					if( !callVars.keySet().contains(pvarname) || overwrite ) //not existing so far
-					{
-						MatrixObject moOut = createOutputMatrix(moIn.getNumRows(), moIn.getNumColumns(), moIn.getNnz());	
+					if( !callVars.keySet().contains(pvarname) || overwrite ) { //not existing so far
+						MatrixObject moOut = createOutputMatrix(moIn.getNumRows(), moIn.getNumColumns(), moIn.getNnz());
 						callVars.put(pvarname, moOut);
 					}
-					else //already existing: take largest   
-					{
+					else { //already existing: take largest
 						Data dat = callVars.get(pvarname);
-						if( dat instanceof MatrixObject )
+						if( !(dat instanceof MatrixObject) )
+							continue;
+						MatrixObject moOut = (MatrixObject)dat;
+						MatrixCharacteristics mc = moOut.getMatrixCharacteristics();
+						if( OptimizerUtils.estimateSizeExactSparsity(mc.getRows(), mc.getCols(), (mc.getNonZeros()>0)?
+							OptimizerUtils.getSparsity(mc):1.0) 
+							< OptimizerUtils.estimateSize(moIn.getNumRows(), moIn.getNumColumns()) )
 						{
-							MatrixObject moOut = (MatrixObject)dat;
-							MatrixCharacteristics mc = moOut.getMatrixCharacteristics();
-							if( OptimizerUtils.estimateSizeExactSparsity(mc.getRows(), mc.getCols(), (mc.getNonZeros()>0)?
-								OptimizerUtils.getSparsity(mc):1.0) 
-								< OptimizerUtils.estimateSize(moIn.getNumRows(), moIn.getNumColumns()) )
-							{
-								//update statistics if necessary
-								mc.setDimension(moIn.getNumRows(), moIn.getNumColumns());
-								mc.setNonZeros(moIn.getNnz());
-							}
+							//update statistics if necessary
+							mc.setDimension(moIn.getNumRows(), moIn.getNumColumns());
+							mc.setNonZeros(moIn.getNnz());
 						}
-						
 					}
 				}
 			}
 		}
-		catch( Exception ex )
-		{
+		catch( Exception ex ) {
 			throw new HopsException( "Failed to extract output statistics of function "+fkey+".", ex);
 		}
 	}
 	
-	private static void extractFunctionCallUnknownReturnStatistics( FunctionStatement fstmt, FunctionOp fop, LocalVariableMap callVars ) 
-	{
+	private static void extractFunctionCallUnknownReturnStatistics(FunctionStatement fstmt, FunctionOp fop, LocalVariableMap callVars) {
 		ArrayList<DataIdentifier> foutputOps = fstmt.getOutputParams();
 		String[] outputVars = fop.getOutputVariableNames();
 		String fkey = fop.getFunctionKey();
-		
-		try
-		{
-			for( int i=0; i<foutputOps.size(); i++ )
-			{
+		try {
+			//robustness for subset of bound output variables
+			int olen = Math.min(foutputOps.size(), outputVars.length);
+			for( int i=0; i<olen; i++ ) {
 				DataIdentifier di = foutputOps.get(i);
 				String pvarname = outputVars[i]; //name in calling program
-				
 				if( di.getDataType()==DataType.MATRIX )
-				{
-					MatrixObject moOut = createOutputMatrix(-1, -1, -1);
-					callVars.put(pvarname, moOut);
-				}
+					callVars.put(pvarname, createOutputMatrix(-1, -1, -1));
 			}
 		}
-		catch( Exception ex )
-		{
+		catch( Exception ex ) {
 			throw new HopsException( "Failed to extract output statistics of function "+fkey+".", ex);
 		}
 	}

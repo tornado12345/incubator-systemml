@@ -22,7 +22,6 @@ package org.apache.sysml.test.integration.functions.codegen;
 import java.io.File;
 import java.util.HashMap;
 
-import org.junit.Assert;
 import org.junit.Test;
 import org.apache.sysml.api.DMLScript;
 import org.apache.sysml.api.DMLScript.RUNTIME_PLATFORM;
@@ -57,7 +56,13 @@ public class CellwiseTmplTest extends AutomatedTestBase
 	private static final String TEST_NAME19 = TEST_NAME+19; //sum(ifelse(true,Y,Z))+sum(ifelse(false,Y,Z))
 	private static final String TEST_NAME20 = TEST_NAME+20; //bitwAnd() operation
 	private static final String TEST_NAME21 = TEST_NAME+21; //relu operation, (X>0)*dout
-	
+	private static final String TEST_NAME22 = TEST_NAME+22; //sum(X * seq(1,N) + t(seq(M,1)))
+	private static final String TEST_NAME23 = TEST_NAME+23; //sum(min(X,Y,Z))
+	private static final String TEST_NAME24 = TEST_NAME+24; //min(X, Y, Z, 3, 7)
+	private static final String TEST_NAME25 = TEST_NAME+25; //bias_add
+	private static final String TEST_NAME26 = TEST_NAME+26; //bias_mult
+	private static final String TEST_NAME27 = TEST_NAME+27; //outer < +7 negative
+
 	private static final String TEST_DIR = "functions/codegen/";
 	private static final String TEST_CLASS_DIR = TEST_DIR + CellwiseTmplTest.class.getSimpleName() + "/";
 	private final static String TEST_CONF6 = "SystemML-config-codegen6.xml";
@@ -69,12 +74,12 @@ public class CellwiseTmplTest extends AutomatedTestBase
 	@Override
 	public void setUp() {
 		TestUtils.clearAssertionInformation();
-		for( int i=1; i<=21; i++ ) {
+		for( int i=1; i<=27; i++ ) {
 			addTestConfiguration( TEST_NAME+i, new TestConfiguration(
-					TEST_CLASS_DIR, TEST_NAME+i, new String[] {String.valueOf(i)}) );
+				TEST_CLASS_DIR, TEST_NAME+i, new String[] {String.valueOf(i)}) );
 		}
 	}
-		
+	
 	@Test
 	public void testCodegenCellwiseRewrite1() {
 		testCodegenIntegration( TEST_NAME1, true, ExecType.CP );
@@ -366,23 +371,106 @@ public class CellwiseTmplTest extends AutomatedTestBase
 	public void testCodegenCellwiseRewrite21_sp() {
 		testCodegenIntegration( TEST_NAME21, true, ExecType.SPARK );
 	}
+	
+	@Test
+	public void testCodegenCellwiseRewrite22() {
+		testCodegenIntegration( TEST_NAME22, true, ExecType.CP );
+	}
+
+	@Test
+	public void testCodegenCellwise22() {
+		testCodegenIntegration( TEST_NAME22, false, ExecType.CP );
+	}
+
+	@Test
+	public void testCodegenCellwiseRewrite22_sp() {
+		testCodegenIntegration( TEST_NAME22, true, ExecType.SPARK );
+	}
+	
+	@Test
+	public void testCodegenCellwiseRewrite23() {
+		testCodegenIntegration( TEST_NAME23, true, ExecType.CP );
+	}
+
+	@Test
+	public void testCodegenCellwise23() {
+		testCodegenIntegration( TEST_NAME23, false, ExecType.CP );
+	}
+
+	@Test
+	public void testCodegenCellwiseRewrite23_sp() {
+		testCodegenIntegration( TEST_NAME23, true, ExecType.SPARK );
+	}
+	
+	@Test
+	public void testCodegenCellwiseRewrite24() {
+		testCodegenIntegration( TEST_NAME24, true, ExecType.CP );
+	}
+
+	@Test
+	public void testCodegenCellwise24() {
+		testCodegenIntegration( TEST_NAME24, false, ExecType.CP );
+	}
+
+	@Test
+	public void testCodegenCellwiseRewrite24_sp() {
+		testCodegenIntegration( TEST_NAME24, true, ExecType.SPARK );
+	}
+	
+	@Test
+	public void testCodegenCellwiseRewrite25() {
+		testCodegenIntegration( TEST_NAME25, true, ExecType.CP );
+	}
+
+	@Test
+	public void testCodegenCellwise25() {
+		testCodegenIntegration( TEST_NAME25, false, ExecType.CP );
+	}
+
+	@Test //TODO handling of global col index
+	public void testCodegenCellwiseRewrite25_sp() {
+		testCodegenIntegration( TEST_NAME25, true, ExecType.SPARK );
+	}
+	
+	@Test
+	public void testCodegenCellwiseRewrite26() {
+		testCodegenIntegration( TEST_NAME26, true, ExecType.CP );
+	}
+
+	@Test
+	public void testCodegenCellwise26() {
+		testCodegenIntegration( TEST_NAME26, false, ExecType.CP );
+	}
+
+	@Test //TODO handling of global col index
+	public void testCodegenCellwiseRewrite26_sp() {
+		testCodegenIntegration( TEST_NAME26, true, ExecType.SPARK );
+	}
+	
+	@Test
+	public void testCodegenCellwiseRewrite27() {
+		testCodegenIntegration( TEST_NAME27, true, ExecType.CP );
+	}
+
+	@Test
+	public void testCodegenCellwise27() {
+		testCodegenIntegration( TEST_NAME27, false, ExecType.CP );
+	}
+
+	public void testCodegenCellwiseRewrite27_sp() {
+		testCodegenIntegration( TEST_NAME27, true, ExecType.SPARK );
+	}
 
 	private void testCodegenIntegration( String testname, boolean rewrites, ExecType instType )
-	{
+	{	
+		boolean sparkConfigOld = DMLScript.USE_LOCAL_SPARK_CONFIG;
+		RUNTIME_PLATFORM platformOld = setRuntimePlatform(instType);
+		if(shouldSkipTest())
+			return;
+		
 		boolean oldRewrites = OptimizerUtils.ALLOW_ALGEBRAIC_SIMPLIFICATION;
 		String oldTestConf = TEST_CONF;
-		RUNTIME_PLATFORM platformOld = rtplatform;
-		switch( instType ){
-			case MR: rtplatform = RUNTIME_PLATFORM.HADOOP; break;
-			case SPARK: rtplatform = RUNTIME_PLATFORM.SPARK; break;
-			default: rtplatform = RUNTIME_PLATFORM.HYBRID_SPARK; break;
-		}
-	
-		boolean sparkConfigOld = DMLScript.USE_LOCAL_SPARK_CONFIG;
-		if( rtplatform == RUNTIME_PLATFORM.SPARK || rtplatform == RUNTIME_PLATFORM.HYBRID_SPARK )
-			DMLScript.USE_LOCAL_SPARK_CONFIG = true;
-
-		
+			
 		if( testname.equals(TEST_NAME9) )
 			TEST_CONF = TEST_CONF6;
 		
@@ -393,7 +481,7 @@ public class CellwiseTmplTest extends AutomatedTestBase
 			
 			String HOME = SCRIPT_DIR + TEST_DIR;
 			fullDMLScriptName = HOME + testname + ".dml";
-			programArgs = new String[]{"-explain", "hops", "-stats", "-args", output("S") };
+			programArgs = new String[]{"-explain", "-stats", "-args", output("S") };
 			
 			fullRScriptName = HOME + testname + ".R";
 			rCmd = getRCmd(inputDir(), expectedDir());
@@ -404,7 +492,7 @@ public class CellwiseTmplTest extends AutomatedTestBase
 			runRScript(true); 
 			
 			if(testname.equals(TEST_NAME6) || testname.equals(TEST_NAME7) 
-				|| testname.equals(TEST_NAME9) || testname.equals(TEST_NAME10) ) {
+				|| testname.equals(TEST_NAME9) || testname.equals(TEST_NAME10)) {
 				//compare scalars 
 				HashMap<CellIndex, Double> dmlfile = readDMLScalarFromHDFS("S");
 				HashMap<CellIndex, Double> rfile  = readRScalarFromFS("S");
@@ -418,21 +506,25 @@ public class CellwiseTmplTest extends AutomatedTestBase
 			}
 			
 			if( !(rewrites && (testname.equals(TEST_NAME2)
-				|| testname.equals(TEST_NAME19))) ) //sigmoid
-				Assert.assertTrue(heavyHittersContainsSubString(
+				|| testname.equals(TEST_NAME19))) && !testname.equals(TEST_NAME27) )
+				assertTrue(heavyHittersContainsSubString(
 						"spoofCell", "sp_spoofCell", "spoofMA", "sp_spoofMA"));
 			if( testname.equals(TEST_NAME7) ) //ensure matrix mult is fused
-				Assert.assertTrue(!heavyHittersContainsSubString("tsmm"));
+				assertTrue(!heavyHittersContainsSubString("tsmm"));
 			else if( testname.equals(TEST_NAME10) ) //ensure min/max is fused
-				Assert.assertTrue(!heavyHittersContainsSubString("uamin","uamax"));
+				assertTrue(!heavyHittersContainsSubString("uamin","uamax"));
 			else if( testname.equals(TEST_NAME11) ) //ensure replace is fused
-				Assert.assertTrue(!heavyHittersContainsSubString("replace"));
+				assertTrue(!heavyHittersContainsSubString("replace"));
 			else if( testname.equals(TEST_NAME15) )
-				Assert.assertTrue(!heavyHittersContainsSubString("uacmin"));
+				assertTrue(!heavyHittersContainsSubString("uacmin"));
 			else if( testname.equals(TEST_NAME16) )
-				Assert.assertTrue(!heavyHittersContainsSubString("uack+"));
+				assertTrue(!heavyHittersContainsSubString("uack+"));
 			else if( testname.equals(TEST_NAME17) )
-				Assert.assertTrue(!heavyHittersContainsSubString("xor"));
+				assertTrue(!heavyHittersContainsSubString("xor"));
+			else if( testname.equals(TEST_NAME22) )
+				assertTrue(!heavyHittersContainsSubString("seq"));
+			else if( testname.equals(TEST_NAME23) || testname.equals(TEST_NAME24) )
+				assertTrue(!heavyHittersContainsSubString("min","nmin"));
 		}
 		finally {
 			rtplatform = platformOld;

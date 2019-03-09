@@ -25,6 +25,7 @@ import java.util.HashMap;
 
 import org.apache.sysml.api.DMLScript;
 import org.apache.sysml.api.DMLScript.RUNTIME_PLATFORM;
+import org.apache.sysml.conf.ConfigurationManager;
 import org.apache.sysml.hops.OptimizerUtils;
 import org.apache.sysml.lops.DataGen;
 import org.apache.sysml.lops.Lop;
@@ -36,7 +37,7 @@ import org.apache.sysml.runtime.controlprogram.ParForProgramBlock.PDataPartition
 import org.apache.sysml.runtime.controlprogram.caching.FrameObject;
 import org.apache.sysml.runtime.controlprogram.caching.MatrixObject;
 import org.apache.sysml.runtime.controlprogram.context.ExecutionContext;
-import org.apache.sysml.runtime.controlprogram.parfor.ProgramConverter;
+import org.apache.sysml.runtime.util.ProgramConverter;
 import org.apache.sysml.runtime.instructions.cp.Data;
 import org.apache.sysml.runtime.matrix.JobReturn;
 import org.apache.sysml.runtime.matrix.MatrixCharacteristics;
@@ -1269,7 +1270,7 @@ public class MRJobInstruction extends Instruction
 
 	@Override
 	public void processInstruction(ExecutionContext ec) {
-		if ( DMLScript.rtplatform == RUNTIME_PLATFORM.SINGLE_NODE)
+		if ( ConfigurationManager.getExecutionMode() == RUNTIME_PLATFORM.SINGLE_NODE)
 			throw new DMLRuntimeException("MapReduce jobs cannot be executed when execution mode = singlenode");
 		
 		//execute MR job

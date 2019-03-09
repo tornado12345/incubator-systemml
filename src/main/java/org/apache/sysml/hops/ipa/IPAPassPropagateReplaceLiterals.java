@@ -20,12 +20,15 @@
 package org.apache.sysml.hops.ipa;
 
 import java.util.ArrayList;
+import java.util.List;
 
 import org.apache.sysml.hops.FunctionOp;
 import org.apache.sysml.hops.Hop;
 import org.apache.sysml.hops.HopsException;
 import org.apache.sysml.hops.LiteralOp;
+import org.apache.sysml.hops.Hop.DataOpTypes;
 import org.apache.sysml.hops.recompile.Recompiler;
+import org.apache.sysml.hops.rewrite.HopRewriteUtils;
 import org.apache.sysml.parser.DMLProgram;
 import org.apache.sysml.parser.DataIdentifier;
 import org.apache.sysml.parser.ForStatement;
@@ -55,8 +58,30 @@ public class IPAPassPropagateReplaceLiterals extends IPAPass
 	@Override
 	public void rewriteProgram( DMLProgram prog, FunctionCallGraph fgraph, FunctionCallSizeInfo fcallSizes ) 
 	{
+		//step 1: propagate final literals across main program
+		LocalVariableMap constants = new LocalVariableMap();
+		for( StatementBlock sb : prog.getStatementBlocks() ) {
+			//delete update constant variables
+			constants.removeAllIn(sb.variablesUpdated().getVariableNames());
+			//literal replacement
+			rReplaceLiterals(sb, constants);
+			//extract literal assignments
+			if( HopRewriteUtils.isLastLevelStatementBlock(sb) ) {
+				for( Hop root : sb.getHops() )
+					if( HopRewriteUtils.isData(root, DataOpTypes.TRANSIENTWRITE)
+						&& root.getInput().get(0) instanceof LiteralOp) {
+						constants.put(root.getName(), ScalarObjectFactory
+							.createScalarObject((LiteralOp)root.getInput().get(0)));
+					}
+			}
+		}
+		
+		//step 2: propagate literals into functions
 		for( String fkey : fgraph.getReachableFunctions() ) {
-			FunctionOp first = fgraph.getFunctionCalls(fkey).get(0);
+			List<FunctionOp> flist = fgraph.getFunctionCalls(fkey);
+			if( flist.isEmpty() ) //robustness removed functions
+				continue;
+			FunctionOp first = flist.get(0);
 			
 			//propagate and replace amenable literals into function
 			if( fcallSizes.hasSafeLiterals(fkey) ) {

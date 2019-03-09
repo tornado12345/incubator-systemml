@@ -21,9 +21,9 @@ package org.apache.sysml.test.integration.functions.transform;
 
 import org.apache.sysml.api.DMLScript;
 import org.apache.sysml.api.DMLScript.RUNTIME_PLATFORM;
+import org.apache.sysml.runtime.io.FileFormatPropertiesCSV;
 import org.apache.sysml.runtime.io.FrameReader;
 import org.apache.sysml.runtime.io.FrameReaderFactory;
-import org.apache.sysml.runtime.matrix.data.CSVFileFormatProperties;
 import org.apache.sysml.runtime.matrix.data.FrameBlock;
 import org.apache.sysml.runtime.matrix.data.InputInfo;
 import org.apache.sysml.runtime.util.DataConverter;
@@ -94,13 +94,10 @@ public class TransformFrameEncodeColmapTest extends AutomatedTestBase
 	
 	private void runTransformTest( String testname, RUNTIME_PLATFORM rt, String ofmt, boolean colnames )
 	{
-		//set runtime platform
-		RUNTIME_PLATFORM rtold = rtplatform;
-		rtplatform = rt;
-
 		boolean sparkConfigOld = DMLScript.USE_LOCAL_SPARK_CONFIG;
-		if( rtplatform == RUNTIME_PLATFORM.SPARK || rtplatform == RUNTIME_PLATFORM.HYBRID_SPARK)
-			DMLScript.USE_LOCAL_SPARK_CONFIG = true;
+		RUNTIME_PLATFORM rtold = setRuntimePlatform(rt);
+		if(shouldSkipTest())
+			return;
 
 		//set transform specification
 		String DATASET = DATASET1;
@@ -125,7 +122,7 @@ public class TransformFrameEncodeColmapTest extends AutomatedTestBase
 			
 			//read input/output and compare
 			FrameReader reader1 = FrameReaderFactory.createFrameReader(InputInfo.CSVInputInfo, 
-				new CSVFileFormatProperties(true, ",", false));
+				new FileFormatPropertiesCSV(true, ",", false));
 			FrameBlock fb1 = reader1.readFrameFromHDFS(HOME + "input/" + DATASET, -1L, -1L);
 			FrameReader reader2 = FrameReaderFactory.createFrameReader(InputInfo.CSVInputInfo);
 			FrameBlock fb2 = reader2.readFrameFromHDFS(output("tfout"), -1L, -1L);

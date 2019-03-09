@@ -20,7 +20,6 @@
 package org.apache.sysml.parser;
 
 import java.io.BufferedReader;
-import java.io.IOException;
 import java.io.InputStreamReader;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -36,7 +35,9 @@ import org.apache.sysml.conf.ConfigurationManager;
 import org.apache.sysml.hops.DataGenOp;
 import org.apache.sysml.parser.LanguageException.LanguageErrorCodes;
 import org.apache.sysml.parser.common.CustomErrorListener;
+import org.apache.sysml.runtime.DMLRuntimeException;
 import org.apache.sysml.runtime.controlprogram.parfor.stat.InfrastructureAnalyzer;
+import org.apache.sysml.runtime.io.FileFormatPropertiesMM;
 import org.apache.sysml.runtime.io.IOUtilFunctions;
 import org.apache.sysml.runtime.util.MapReduceTool;
 import org.apache.sysml.runtime.util.UtilFunctions;
@@ -47,31 +48,31 @@ import org.apache.wink.json4j.JSONObject;
 
 public class DataExpression extends DataIdentifier 
 {
-	public static final String RAND_ROWS 	=  "rows";	 
-	public static final String RAND_COLS 	=  "cols";
-	public static final String RAND_MIN  	=  "min";
-	public static final String RAND_MAX  	=  "max";
-	public static final String RAND_SPARSITY = "sparsity"; 
-	public static final String RAND_SEED    =  "seed";
-	public static final String RAND_PDF		=  "pdf";
-	public static final String RAND_LAMBDA	=  "lambda";
+	public static final String RAND_ROWS = "rows";
+	public static final String RAND_COLS = "cols";
+	public static final String RAND_MIN = "min";
+	public static final String RAND_MAX = "max";
+	public static final String RAND_SPARSITY = "sparsity";
+	public static final String RAND_SEED = "seed";
+	public static final String RAND_PDF = "pdf";
+	public static final String RAND_LAMBDA = "lambda";
 	
 	public static final String RAND_PDF_UNIFORM = "uniform";
 	
-	public static final String RAND_BY_ROW 	 =  "byrow";	 
-	public static final String RAND_DIMNAMES =  "dimnames";
-	public static final String RAND_DATA 	 =  "data";
+	public static final String RAND_BY_ROW = "byrow";
+	public static final String RAND_DIMNAMES = "dimnames";
+	public static final String RAND_DATA = "data";
 	
 	public static final String IO_FILENAME = "iofilename";
 	public static final String READROWPARAM = "rows";
 	public static final String READCOLPARAM = "cols";
-	public static final String READNUMNONZEROPARAM = "nnz";
+	public static final String READNNZPARAM = "nnz";
 	
-	public static final String FORMAT_TYPE 						= "format";
-	public static final String FORMAT_TYPE_VALUE_TEXT 			= "text";
-	public static final String FORMAT_TYPE_VALUE_BINARY 		= "binary";
-	public static final String FORMAT_TYPE_VALUE_CSV			= "csv";
-	public static final String FORMAT_TYPE_VALUE_MATRIXMARKET	= "mm";
+	public static final String FORMAT_TYPE = "format";
+	public static final String FORMAT_TYPE_VALUE_TEXT = "text";
+	public static final String FORMAT_TYPE_VALUE_BINARY = "binary";
+	public static final String FORMAT_TYPE_VALUE_CSV = "csv";
+	public static final String FORMAT_TYPE_VALUE_MATRIXMARKET = "mm";
 	
 	public static final String ROWBLOCKCOUNTPARAM = "rows_in_block";
 	public static final String COLUMNBLOCKCOUNTPARAM = "cols_in_block";
@@ -101,7 +102,7 @@ public class DataExpression extends DataIdentifier
 	
 	// Valid parameter names in a metadata file
 	public static final String[] READ_VALID_MTD_PARAM_NAMES = 
-		{ IO_FILENAME, READROWPARAM, READCOLPARAM, READNUMNONZEROPARAM, FORMAT_TYPE,
+		{ IO_FILENAME, READROWPARAM, READCOLPARAM, READNNZPARAM, FORMAT_TYPE,
 			ROWBLOCKCOUNTPARAM, COLUMNBLOCKCOUNTPARAM, DATATYPEPARAM, VALUETYPEPARAM, SCHEMAPARAM, DESCRIPTIONPARAM,
 			AUTHORPARAM, CREATEDPARAM,
 			// Parameters related to delimited/csv files.
@@ -110,10 +111,10 @@ public class DataExpression extends DataIdentifier
 
 	public static final String[] READ_VALID_PARAM_NAMES = 
 	{	IO_FILENAME, READROWPARAM, READCOLPARAM, FORMAT_TYPE, DATATYPEPARAM, VALUETYPEPARAM, SCHEMAPARAM,
-		ROWBLOCKCOUNTPARAM, COLUMNBLOCKCOUNTPARAM, READNUMNONZEROPARAM, 
+		ROWBLOCKCOUNTPARAM, COLUMNBLOCKCOUNTPARAM, READNNZPARAM, 
 			// Parameters related to delimited/csv files.
 			DELIM_FILL_VALUE, DELIM_DELIMITER, DELIM_FILL, DELIM_HAS_HEADER_ROW, DELIM_NA_STRINGS
-	}; 
+	};
 		
 	/* Default Values for delimited (CSV) files */
 	public static final String  DEFAULT_DELIM_DELIMITER = ",";
@@ -379,13 +380,12 @@ public class DataExpression extends DataIdentifier
 
 	@Override
 	public Expression rewriteExpression(String prefix) {
-		
 		HashMap<String,Expression> newVarParams = new HashMap<>();
 		for( Entry<String, Expression> e : _varParams.entrySet() ){
 			String key = e.getKey();
 			Expression newExpr = e.getValue().rewriteExpression(prefix);
 			newVarParams.put(key, newExpr);
-		}	
+		}
 		DataExpression retVal = new DataExpression(_opcode, newVarParams, this);
 		retVal._strInit = this._strInit;
 		
@@ -465,16 +465,20 @@ public class DataExpression extends DataIdentifier
 		
 		// if required, initialize values
 		setFilename(value.getFilename());
-		if (getBeginLine() == 0) 	setBeginLine(value.getBeginLine());
-		if (getBeginColumn() == 0) 	setBeginColumn(value.getBeginColumn());
-		if (getEndLine() == 0) 		setEndLine(value.getEndLine());
-		if (getEndColumn() == 0) 	setEndColumn(value.getEndColumn());
+		if (getBeginLine() == 0) setBeginLine(value.getBeginLine());
+		if (getBeginColumn() == 0) setBeginColumn(value.getBeginColumn());
+		if (getEndLine() == 0) setEndLine(value.getEndLine());
+		if (getEndColumn() == 0) setEndColumn(value.getEndColumn());
 		if (getText() == null) setText(value.getText());
-		
 	}
 	
 	public void removeVarParam(String name) {
 		_varParams.remove(name);
+	}
+	
+	public void removeVarParam(String... names) {
+		for( String name : names )
+			removeVarParam(name);
 	}
 	
 	private String getInputFileName(HashMap<String, ConstIdentifier> currConstVars, boolean conditional) {
@@ -531,8 +535,8 @@ public class DataExpression extends DataIdentifier
 			inputParamExpr.validateExpression(ids, currConstVars, conditional);
 			if ( getVarParam(s).getOutput().getDataType() != DataType.SCALAR && !s.equals(RAND_DATA)) {
 				raiseValidateError("Non-scalar data types are not supported for data expression.", conditional,LanguageErrorCodes.INVALID_PARAMETERS);
-			}	
-		}	
+			}
+		}
 	
 		//general data expression constant propagation
 		performConstantPropagationRand( currConstVars );
@@ -550,7 +554,7 @@ public class DataExpression extends DataIdentifier
 			// replace DataOp MATRIX with RAND -- Rand handles matrix generation for Scalar values
 			// replace data parameter with min / max within Rand case below
 			this.setOpCode(DataOp.RAND);
-		}		
+		}
 		
 		
 		// IMPORTANT: for each operation, one must handle unnamed parameters
@@ -558,7 +562,6 @@ public class DataExpression extends DataIdentifier
 		switch (this.getOpCode()) {
 		
 		case READ:
-					
 			if (getVarParam(DATATYPEPARAM) != null && !(getVarParam(DATATYPEPARAM) instanceof StringIdentifier)){
 				raiseValidateError("for read statement, parameter " + DATATYPEPARAM + " can only be a string. " +
 						"Valid values are: " + Statement.MATRIX_DATA_TYPE +", " + Statement.SCALAR_DATA_TYPE, conditional);
@@ -581,11 +584,11 @@ public class DataExpression extends DataIdentifier
 						)
 				{
 					raiseValidateError("Invalid parameters in read statement of a scalar: " +
-							toString() + ". Only " + VALUETYPEPARAM + " is allowed.", conditional, LanguageErrorCodes.INVALID_PARAMETERS);
+						toString() + ". Only " + VALUETYPEPARAM + " is allowed.", conditional, LanguageErrorCodes.INVALID_PARAMETERS);
 				}
 			}
 			
-			JSONObject configObject = null;	
+			JSONObject configObject = null;
 
 			// Process expressions in input filename
 			String inputFileName = getInputFileName(currConstVars, conditional);
@@ -604,7 +607,7 @@ public class DataExpression extends DataIdentifier
 			{
 				String fsext = InfrastructureAnalyzer.isLocalMode() ? "FS (local mode)" : "HDFS";
 				raiseValidateError("Read input file does not exist on "+fsext+": " + 
-						inputFileName, conditional);
+					inputFileName, conditional);
 			}
 
 			// track whether format type has been inferred 
@@ -615,8 +618,7 @@ public class DataExpression extends DataIdentifier
 			
 			// check if file is matrix market format
 			if (formatTypeString == null && shouldReadMTD){
-				boolean isMatrixMarketFormat = checkHasMatrixMarketFormat(inputFileName, mtdFileName, conditional); 
-				if (isMatrixMarketFormat) {
+				if ( checkHasMatrixMarketFormat(inputFileName, mtdFileName, conditional) ) {
 					formatTypeString = FORMAT_TYPE_VALUE_MATRIXMARKET;
 					addVarParam(FORMAT_TYPE, new StringIdentifier(FORMAT_TYPE_VALUE_MATRIXMARKET, this));
 					inferredFormatType = true;
@@ -626,17 +628,13 @@ public class DataExpression extends DataIdentifier
 			
 			// check if file is delimited format
 			if (formatTypeString == null && shouldReadMTD ) {
-				boolean isDelimitedFormat = checkHasDelimitedFormat(inputFileName, conditional); 
-				
-				if (isDelimitedFormat) {
+				if (checkHasDelimitedFormat(inputFileName, conditional)) {
 					addVarParam(FORMAT_TYPE, new StringIdentifier(FORMAT_TYPE_VALUE_CSV, this));
 					formatTypeString = FORMAT_TYPE_VALUE_CSV;
 					inferredFormatType = true;
-					// shouldReadMTD = false;
 				}
 			}
 			
-				
 			if (formatTypeString != null && formatTypeString.equalsIgnoreCase(FORMAT_TYPE_VALUE_MATRIXMARKET)){
 				/*
 				 *  handle MATRIXMARKET_FORMAT_TYPE format
@@ -644,78 +642,68 @@ public class DataExpression extends DataIdentifier
 				 * 1) only allow IO_FILENAME as ONLY valid parameter
 				 * 
 				 * 2) open the file
-				 * 		A) verify header line (1st line) equals 
-				 * 		B) read and discard comment lines
-				 * 		C) get size information from sizing info line --- M N L
+				 *  A) verify header line (1st line) equals 
+				 *  B) read and discard comment lines
+				 *  C) get size information from sizing info line --- M N L
 				 */
-				
-				for (String key : _varParams.keySet()){
-					if ( !(key.equals(IO_FILENAME) || key.equals(FORMAT_TYPE) ) ){
-						raiseValidateError("Invalid parameters in readMM statement: " +
-								toString() + ". Only " + IO_FILENAME + " is allowed.", conditional, LanguageErrorCodes.INVALID_PARAMETERS);
-					}
-				}
-				
 				
 				// should NOT attempt to read MTD file for MatrixMarket format
 				shouldReadMTD = false;
 				
 				// get metadata from MatrixMarket format file
-				String[] headerLines = readMatrixMarketFile(inputFileName, conditional);
-				
-				// process 1st line of MatrixMarket format -- must be identical to legal header
-				String legalHeaderMM = "%%MatrixMarket matrix coordinate real general";
+				String[] headerLines = null;
+				try {
+					headerLines = IOUtilFunctions.readMatrixMarketHeader(inputFileName);
+				}
+				catch(DMLRuntimeException ex) {
+					raiseValidateError(ex.getMessage(), conditional);
+				}
 				
 				if (headerLines != null && headerLines.length >= 2){
+					// process 1st line of MatrixMarket format to check for support types
+					
 					String firstLine = headerLines[0].trim();
-					if (!firstLine.equals(legalHeaderMM)){
-						raiseValidateError("Unsupported format in MatrixMarket file: " +
-								headerLines[0] + ". Only supported format in MatrixMarket file has header line " + legalHeaderMM, 
-								conditional, LanguageErrorCodes.INVALID_PARAMETERS);
-						}
-				
+					FileFormatPropertiesMM props = FileFormatPropertiesMM.parse(firstLine);
+					
 					// process 2nd line of MatrixMarket format -- must have size information
 				
 					String secondLine = headerLines[1];
 					String[] sizeInfo = secondLine.trim().split("\\s+");
 					if (sizeInfo.length != 3){
 						raiseValidateError("Unsupported size line in MatrixMarket file: " +
-								headerLines[1] + ". Only supported format in MatrixMarket file has size line: <NUM ROWS> <NUM COLS> <NUM NON-ZEROS>, where each value is an integer.", conditional);
+							headerLines[1] + ". Only supported format in MatrixMarket file has size line: <NUM ROWS> <NUM COLS> <NUM NON-ZEROS>, where each value is an integer.", conditional);
 					}
 				
-					try {
-						long rowsCount = Long.parseLong(sizeInfo[0]);
-						if (rowsCount < 0)
-							throw new Exception("invalid rows count");
-						addVarParam(READROWPARAM, new IntIdentifier(rowsCount, this));
-					} catch (Exception e) {
-						raiseValidateError("In MatrixMarket file " + getVarParam(IO_FILENAME) + " invalid row count " 
-							+ sizeInfo[0] + " (must be long value >= 0). Sizing info line from file: " + headerLines[1],
-							conditional, LanguageErrorCodes.INVALID_PARAMETERS);
+					long rowsCount = Long.parseLong(sizeInfo[0]);
+					if (rowsCount < 0)
+						raiseValidateError("MM file: invalid number of rows: "+rowsCount);
+					else if( getVarParam(READROWPARAM) != null ) {
+						long rowsCount2 = Long.parseLong(getVarParam(READROWPARAM).toString());
+						if( rowsCount2 != rowsCount )
+							raiseValidateError("MM file: invalid specified number of rows: "+rowsCount2+" vs "+rowsCount);
 					}
+					addVarParam(READROWPARAM, new IntIdentifier(rowsCount, this));
+					
 
-					try {
-						long colsCount = Long.parseLong(sizeInfo[1]);
-						if (colsCount < 0)
-							throw new Exception("invalid cols count");
-						addVarParam(READCOLPARAM, new IntIdentifier(colsCount, this));
-					} catch (Exception e) {
-						raiseValidateError("In MatrixMarket file " + getVarParam(IO_FILENAME) + " invalid column count "
-								+ sizeInfo[1] + " (must be long value >= 0). Sizing info line from file: "
-								+ headerLines[1], conditional, LanguageErrorCodes.INVALID_PARAMETERS);
+					long colsCount = Long.parseLong(sizeInfo[1]);
+					if (colsCount < 0)
+						raiseValidateError("MM file: invalid number of columns: "+colsCount);
+					else if( getVarParam(READCOLPARAM) != null ) {
+						long colsCount2 = Long.parseLong(getVarParam(READCOLPARAM).toString());
+						if( colsCount2 != colsCount )
+							raiseValidateError("MM file: invalid specified number of columns: "+colsCount2+" vs "+colsCount);
 					}
-
-					try {
-						long nnzCount = Long.parseLong(sizeInfo[2]);
-						if (nnzCount < 0)
-							throw new Exception("invalid nnz count");
-						addVarParam("nnz", new IntIdentifier(nnzCount, this));
-					} catch (Exception e) {
-						raiseValidateError("In MatrixMarket file " + getVarParam(IO_FILENAME)
-								+ " invalid number non-zeros " + sizeInfo[2]
-								+ " (must be long value >= 0). Sizing info line from file: " + headerLines[1],
-								conditional, LanguageErrorCodes.INVALID_PARAMETERS);
+					addVarParam(READCOLPARAM, new IntIdentifier(colsCount, this));
+					
+					long nnzCount = Long.parseLong(sizeInfo[2]) * (props.isSymmetric() ? 2 : 1);
+					if (nnzCount < 0)
+						raiseValidateError("MM file: invalid number of non-zeros: "+nnzCount);
+					else if( getVarParam(READNNZPARAM) != null ) {
+						long nnzCount2 = Long.parseLong(getVarParam(READNNZPARAM).toString());
+						if( nnzCount2 != nnzCount )
+							raiseValidateError("MM file: invalid specified number of non-zeros: "+nnzCount2+" vs "+nnzCount);
 					}
+					addVarParam(READNNZPARAM, new IntIdentifier(nnzCount, this));
 				}
 			}
 			
@@ -755,7 +743,7 @@ public class DataExpression extends DataIdentifier
 								|| key.equals(DELIM_HAS_HEADER_ROW) || key.equals(DELIM_DELIMITER) 
 								|| key.equals(DELIM_FILL) || key.equals(DELIM_FILL_VALUE)
 								|| key.equals(READROWPARAM) || key.equals(READCOLPARAM)
-								|| key.equals(READNUMNONZEROPARAM) || key.equals(DATATYPEPARAM) || key.equals(VALUETYPEPARAM)
+								|| key.equals(READNNZPARAM) || key.equals(DATATYPEPARAM) || key.equals(VALUETYPEPARAM)
 								|| key.equals(SCHEMAPARAM)) )
 						{	
 							String msg = "Only parameters allowed are: " + IO_FILENAME     + "," 
@@ -1576,7 +1564,7 @@ public class DataExpression extends DataIdentifier
 	private void performConstantPropagationReadWrite( HashMap<String, ConstIdentifier> currConstVars )
 	{
 		//here, we propagate constants for all read/write parameters that are required during validate.
-		String[] paramNamesForEval = new String[]{FORMAT_TYPE, IO_FILENAME, READROWPARAM, READCOLPARAM, READNUMNONZEROPARAM};
+		String[] paramNamesForEval = new String[]{FORMAT_TYPE, IO_FILENAME, READROWPARAM, READCOLPARAM, READNNZPARAM};
 		
 		//replace data identifiers with const identifiers
 		performConstantPropagation(currConstVars, paramNamesForEval);
@@ -1591,7 +1579,7 @@ public class DataExpression extends DataIdentifier
 				&& currConstVars.containsKey(((DataIdentifier) paramExp).getName()))
 			{
 				addVarParam(paramName, currConstVars.get(((DataIdentifier)paramExp).getName()));
-			}				
+			}
 		}
 	}
 	
@@ -1827,60 +1815,12 @@ public class DataExpression extends DataIdentifier
 			
 		return retVal;
 	}
-
-	public String[] readMatrixMarketFile(String filename, boolean conditional) 
-	{
-		String[] retVal = new String[2];
-		retVal[0] = new String("");
-		retVal[1] = new String("");
-		boolean exists = false;
-		
-		try 
-		{
-			Path path = new Path(filename);
-			FileSystem fs = IOUtilFunctions.getFileSystem(path);
-			exists = fs.exists(path);
-			boolean getFileStatusIsDir = fs.getFileStatus(path).isDirectory();
-			
-			if (exists && getFileStatusIsDir){
-				raiseValidateError("MatrixMarket files as directories not supported", conditional);
-			}
-			else if (exists) {
-				BufferedReader in = new BufferedReader(new InputStreamReader(fs.open(path)));
-				try
-				{
-					retVal[0] = in.readLine();
-					// skip all commented lines
-					do {
-						retVal[1] = in.readLine();
-					} while ( retVal[1].charAt(0) == '%' );
-					
-					if ( !retVal[0].startsWith("%%") ) {
-						raiseValidateError("MatrixMarket files must begin with a header line.", conditional);
-					}
-				}
-				finally {
-					IOUtilFunctions.closeSilently(in);
-				}
-			}
-			else {
-				raiseValidateError("Could not find the file: " + filename, conditional);
-			}
-			
-		} catch (IOException e){
-			//LOG.error(this.printErrorLocation() + "Error reading MatrixMarket file: " + filename );
-			//throw new LanguageException(this.printErrorLocation() + "Error reading MatrixMarket file: " + filename );
-			throw new LanguageException(e);
-		}
-
-		return retVal;
-	}
 	
 	public boolean checkHasMatrixMarketFormat(String inputFileName, String mtdFileName, boolean conditional) 
 	{
 		// Check the MTD file exists. if there is an MTD file, return false.
 		JSONObject mtdObject = readMetadataFile(mtdFileName, conditional);
-	    if (mtdObject != null)
+		if (mtdObject != null)
 			return false;
 		
 		if( MapReduceTool.existsFileOnHDFS(inputFileName) 
@@ -1891,13 +1831,13 @@ public class DataExpression extends DataIdentifier
 				Path path = new Path(inputFileName);
 				FileSystem fs = IOUtilFunctions.getFileSystem(path);
 				in = new BufferedReader(new InputStreamReader(fs.open(path)));
-				String headerLine = new String("");			
+				String headerLine = new String("");
 				if (in.ready())
 					headerLine = in.readLine();
 				return (headerLine !=null && headerLine.startsWith("%%"));
 			}
 			catch(Exception ex) {
-				throw new LanguageException("Failed to read mtd file.", ex);
+				throw new LanguageException("Failed to read matrix market header.", ex);
 			}
 			finally {
 				IOUtilFunctions.closeSilently(in);

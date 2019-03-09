@@ -26,6 +26,7 @@ import java.io.Serializable;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -64,7 +65,7 @@ import org.apache.sysml.runtime.controlprogram.parfor.DataPartitionerRemoteSpark
 import org.apache.sysml.runtime.controlprogram.parfor.LocalParWorker;
 import org.apache.sysml.runtime.controlprogram.parfor.LocalTaskQueue;
 import org.apache.sysml.runtime.controlprogram.parfor.ParForBody;
-import org.apache.sysml.runtime.controlprogram.parfor.ProgramConverter;
+import org.apache.sysml.runtime.util.ProgramConverter;
 import org.apache.sysml.runtime.controlprogram.parfor.RemoteDPParForMR;
 import org.apache.sysml.runtime.controlprogram.parfor.RemoteDPParForSpark;
 import org.apache.sysml.runtime.controlprogram.parfor.RemoteParForJobReturn;
@@ -103,6 +104,7 @@ import org.apache.sysml.runtime.instructions.cp.BooleanObject;
 import org.apache.sysml.runtime.instructions.cp.Data;
 import org.apache.sysml.runtime.instructions.cp.DoubleObject;
 import org.apache.sysml.runtime.instructions.cp.IntObject;
+import org.apache.sysml.runtime.instructions.cp.ListObject;
 import org.apache.sysml.runtime.instructions.cp.StringObject;
 import org.apache.sysml.runtime.instructions.cp.VariableCPInstruction;
 import org.apache.sysml.runtime.io.IOUtilFunctions;
@@ -766,7 +768,7 @@ public class ParForProgramBlock extends ForProgramBlock
 			
 			//maintain statistics
 			long tinit = (long) time.stop();
-			if( DMLScript.STATISTICS )
+			if( ConfigurationManager.isStatistics() )
 				Statistics.incrementParForInitTime(tinit);
 			if( _monitor ) 
 				StatisticMonitor.putPFStat(_ID, Stat.PARFOR_INIT_PARWRK_T, tinit);
@@ -829,7 +831,7 @@ public class ParForProgramBlock extends ForProgramBlock
 
 			// Frees up the GPUContexts used in the threaded Parfor and sets
 			// the main thread to use the GPUContext
-			if (DMLScript.USE_ACCELERATOR) {
+			if (ConfigurationManager.isGPU()) {
 				ec.getGPUContext(0).initializeThread();
 			}
 		}
@@ -1043,8 +1045,9 @@ public class ParForProgramBlock extends ForProgramBlock
 		exportMatricesToHDFS(ec);
 		
 		// Step 3) submit Spark parfor job (no lazy evaluation, since collect on result)
+		boolean topLevelPF = OptimizerUtils.isTopLevelParFor();
 		RemoteParForJobReturn ret = RemoteParForSpark.runJob(_ID, program,
-			clsMap, tasks, ec, _resultVars, _enableCPCaching, _numThreads);
+			clsMap, tasks, ec, _resultVars, _enableCPCaching, _numThreads, topLevelPF);
 		
 		if( _monitor ) 
 			StatisticMonitor.putPFStat(_ID, Stat.PARFOR_WAIT_EXEC_T, time.stop());
@@ -1139,7 +1142,7 @@ public class ParForProgramBlock extends ForProgramBlock
 			if( sb == null )
 				throw new DMLRuntimeException("ParFor statement block required for reasoning about data partitioning.");
 			
-			for( String var : sb.getReadOnlyParentVars() )
+			for( String var : sb.getReadOnlyParentMatrixVars() )
 			{
 				Data dat = ec.getVariable(var);
 				//skip non-existing input matrices (which are due to unknown sizes marked for
@@ -1273,6 +1276,9 @@ public class ParForProgramBlock extends ForProgramBlock
 						//currently we do not create any unscoped matrix or frame outputs
 						//because metadata (e.g., outputinfo) not known at this place.
 						break;
+					case LIST:
+						dataObj = new ListObject(Collections.emptyList());
+						break;
 					case UNKNOWN:
 						break;
 					default:
@@ -1359,7 +1365,7 @@ public class ParForProgramBlock extends ForProgramBlock
 
 			// If GPU mode is enabled, gets a GPUContext from the pool of GPUContexts
 			// and sets it in the ExecutionContext of the parfor
-			if (DMLScript.USE_ACCELERATOR){
+			if (ConfigurationManager.isGPU()){
 				cpEc.setGPUContexts(Arrays.asList(ec.getGPUContext(index)));
 			}
 			
@@ -1664,30 +1670,49 @@ public class ParForProgramBlock extends ForProgramBlock
 			for( ResultVar var : _resultVars ) //foreach non-local write
 			{
 				Data dat = ec.getVariable(var._name);
+				
 				if( dat instanceof MatrixObject ) //robustness scalars
 				{
 					MatrixObject out = (MatrixObject) dat;
-					MatrixObject[] in = new MatrixObject[ results.length ];
-					for( int i=0; i< results.length; i++ )
-						in[i] = (MatrixObject) results[i].get( var._name );
+					MatrixObject[] in = Arrays.stream(results).map(vars -> 
+						vars.get(var._name)).toArray(MatrixObject[]::new);
 					String fname = constructResultMergeFileName();
 					ResultMerge rm = createResultMerge(_resultMerge, out, in, fname, var._isAccum, ec);
-					MatrixObject outNew = null;
-					if( USE_PARALLEL_RESULT_MERGE )
-						outNew = rm.executeParallelMerge( _numThreads );
-					else
-						outNew = rm.executeSerialMerge();
+					MatrixObject outNew = USE_PARALLEL_RESULT_MERGE ?
+						rm.executeParallelMerge(_numThreads) :
+						rm.executeSerialMerge();
 					
 					//cleanup existing var
 					Data exdata = ec.removeVariable(var._name);
-					if( exdata != null && exdata != outNew && exdata instanceof MatrixObject )
-						ec.cleanupCacheableData((MatrixObject)exdata);
+					if( exdata != null && exdata != outNew )
+						ec.cleanupDataObject(exdata);
 					
 					//cleanup of intermediate result variables
 					cleanWorkerResultVariables( ec, out, in );
-					
+
 					//set merged result variable
 					ec.setVariable(var._name, outNew);
+				}
+				else if(dat instanceof ListObject) {
+					ListObject oldList = (ListObject) dat;
+					ListObject newList = new ListObject(oldList);
+					ListObject[] in = Arrays.stream(results).map(vars -> 
+						vars.get(var._name)).toArray(ListObject[]::new);
+					
+					//merge modified list entries into result
+					for(int i=0; i<oldList.getLength(); i++) {
+						Data compare = oldList.slice(i);
+						for( int j=0; j<in.length; j++ ) {
+							Data tmp = in[j].slice(i);
+							if( compare != tmp ) {
+								newList.set(i, tmp);
+								break; //inner for loop
+							}
+						}
+					}
+					
+					//set merged result variable
+					ec.setVariable(var._name, newList);
 				}
 			}
 		}
@@ -1701,7 +1726,7 @@ public class ParForProgramBlock extends ForProgramBlock
 		if( numTasks != expTasks || numIters !=expIters ) //consistency check
 			throw new DMLRuntimeException("PARFOR: Number of executed tasks does not match the number of created tasks: tasks "+numTasks+"/"+expTasks+", iters "+numIters+"/"+expIters+".");
 	
-		if( DMLScript.STATISTICS )
+		if( ConfigurationManager.isStatistics() )
 			Statistics.incrementParForMergeTime((long) time.stop());
 	}
 	
@@ -1828,7 +1853,7 @@ public class ParForProgramBlock extends ForProgramBlock
 		long ret = -1;
 		
 		//if forced remote exec and single node
-		if(    DMLScript.rtplatform == RUNTIME_PLATFORM.SINGLE_NODE 
+		if(    ConfigurationManager.getExecutionMode() == RUNTIME_PLATFORM.SINGLE_NODE 
 			&& _execMode == PExecMode.REMOTE_MR
 			&& _optMode == POptMode.NONE      )
 		{

@@ -21,7 +21,7 @@ package org.apache.sysml.hops.recompile;
 
 import java.util.ArrayList;
 
-import org.apache.sysml.api.DMLScript;
+import org.apache.sysml.conf.ConfigurationManager;
 import org.apache.sysml.hops.AggUnaryOp;
 import org.apache.sysml.hops.DataOp;
 import org.apache.sysml.hops.Hop;
@@ -34,11 +34,13 @@ import org.apache.sysml.hops.Hop.DataOpTypes;
 import org.apache.sysml.hops.Hop.Direction;
 import org.apache.sysml.hops.Hop.OpOp1;
 import org.apache.sysml.hops.rewrite.HopRewriteUtils;
+import org.apache.sysml.lops.compile.Dag;
 import org.apache.sysml.parser.Expression.DataType;
 import org.apache.sysml.runtime.DMLRuntimeException;
 import org.apache.sysml.runtime.controlprogram.LocalVariableMap;
 import org.apache.sysml.runtime.controlprogram.caching.MatrixObject;
 import org.apache.sysml.runtime.instructions.cp.Data;
+import org.apache.sysml.runtime.instructions.cp.ListObject;
 import org.apache.sysml.runtime.instructions.cp.ScalarObject;
 import org.apache.sysml.runtime.instructions.cp.ScalarObjectFactory;
 import org.apache.sysml.runtime.matrix.data.MatrixBlock;
@@ -49,7 +51,7 @@ public class LiteralReplacement
 	
 	//internal configuration parameters
 	private static final long REPLACE_LITERALS_MAX_MATRIX_SIZE = 1000000; //10^6 cells (8MB)
-	private static final boolean REPORT_LITERAL_REPLACE_OPS_STATS = true; 	
+	private static final boolean REPORT_LITERAL_REPLACE_OPS_STATS = true;
 	
 	protected static void rReplaceLiterals( Hop hop, LocalVariableMap vars, boolean scalarsOnly )
 	{
@@ -73,6 +75,9 @@ public class LiteralReplacement
 					lit = (lit==null) ? replaceLiteralValueTypeCastRightIndexing(c, vars) : lit;
 					lit = (lit==null) ? replaceLiteralFullUnaryAggregate(c, vars) : lit;
 					lit = (lit==null) ? replaceLiteralFullUnaryAggregateRightIndexing(c, vars) : lit;
+					lit = (lit==null) ? replaceTReadMatrixFromList(c, vars) : lit;
+					lit = (lit==null) ? replaceTReadMatrixLookupFromList(c, vars) : lit;
+					lit = (lit==null) ? replaceTReadScalarLookupFromList(c, vars) : lit;
 				}
 				
 				//replace hop w/ literal on demand
@@ -126,7 +131,7 @@ public class LiteralReplacement
 		return ret;
 	}
 	
-	private static LiteralOp replaceLiteralValueTypeCastScalarRead( Hop c, LocalVariableMap vars )
+	private static LiteralOp replaceLiteralValueTypeCastScalarRead(Hop c, LocalVariableMap vars)
 	{
 		LiteralOp ret = null;
 		
@@ -136,30 +141,16 @@ public class LiteralReplacement
 				&& c.getInput().get(0) instanceof DataOp && c.getDataType()==DataType.SCALAR )
 		{
 			Data dat = vars.get(c.getInput().get(0).getName());
-			if( dat != null ) //required for selective constant propagation
-			{
+			if( dat != null ) { //required for selective constant propagation
 				ScalarObject sdat = (ScalarObject)dat;
-				UnaryOp cast = (UnaryOp) c;
-				switch( cast.getOp() ) {
-					case CAST_AS_INT:
-						ret = new LiteralOp(sdat.getLongValue());		
-						break;
-					case CAST_AS_DOUBLE:
-						ret = new LiteralOp(sdat.getDoubleValue());		
-						break;						
-					case CAST_AS_BOOLEAN:
-						ret = new LiteralOp(sdat.getBooleanValue());		
-						break;
-					default:	
-						//otherwise: do nothing
-				}
-			}	
+				ret = ScalarObjectFactory.createLiteralOp(sdat, (UnaryOp) c);
+			}
 		}
 		
 		return ret;
 	}
 	
-	private static LiteralOp replaceLiteralValueTypeCastLiteral( Hop c, LocalVariableMap vars )
+	private static LiteralOp replaceLiteralValueTypeCastLiteral(Hop c, LocalVariableMap vars)
 	{
 		LiteralOp ret = null;
 		
@@ -176,17 +167,17 @@ public class LiteralReplacement
 				switch( cast.getOp() ) {
 					case CAST_AS_INT:
 						long ival = HopRewriteUtils.getIntValue(sdat);
-						ret = new LiteralOp(ival);		
+						ret = new LiteralOp(ival);
 						break;
 					case CAST_AS_DOUBLE:
 						double dval = HopRewriteUtils.getDoubleValue(sdat);
-						ret = new LiteralOp(dval);		
-						break;						
+						ret = new LiteralOp(dval);
+						break;
 					case CAST_AS_BOOLEAN:
 						boolean bval = HopRewriteUtils.getBooleanValue(sdat);
-						ret = new LiteralOp(bval);		
+						ret = new LiteralOp(bval);
 						break;
-					default:	
+					default:
 						//otherwise: do nothing
 				}
 			}
@@ -323,7 +314,7 @@ public class LiteralReplacement
 				long clval = getIntValueDataLiteral(cl, vars);
 				long cuval = getIntValueDataLiteral(cu, vars);
 
-				MatrixObject mo = (MatrixObject) vars.get(data.getName());	
+				MatrixObject mo = (MatrixObject) vars.get(data.getName());
 				
 				//get the dimension information from the matrix object because the hop
 				//dimensions might not have been updated during recompile
@@ -342,7 +333,70 @@ public class LiteralReplacement
 		
 		return ret;
 	}
-
+	
+	private static DataOp replaceTReadMatrixFromList( Hop c, LocalVariableMap vars ) {
+		//pattern: as.matrix(X) or as.matrix(X) with X being a list
+		DataOp ret = null;
+		if( HopRewriteUtils.isUnary(c, OpOp1.CAST_AS_MATRIX) ) {
+			Hop in = c.getInput().get(0);
+			if( in.getDataType() == DataType.LIST
+				&& HopRewriteUtils.isData(in, DataOpTypes.TRANSIENTREAD) ) {
+				ListObject list = (ListObject)vars.get(in.getName());
+				if( list.getLength() == 1 ) {
+					String varname = Dag.getNextUniqueVarname(DataType.MATRIX);
+					MatrixObject mo = (MatrixObject) list.slice(0);
+					vars.put(varname, mo);
+					ret = HopRewriteUtils.createTransientRead(varname, c);
+				}
+			}
+		}
+		return ret;
+	}
+	
+	private static DataOp replaceTReadMatrixLookupFromList( Hop c, LocalVariableMap vars ) {
+		//pattern: as.matrix(X[i:i]) or as.matrix(X['a','a']) with X being a list
+		DataOp ret = null;
+		if( HopRewriteUtils.isUnary(c, OpOp1.CAST_AS_MATRIX)
+			&& c.getInput().get(0) instanceof IndexingOp ) {
+			Hop ix = c.getInput().get(0);
+			Hop ixIn = c.getInput().get(0).getInput().get(0);
+			if( ixIn.getDataType() == DataType.LIST
+				&& HopRewriteUtils.isData(ixIn, DataOpTypes.TRANSIENTREAD)
+				&& ix.getInput().get(1) instanceof LiteralOp 
+				&& ix.getInput().get(2) instanceof LiteralOp
+				&& ix.getInput().get(1) == ix.getInput().get(2) ) {
+				ListObject list = (ListObject)vars.get(ixIn.getName());
+				String varname = Dag.getNextUniqueVarname(DataType.MATRIX);
+				LiteralOp lit = (LiteralOp) ix.getInput().get(1);
+				MatrixObject mo = (MatrixObject) (!lit.getValueType().isNumeric() ?
+					list.slice(lit.getName()) : list.slice((int)lit.getLongValue()-1));
+				vars.put(varname, mo);
+				ret = HopRewriteUtils.createTransientRead(varname, c);
+			}
+		}
+		return ret;
+	}
+	
+	private static LiteralOp replaceTReadScalarLookupFromList( Hop c, LocalVariableMap vars ) {
+		//pattern: as.scalar(X[i:i]) or as.scalar(X['a','a']) with X being a list
+		if( HopRewriteUtils.isUnary(c, OpOp1.CAST_AS_SCALAR)
+			&& c.getInput().get(0) instanceof IndexingOp ) {
+			Hop ix = c.getInput().get(0);
+			Hop ixIn = c.getInput().get(0).getInput().get(0);
+			if( ixIn.getDataType() == DataType.LIST
+				&& HopRewriteUtils.isData(ixIn, DataOpTypes.TRANSIENTREAD)
+				&& ix.getInput().get(1) instanceof LiteralOp 
+				&& ix.getInput().get(2) instanceof LiteralOp
+				&& ix.getInput().get(1) == ix.getInput().get(2) ) {
+				ListObject list = (ListObject)vars.get(ixIn.getName());
+				LiteralOp lit = (LiteralOp) ix.getInput().get(1);
+				ScalarObject so = (ScalarObject) (!lit.getValueType().isNumeric() ?
+					list.slice(lit.getName()) : list.slice((int)lit.getLongValue()-1));
+				return ScalarObjectFactory.createLiteralOp(so);
+			}
+		}
+		return null;
+	}
 	
 	///////////////////////////////
 	// Utility functions
@@ -409,7 +463,7 @@ public class LiteralReplacement
 	private static double replaceUnaryAggregate( AggUnaryOp auop, MatrixBlock mb )
 	{
 		//setup stats reporting if necessary
-		boolean REPORT_STATS = (DMLScript.STATISTICS && REPORT_LITERAL_REPLACE_OPS_STATS); 
+		boolean REPORT_STATS = (ConfigurationManager.isStatistics() && REPORT_LITERAL_REPLACE_OPS_STATS); 
 		long t0 = REPORT_STATS ? System.nanoTime() : 0;
 		
 		//compute required unary aggregate 

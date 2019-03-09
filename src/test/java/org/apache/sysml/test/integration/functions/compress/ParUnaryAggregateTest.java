@@ -1034,8 +1034,11 @@ public class ParUnaryAggregateTest extends AutomatedTestBase
 		runUnaryAggregateTest(SparsityType.SPARSE, ValueType.CONST, AggType.MIN, false);
 	}
 	
-	private static void runUnaryAggregateTest(SparsityType sptype, ValueType vtype, AggType aggtype, boolean compress)
+	private void runUnaryAggregateTest(SparsityType sptype, ValueType vtype, AggType aggtype, boolean compress)
 	{
+		if(shouldSkipTest())
+			return;
+		
 		try
 		{
 			//prepare sparsity for input data
@@ -1079,7 +1082,7 @@ public class ParUnaryAggregateTest extends AutomatedTestBase
 			if( compress )
 				cmb.compress();
 			
-			//matrix-vector uncompressed						
+			//matrix-vector uncompressed
 			MatrixBlock ret1 = (MatrixBlock)mb.aggregateUnaryOperations(auop, new MatrixBlock(), 1000, 1000, null, true);
 			
 			//matrix-vector compressed
@@ -1092,7 +1095,9 @@ public class ParUnaryAggregateTest extends AutomatedTestBase
 					|| aggtype == AggType.ROWMINS || aggtype == AggType.ROWMINS)?rows:1;
 			int dim2 = (aggtype == AggType.COLSUMS || aggtype == AggType.COLSUMSSQ 
 					|| aggtype == AggType.COLMAXS || aggtype == AggType.COLMINS)?cols1:1;
-			TestUtils.compareMatrices(d1, d2, dim1, dim2, 0.000000001);
+			//since sumsq has a large value domain, we use a smaller absolute eps
+			double eps = (aggtype==AggType.SUMSQ || aggtype==AggType.COLSUMSSQ) ? 1e-7 : 1e-9;
+			TestUtils.compareMatrices(d1, d2, dim1, dim2, eps);
 		}
 		catch(Exception ex) {
 			throw new RuntimeException(ex);

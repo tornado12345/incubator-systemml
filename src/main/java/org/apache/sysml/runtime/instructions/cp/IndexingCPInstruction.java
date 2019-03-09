@@ -50,10 +50,10 @@ public abstract class IndexingCPInstruction extends UnaryCPInstruction {
 
 	protected IndexRange getIndexRange(ExecutionContext ec) {
 		return new IndexRange( //rl, ru, cl, ru
-			(int)(ec.getScalarInput(rowLower.getName(), rowLower.getValueType(), rowLower.isLiteral()).getLongValue()-1),
-			(int)(ec.getScalarInput(rowUpper.getName(), rowUpper.getValueType(), rowUpper.isLiteral()).getLongValue()-1),
-			(int)(ec.getScalarInput(colLower.getName(), colLower.getValueType(), colLower.isLiteral()).getLongValue()-1),
-			(int)(ec.getScalarInput(colUpper.getName(), colUpper.getValueType(), colUpper.isLiteral()).getLongValue()-1));
+			(int)(ec.getScalarInput(rowLower).getLongValue()-1),
+			(int)(ec.getScalarInput(rowUpper).getLongValue()-1),
+			(int)(ec.getScalarInput(colLower).getLongValue()-1),
+			(int)(ec.getScalarInput(colUpper).getLongValue()-1));
 	}
 
 	public static IndexingCPInstruction parseInstruction ( String str ) {
@@ -71,10 +71,12 @@ public abstract class IndexingCPInstruction extends UnaryCPInstruction {
 				out = new CPOperand(parts[6]);
 				if( in.getDataType()==DataType.MATRIX )
 					return new MatrixIndexingCPInstruction(in, rl, ru, cl, cu, out, opcode, str);
-				else if (in.getDataType() == DataType.FRAME)
+				else if( in.getDataType() == DataType.FRAME )
 					return new FrameIndexingCPInstruction(in, rl, ru, cl, cu, out, opcode, str);
+				else if( in.getDataType() == DataType.LIST )
+					return new ListIndexingCPInstruction(in, rl, ru, cl, cu, out, opcode, str);
 				else 
-					throw new DMLRuntimeException("Can index only on Frames or Matrices");
+					throw new DMLRuntimeException("Can index only on matrices, frames, and lists.");
 			}
 			else {
 				throw new DMLRuntimeException("Invalid number of operands in instruction: " + str);
@@ -94,8 +96,10 @@ public abstract class IndexingCPInstruction extends UnaryCPInstruction {
 					return new MatrixIndexingCPInstruction(lhsInput, rhsInput, rl, ru, cl, cu, out, opcode, str);
 				else if (lhsInput.getDataType() == DataType.FRAME)
 					return new FrameIndexingCPInstruction(lhsInput, rhsInput, rl, ru, cl, cu, out, opcode, str);
+				else if( lhsInput.getDataType() == DataType.LIST )
+					return new ListIndexingCPInstruction(lhsInput, rhsInput, rl, ru, cl, cu, out, opcode, str);
 				else 
-					throw new DMLRuntimeException("Can index only on Frames or Matrices");
+					throw new DMLRuntimeException("Can index only on matrices, frames, and lists.");
 			}
 			else {
 				throw new DMLRuntimeException("Invalid number of operands in instruction: " + str);

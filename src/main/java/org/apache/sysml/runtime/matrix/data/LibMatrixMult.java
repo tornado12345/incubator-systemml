@@ -242,7 +242,8 @@ public class LibMatrixMult
 	 */
 	public static void matrixMultChain(MatrixBlock mX, MatrixBlock mV, MatrixBlock mW, MatrixBlock ret, ChainType ct) {
 		//check inputs / outputs (after that mV and mW guaranteed to be dense)
-		if( mX.isEmptyBlock(false) || mV.isEmptyBlock(false) || (mW !=null && mW.isEmptyBlock(false)) ) {
+		if( mX.isEmptyBlock(false) || (mV.isEmptyBlock(false) && ct!=ChainType.XtXvy)
+			|| (mW !=null && mW.isEmptyBlock(false)) ) {
 			ret.examSparsity(); //turn empty dense into sparse
 			return;
 		}
@@ -283,7 +284,8 @@ public class LibMatrixMult
 	 */
 	public static void matrixMultChain(MatrixBlock mX, MatrixBlock mV, MatrixBlock mW, MatrixBlock ret, ChainType ct, int k) {
 		//check inputs / outputs (after that mV and mW guaranteed to be dense)
-		if( mX.isEmptyBlock(false) || mV.isEmptyBlock(false) || (mW !=null && mW.isEmptyBlock(false)) ) {
+		if( mX.isEmptyBlock(false) || (mV.isEmptyBlock(false) && ct!=ChainType.XtXvy)
+			|| (mW !=null && mW.isEmptyBlock(false)) ) {
 			ret.examSparsity(); //turn empty dense into sparse
 			return;
 		}
@@ -1044,9 +1046,10 @@ public class LibMatrixMult
 		}
 	}
 	
-	private static void matrixMultDenseDenseMM(DenseBlock a, DenseBlock b, DenseBlock c, int n, int cd, int rl, int ru, int cl, int cu) {
+	//note: public for use by codegen for consistency
+	public static void matrixMultDenseDenseMM(DenseBlock a, DenseBlock b, DenseBlock c, int n, int cd, int rl, int ru, int cl, int cu) {
 		//1) Unrolled inner loop (for better instruction-level parallelism)
-		//2) Blocked execution (for less cache trashing in parallel exec) 	
+		//2) Blocked execution (for less cache trashing in parallel exec) 
 		//3) Asymmetric block sizes (for less misses in inner loop, yet blocks in L1/L2)
 		
 		final int blocksizeI = 32; //64//256KB c block (typical L2 size per core), 32KB a block 
@@ -1075,7 +1078,7 @@ public class LibMatrixMult
 							int bkpos = b.pos(bk, bj);
 							
 							//determine nnz of a (for sparsity-aware skipping of rows)
-							int knnz = copyNonZeroElements(avals, aixi, bkpos, bj, n, ta, tbi, bklen);
+							int knnz = copyNonZeroElements(avals, aixi, bkpos, n, ta, tbi, bklen);
 							
 							//rest not aligned to blocks of 4 rows
 							final int bn = knnz % 4;
@@ -1237,14 +1240,14 @@ public class LibMatrixMult
 		double[] bvals = b.valuesAt(0);
 		double[] cvals = c.valuesAt(0);
 		
-		final int blocksizeI = 32;
-		final int blocksizeK = (int)Math.max(2*1024,2*1024*xsp/32); //~ 16KB L1
+		final int blocksizeI = 512; //8KB curk+cvals in L1
+		final int blocksizeK = (int)Math.max(2048,2048*xsp/32); //~256KB bvals in L2
 		int[] curk = new int[blocksizeI];
 		
 		for( int bi = rl; bi < ru; bi+=blocksizeI ) {
 			Arrays.fill(curk, 0); //reset positions
 			for( int bk=0, bimin = Math.min(ru, bi+blocksizeI); bk<cd; bk+=blocksizeK ) {
-				for( int i=bi, bkmin = Math.min(bk+blocksizeK, cd); i<bimin; i++) {
+				for( int i=bi, bkmin = bk+blocksizeK; i<bimin; i++) {
 					if( a.isEmpty(i) ) continue;
 					int apos = a.pos(i);
 					int alen = a.size(i);
@@ -1301,7 +1304,9 @@ public class LibMatrixMult
 			int k2 = (ru==cd) ? alen : a.posFIndexGTE(i, ru);
 			k2 = (k2>=0) ? apos+k2 : apos+alen;
 			
-			if( k1==k2 || b.isContiguous(aix[k1], aix[k2-1]) ) {
+			//note: guard k1 (and thus also k2) against overrun nnz, and guard
+			//contiguous check for k2-1 against underrun of start pos for k1==k2.
+			if( k1<apos+alen && (k1==k2 || b.isContiguous(aix[k1], aix[k2-1])) ) {
 				double[] bvals = b.values(aix[k1]);
 				int base = aix[k1]*n - b.pos(aix[k1]);
 				//rest not aligned to blocks of 4 rows
@@ -1503,92 +1508,150 @@ public class LibMatrixMult
 		final boolean leftUS = m1.isUltraSparse()
 			|| (m1.isUltraSparse(false) && !m2.isUltraSparse())
 			|| (m1.sparse && !m2.sparse);
+		
+		if( m1 == m2 ) //self-product
+			matrixMultUltraSparseSelf(m1, ret, rl, ru);
+		else if( leftUS )
+			matrixMultUltraSparseLeft(m1, m2, ret, rl, ru);
+		else
+			matrixMultUltraSparseRight(m1, m2, ret, rl, ru);
+		//no need to recompute nonzeros because maintained internally
+	}
+	
+	private static void matrixMultUltraSparseSelf(MatrixBlock m1, MatrixBlock ret, int rl, int ru) {
+		//common use case: self product G %*% G of graph resulting in dense but still sparse output
+		int n = m1.clen; //m2.clen
+		SparseBlock a = m1.sparseBlock;
+		SparseBlock c = ret.sparseBlock;
+		double[] tmp = null;
+		
+		//IKJ with dense working row for lhs nnz/row > threshold
+		for( int i=rl; i<ru; i++ ) {
+			if( a.isEmpty(i) ) continue;
+			int alen = a.size(i);
+			int apos = a.pos(i);
+			int[] aix = a.indexes(i);
+			double[] avals = a.values(i);
+			
+			//compute number of aggregated non-zeros for input row
+			int nnz1 = (int) Math.min(UtilFunctions.computeNnz(a, aix, apos, alen), n);
+			boolean ldense = nnz1 > n / 128;
+			
+			//perform vector-matrix multiply w/ dense or sparse output
+			if( ldense ) { //init dense tmp row
+				tmp = (tmp == null) ? new double[n] : tmp;
+				Arrays.fill(tmp, 0);
+			}
+			for( int k=apos; k<apos+alen; k++ ) {
+				if( a.isEmpty(aix[k]) ) continue;
+				int blen = a.size(aix[k]);
+				int bpos = a.pos(aix[k]);
+				int[] bix = a.indexes(aix[k]);
+				double aval = avals[k];
+				double[] bvals = a.values(aix[k]);
+				if( ldense ) { //dense aggregation
+					for( int j=bpos; j<bpos+blen; j++ )
+						tmp[bix[j]] += aval * bvals[j];
+				}
+				else { //sparse aggregation
+					c.allocate(i, nnz1);
+					for( int j=bpos; j<bpos+blen; j++ )
+						c.add(i, bix[j], aval * bvals[j]);
+					c.compact(i); //conditional compaction
+				}
+			}
+			if( ldense ) { //copy dense tmp row
+				int nnz2 = UtilFunctions.computeNnz(tmp, 0, n);
+				c.allocate(i, nnz2); //avoid reallocation
+				for( int j=0; j<n; j++ )
+					c.append(i, j, tmp[j]);
+			}
+		}
+		//recompute non-zero for single-threaded
+		if( rl == 0 && ru == m1.rlen )
+			ret.recomputeNonZeros();
+	}
+	
+	private static void matrixMultUltraSparseLeft(MatrixBlock m1, MatrixBlock m2, MatrixBlock ret, int rl, int ru) {
 		final int m  = m1.rlen;
-		final int cd = m1.clen;
 		final int n  = m2.clen;
 		
-		if( leftUS ) //left is ultra-sparse (IKJ)
-		{
-			SparseBlock a = m1.sparseBlock;
-			SparseBlock c = ret.sparseBlock;
-			boolean rightSparse = m2.sparse;
-			
-			for( int i=rl; i<ru; i++ )
-			{
-				if( a.isEmpty(i) ) continue; 
-				int apos = a.pos(i);
-				int alen = a.size(i);
-				int[] aixs = a.indexes(i);
-				double[] avals = a.values(i);
-				
-				if( alen==1 ) { 
-					//row selection (now aggregation) with potential scaling
-					int aix = aixs[apos];
-					int lnnz = 0;
-					if( rightSparse ) { //sparse right matrix (full row copy)
-						if( !m2.sparseBlock.isEmpty(aix) ) {
-							ret.rlen=m;
-							ret.allocateSparseRowsBlock(false); //allocation on demand
-							boolean ldeep = (m2.sparseBlock instanceof SparseBlockMCSR);
-							ret.sparseBlock.set(i, m2.sparseBlock.get(aix), ldeep);
-							ret.nonZeros += (lnnz = ret.sparseBlock.size(i));
-						}
+		//left is ultra-sparse (IKJ)
+		SparseBlock a = m1.sparseBlock;
+		SparseBlock c = ret.sparseBlock;
+		boolean rightSparse = m2.sparse;
+		
+		for( int i=rl; i<ru; i++ ) {
+			if( a.isEmpty(i) ) continue; 
+			int apos = a.pos(i);
+			int alen = a.size(i);
+			int[] aixs = a.indexes(i);
+			double[] avals = a.values(i);
+			if( alen==1 ) { 
+				//row selection (now aggregation) with potential scaling
+				int aix = aixs[apos];
+				int lnnz = 0;
+				if( rightSparse ) { //sparse right matrix (full row copy)
+					if( !m2.sparseBlock.isEmpty(aix) ) {
+						ret.rlen=m;
+						ret.allocateSparseRowsBlock(false); //allocation on demand
+						boolean ldeep = (m2.sparseBlock instanceof SparseBlockMCSR);
+						ret.sparseBlock.set(i, m2.sparseBlock.get(aix), ldeep);
+						ret.nonZeros += (lnnz = ret.sparseBlock.size(i));
 					}
-					else { //dense right matrix (append all values)
-						lnnz = (int)m2.recomputeNonZeros(aix, aix, 0, n-1);
-						if( lnnz > 0 ) {
-							c.allocate(i, lnnz); //allocate once
-							double[] bvals = m2.getDenseBlock().values(aix);
-							for( int j=0, bix=m2.getDenseBlock().pos(aix); j<n; j++ )
-								c.append(i, j, bvals[bix+j]);
-							ret.nonZeros += lnnz;
-						}
-					}
-					//optional scaling if not pure selection
-					if( avals[apos] != 1 && lnnz > 0 )
-						vectMultiplyInPlace(avals[apos], c.values(i), c.pos(i), c.size(i));
 				}
-				else //GENERAL CASE
-				{
-					for( int k=apos; k<apos+alen; k++ )
-					{
-						double aval = avals[k];
-						int aix = aixs[k];
-						for( int j=0; j<n; j++ )
-						{
-							double cval = ret.quickGetValue(i, j);
-							double cvald = aval*m2.quickGetValue(aix, j);
-							if( cvald != 0 )
-								ret.quickSetValue(i, j, cval+cvald);
-						}
+				else { //dense right matrix (append all values)
+					lnnz = (int)m2.recomputeNonZeros(aix, aix, 0, n-1);
+					if( lnnz > 0 ) {
+						c.allocate(i, lnnz); //allocate once
+						double[] bvals = m2.getDenseBlock().values(aix);
+						for( int j=0, bix=m2.getDenseBlock().pos(aix); j<n; j++ )
+							c.append(i, j, bvals[bix+j]);
+						ret.nonZeros += lnnz;
+					}
+				}
+				//optional scaling if not pure selection
+				if( avals[apos] != 1 && lnnz > 0 )
+					vectMultiplyInPlace(avals[apos], c.values(i), c.pos(i), c.size(i));
+			}
+			else { //GENERAL CASE
+				for( int k=apos; k<apos+alen; k++ ) {
+					double aval = avals[k];
+					int aix = aixs[k];
+					for( int j=0; j<n; j++ ) {
+						double cval = ret.quickGetValue(i, j);
+						double cvald = aval*m2.quickGetValue(aix, j);
+						if( cvald != 0 )
+							ret.quickSetValue(i, j, cval+cvald);
 					}
 				}
 			}
 		}
-		else //right is ultra-sparse (KJI)
-		{
-			SparseBlock b = m2.sparseBlock;
-			
-			for(int k = 0; k < cd; k++ ) {
-				if( b.isEmpty(k) ) continue; 
-				int bpos = b.pos(k);
-				int blen = b.size(k);
-				int[] bixs = b.indexes(k);
-				double[] bvals = b.values(k);
-				for( int j=bpos; j<bpos+blen; j++ ) {
-					double bval = bvals[j];
-					int bix = bixs[j];
-					for( int i=rl; i<ru; i++ ) {
-						double cvald = bval*m1.quickGetValue(i, k);
-						if( cvald != 0 ){
-							double cval = ret.quickGetValue(i, bix);
-							ret.quickSetValue(i, bix, cval+cvald);
-						}
+	}
+	
+	private static void matrixMultUltraSparseRight(MatrixBlock m1, MatrixBlock m2, MatrixBlock ret, int rl, int ru) {
+		final int cd = m1.clen;
+		
+		//right is ultra-sparse (KJI)
+		SparseBlock b = m2.sparseBlock;
+		for(int k = 0; k < cd; k++ ) {
+			if( b.isEmpty(k) ) continue; 
+			int bpos = b.pos(k);
+			int blen = b.size(k);
+			int[] bixs = b.indexes(k);
+			double[] bvals = b.values(k);
+			for( int j=bpos; j<bpos+blen; j++ ) {
+				double bval = bvals[j];
+				int bix = bixs[j];
+				for( int i=rl; i<ru; i++ ) {
+					double cvald = bval*m1.quickGetValue(i, k);
+					if( cvald != 0 ){
+						double cval = ret.quickGetValue(i, bix);
+						ret.quickSetValue(i, bix, cval+cvald);
 					}
 				}
 			}
 		}
-		//no need to recompute nonzeros because maintained internally
 	}
 
 	private static void matrixMultChainDense(MatrixBlock mX, MatrixBlock mV, MatrixBlock mW, MatrixBlock ret, ChainType ct, int rl, int ru) 
@@ -1612,7 +1675,8 @@ public class LibMatrixMult
 		for( int i=rl; i < rl+bn; i++ ) {
 			double[] avals = a.values(i);
 			int aix = a.pos(i);
-			double val = dotProduct(avals, b, aix, 0, cd);
+			double val = (b == null) ? 0 :
+				dotProduct(avals, b, aix, 0, cd);
 			val *= (weights) ? w[i] : 1;
 			val -= (weights2) ? w[i] : 0;
 			vectMultiplyAdd(val, avals, c, aix, 0, cd);
@@ -1623,10 +1687,12 @@ public class LibMatrixMult
 		{
 			//compute 1st matrix-vector for row block
 			Arrays.fill(tmp, 0);
-			for( int bj=0; bj<cd; bj+=blocksizeJ ) {
-				int bjmin = Math.min(cd-bj, blocksizeJ);
-				for( int i=0; i < blocksizeI; i++ )
-					tmp[i] += dotProduct(a.values(bi+i), b, a.pos(bi+i,bj), bj, bjmin);
+			if( b != null ) {
+				for( int bj=0; bj<cd; bj+=blocksizeJ ) {
+					int bjmin = Math.min(cd-bj, blocksizeJ);
+					for( int i=0; i < blocksizeI; i++ )
+						tmp[i] += dotProduct(a.values(bi+i), b, a.pos(bi+i,bj), bj, bjmin);
+				}
 			}
 			
 			//multiply/subtract weights (in-place), if required
@@ -1671,7 +1737,8 @@ public class LibMatrixMult
 			double[] avals = a.values(i);
 			
 			//compute 1st matrix-vector dot product
-			double val = dotProduct(avals, b, aix, apos, 0, alen);
+			double val = (b == null) ? 0 :
+				dotProduct(avals, b, aix, apos, 0, alen);
 			
 			//multiply/subtract weights, if required
 			val *= (weights) ? w[i] : 1;
@@ -1735,9 +1802,10 @@ public class LibMatrixMult
 									if( a.isContiguous(bk, bkmin-1) ) {
 										double[] avals = a.values(bk);
 										int aixi = a.pos(bk, i);
+										int bkpos = a.pos(bk, bj);
 										
 										//determine nnz of a (for sparsity-aware skipping of rows)
-										int knnz = copyNonZeroElements(avals, aixi, bk, bj, n, nx, ta, tbi, bklen);
+										int knnz = copyNonZeroElements(avals, aixi, bkpos, n, nx, ta, tbi, bklen);
 										
 										//rest not aligned to blocks of 4 rows
 										final int bn = knnz % 4;
@@ -3026,7 +3094,7 @@ public class LibMatrixMult
 	{
 		double val = 0;
 		final int bn = len%8;
-				
+		
 		//compute rest
 		for( int i = 0; i < bn; i++, ai++, bi++ )
 			val += a[ ai ] * b[ bi ];
@@ -3746,7 +3814,9 @@ public class LibMatrixMult
 		boolean sharedTP = (InfrastructureAnalyzer.getLocalParallelism() == k);
 		return k > 1 && LOW_LEVEL_OPTIMIZATION
 			&& (!checkMem || 8L * m2.clen * k < MEM_OVERHEAD_THRESHOLD)
-			&& (!checkFLOPs || FPfactor * m1.rlen * m1.clen * m2.clen >
+			//note: cast to double to avoid long overflows on ultra-sparse matrices
+			//due to FLOP computation based on number of cells not non-zeros
+			&& (!checkFLOPs || (double)FPfactor * m1.rlen * m1.clen * m2.clen >
 			(sharedTP ? PAR_MINFLOP_THRESHOLD2 : PAR_MINFLOP_THRESHOLD1));
 	}
 	
@@ -3766,6 +3836,7 @@ public class LibMatrixMult
 		double outSp = OptimizerUtils.getMatMultSparsity(
 			m1.getSparsity(), m2.getSparsity(), m1.rlen, m1.clen, m2.clen, true);
 		return (m1.isUltraSparse() || m2.isUltraSparse()) //base case
+			|| (m1.isUltraSparse(false) && m1 == m2) //ultra-sparse self product
 			|| (m1.isUltraSparsePermutationMatrix() 
 				&& OptimizerUtils.getSparsity(m2.rlen, m2.clen, m2.nonZeros)<1.0)
 			|| ((m1.isUltraSparse(false) || m2.isUltraSparse(false)) 
@@ -3789,8 +3860,8 @@ public class LibMatrixMult
 		return ret;
 	}
 
-	private static int copyNonZeroElements( double[] a, final int aixi, final int bixk, final int bj, final int n, double[] tmpa, int[] tmpbi, final int bklen )
-	{
+	//cp non-zeros for dense-dense mm
+	private static int copyNonZeroElements( double[] a, final int aixi, final int bixk, final int n, double[] tmpa, int[] tmpbi, final int bklen ) {
 		int knnz = 0;
 		for( int k = 0; k < bklen; k++ )
 			if( a[ aixi+k ] != 0 ) {
@@ -3798,21 +3869,36 @@ public class LibMatrixMult
 				tmpbi[ knnz ] = bixk + k*n;
 				knnz ++;
 			}
-		
 		return knnz;
 	}
 
-	private static int copyNonZeroElements( double[] a, int aixi, final int bk, final int bj, final int n, final int nx, double[] tmpa, int[] tmpbi, final int bklen )
-	{
+	//cp non-zeros for dense tsmm
+	private static int copyNonZeroElements( double[] a, int aixi, int bixk, final int n, final int nx, double[] tmpa, int[] tmpbi, final int bklen ) {
 		int knnz = 0;
-		for( int k = 0; k < bklen; k++, aixi+=n )
+		for( int k = 0; k < bklen; k++, aixi+=n, bixk+=nx )
 			if( a[ aixi ] != 0 ) {
 				tmpa[ knnz ] = a[ aixi ];
-				tmpbi[ knnz ] = (bk+k) * nx + bj; //scan index on b
+				tmpbi[ knnz ] = bixk;
 				knnz ++;
 			}
-		
 		return knnz;
+	}
+	
+	@SuppressWarnings("unused")
+	private static void resetPosVect(int[] curk, SparseBlock sblock, int rl, int ru) {
+		if( sblock instanceof SparseBlockMCSR ) {
+			//all rows start at position 0 (individual arrays)
+			Arrays.fill(curk, 0, ru-rl, 0);
+		}
+		else if( sblock instanceof SparseBlockCSR ) {
+			//row start positions given in row ptr array
+			SparseBlockCSR csr = (SparseBlockCSR) sblock;
+			System.arraycopy(csr.rowPointers(), rl, curk, 0, ru-rl);
+		}
+		else { //general case
+			for(int i=rl; i<ru; i++)
+				curk[i-rl] = sblock.pos(i);
+		}
 	}
 
 	private static void sumScalarResults(List<Future<Double>> tasks, MatrixBlock ret) 

@@ -19,14 +19,12 @@
 
 package org.apache.sysml.hops;
 
-import org.apache.sysml.api.DMLScript;
+import org.apache.sysml.conf.ConfigurationManager;
 import org.apache.sysml.hops.AggBinaryOp.SparkAggType;
-import org.apache.sysml.hops.Hop.MultiThreadedHop;
 import org.apache.sysml.hops.rewrite.HopRewriteUtils;
 import org.apache.sysml.lops.Aggregate;
 import org.apache.sysml.lops.Aggregate.OperationTypes;
 import org.apache.sysml.lops.Binary;
-import org.apache.sysml.lops.ConvolutionTransform;
 import org.apache.sysml.lops.Group;
 import org.apache.sysml.lops.Lop;
 import org.apache.sysml.lops.PartialAggregate;
@@ -41,24 +39,15 @@ import org.apache.sysml.runtime.controlprogram.context.SparkExecutionContext;
 import org.apache.sysml.runtime.matrix.MatrixCharacteristics;
 
 
-/* Aggregate unary (cell) operation: Sum (aij), col_sum, row_sum
- * 		Properties: 
- * 			Symbol: +, min, max, ...
- * 			1 Operand
- * 	
- * 		Semantic: generate indices, align, aggregate
- */
+// Aggregate unary (cell) operation: Sum (aij), col_sum, row_sum
 
-public class AggUnaryOp extends Hop implements MultiThreadedHop
+public class AggUnaryOp extends MultiThreadedHop
 {
-	
 	private static final boolean ALLOW_UNARYAGG_WO_FINAL_AGG = true;
 	
 	private AggOp _op;
 	private Direction _direction;
 
-	private int _maxNumThreads = -1; //-1 for unlimited
-	
 	private AggUnaryOp() {
 		//default constructor for clone
 	}
@@ -97,19 +86,10 @@ public class AggUnaryOp extends Hop implements MultiThreadedHop
 		_direction = direction;
 	}
 
-	@Override
-	public void setMaxNumThreads( int k ) {
-		_maxNumThreads = k;
-	}
-	
-	@Override
-	public int getMaxNumThreads() {
-		return _maxNumThreads;
-	}
 	
 	@Override
 	public boolean isGPUEnabled() {
-		if(!DMLScript.USE_ACCELERATOR)
+		if(!ConfigurationManager.isGPU())
 			return false;
 		
 		try {
@@ -131,20 +111,6 @@ public class AggUnaryOp extends Hop implements MultiThreadedHop
 		return false;
 	}
 	
-	/**
-	 * Checks if channels sum rewrite is applicable
-	 * 
-	 * @return returns true for pattern rowSums(matrix(colSums(X), rows=.., cols=..)) else false
-	 */
-	private boolean isChannelSumRewriteApplicable() {
-		if( OptimizerUtils.ALLOW_OPERATOR_FUSION && _op == AggOp.SUM && _direction == Direction.Row
-			&& getInput().get(0) instanceof ReorgOp && ((ReorgOp)getInput().get(0)).getOp() == ReOrgOp.RESHAPE) {
-			Hop input1 = getInput().get(0).getInput().get(0);
-			return input1 instanceof AggUnaryOp && ((AggUnaryOp)input1)._op == AggOp.SUM && ((AggUnaryOp)input1)._direction == Direction.Col;
-		}
-		return false;
-	}
-	
 	@Override
 	public Lop constructLops()
 	{
@@ -159,58 +125,42 @@ public class AggUnaryOp extends Hop implements MultiThreadedHop
 			
 			if ( et == ExecType.CP || et == ExecType.GPU ) 
 			{
-				Lop agg1 = null;
-				long numChannels = isChannelSumRewriteApplicable() ? Hop.computeSizeInformation(getInput().get(0).getInput().get(1)) : -1;
-				if(numChannels > 0 && numChannels < 1000000) {
-					// Apply channel sums only if rewrite is applicable and if the dimension of C is known at compile time
-					// and if numChannels is less than 8 MB.
-					ReorgOp in = ((ReorgOp)getInput().get(0));
-					agg1 = new ConvolutionTransform(
-							in.getInput().get(0).getInput().get(0).constructLops(), 
-							in.getInput().get(1).constructLops(),
-							in.getInput().get(2).constructLops(),
-							ConvolutionTransform.OperationTypes.CHANNEL_SUMS, getDataType(), getValueType(), et, -1);
-					agg1.getOutputParameters().setDimensions(numChannels, 1, getRowsInBlock(), getColsInBlock(), -1);
-					setLineNumbers(agg1);
-					setLops(agg1);
+				Lop agg1 = null; 
+				if( isTernaryAggregateRewriteApplicable() ) {
+					agg1 = constructLopsTernaryAggregateRewrite(et);
 				}
-				else { 
-					if( isTernaryAggregateRewriteApplicable() ) {
-						agg1 = constructLopsTernaryAggregateRewrite(et);
-					}
-					else if( isUnaryAggregateOuterCPRewriteApplicable() )
-					{
-						OperationTypes op = HopsAgg2Lops.get(_op);
-						DirectionTypes dir = HopsDirection2Lops.get(_direction);
-	
-						BinaryOp binput = (BinaryOp)getInput().get(0);
-						agg1 = new UAggOuterChain( binput.getInput().get(0).constructLops(), 
-								binput.getInput().get(1).constructLops(), op, dir, 
-								HopsOpOp2LopsB.get(binput.getOp()), DataType.MATRIX, getValueType(), ExecType.CP);
-						PartialAggregate.setDimensionsBasedOnDirection(agg1, getDim1(), getDim2(), input.getRowsInBlock(), input.getColsInBlock(), dir);
-					
-						if (getDataType() == DataType.SCALAR) {
-							UnaryCP unary1 = new UnaryCP(agg1, HopsOpOp1LopsUS.get(OpOp1.CAST_AS_SCALAR),
-									                    getDataType(), getValueType());
-							unary1.getOutputParameters().setDimensions(0, 0, 0, 0, -1);
-							setLineNumbers(unary1);
-							setLops(unary1);
-						}
-					
-					}				
-					else { //general case		
-						int k = OptimizerUtils.getConstrainedNumThreads(_maxNumThreads);
-						agg1 = new PartialAggregate(input.constructLops(), 
-								HopsAgg2Lops.get(_op), HopsDirection2Lops.get(_direction), getDataType(),getValueType(), et, k);
-					}
-					
-					setOutputDimensions(agg1);
-					setLineNumbers(agg1);
-					setLops(agg1);
-					
+				else if( isUnaryAggregateOuterCPRewriteApplicable() )
+				{
+					OperationTypes op = HopsAgg2Lops.get(_op);
+					DirectionTypes dir = HopsDirection2Lops.get(_direction);
+
+					BinaryOp binput = (BinaryOp)getInput().get(0);
+					agg1 = new UAggOuterChain( binput.getInput().get(0).constructLops(), 
+							binput.getInput().get(1).constructLops(), op, dir, 
+							HopsOpOp2LopsB.get(binput.getOp()), DataType.MATRIX, getValueType(), ExecType.CP);
+					PartialAggregate.setDimensionsBasedOnDirection(agg1, getDim1(), getDim2(), input.getRowsInBlock(), input.getColsInBlock(), dir);
+				
 					if (getDataType() == DataType.SCALAR) {
-						agg1.getOutputParameters().setDimensions(1, 1, getRowsInBlock(), getColsInBlock(), getNnz());
+						UnaryCP unary1 = new UnaryCP(agg1, HopsOpOp1LopsUS.get(OpOp1.CAST_AS_SCALAR),
+							getDataType(), getValueType());
+						unary1.getOutputParameters().setDimensions(0, 0, 0, 0, -1);
+						setLineNumbers(unary1);
+						agg1 = unary1;
 					}
+				
+				}
+				else { //general case
+					int k = OptimizerUtils.getConstrainedNumThreads(_maxNumThreads);
+					agg1 = new PartialAggregate(input.constructLops(), 
+							HopsAgg2Lops.get(_op), HopsDirection2Lops.get(_direction), getDataType(),getValueType(), et, k);
+				}
+				
+				setOutputDimensions(agg1);
+				setLineNumbers(agg1);
+				setLops(agg1);
+				
+				if (getDataType() == DataType.SCALAR) {
+					agg1.getOutputParameters().setDimensions(1, 1, getRowsInBlock(), getColsInBlock(), getNnz());
 				}
 			}
 			else if( et == ExecType.MR )
@@ -314,7 +264,7 @@ public class AggUnaryOp extends Hop implements MultiThreadedHop
 						setLops(unary1);
 					}
 				
-				}				
+				}
 				else //default
 				{
 					boolean needAgg = requiresAggregation(input, _direction);
@@ -549,7 +499,7 @@ public class AggUnaryOp extends Hop implements MultiThreadedHop
 		boolean ret = false;
 		
 		// TODO: Disable ternary aggregate rewrite on GPU backend.
-		if(DMLScript.USE_ACCELERATOR)
+		if(!ConfigurationManager.isGPU())
 			return false;
 		
 		//currently we support only sum over binary multiply but potentially 
@@ -605,7 +555,7 @@ public class AggUnaryOp extends Hop implements MultiThreadedHop
 		boolean ret = false;
 		Hop input = getInput().get(0);
 		
-		if( input instanceof BinaryOp && ((BinaryOp)input).isOuterVectorOperator() )
+		if( input instanceof BinaryOp && ((BinaryOp)input).isOuter() )
 		{
 			//for special cases, we need to hold the broadcast twice in order to allow for
 			//an efficient binary search over a plain java array
@@ -642,7 +592,7 @@ public class AggUnaryOp extends Hop implements MultiThreadedHop
 		boolean ret = false;
 		Hop input = getInput().get(0);
 		
-		if( input instanceof BinaryOp && ((BinaryOp)input).isOuterVectorOperator() )
+		if( input instanceof BinaryOp && ((BinaryOp)input).isOuter() )
 		{
 			//note: both cases (partitioned matrix, and sorted double array), require to
 			//fit the broadcast twice into the local memory budget. Also, the memory 
@@ -684,16 +634,13 @@ public class AggUnaryOp extends Hop implements MultiThreadedHop
 	 *   
 	 * @return true if unary aggregate outer
 	 */
-	private boolean isUnaryAggregateOuterCPRewriteApplicable() 
-	{
+	private boolean isUnaryAggregateOuterCPRewriteApplicable() {
 		boolean ret = false;
 		Hop input = getInput().get(0);
-		
-		if(( input instanceof BinaryOp && ((BinaryOp)input).isOuterVectorOperator() )
+		if(( input instanceof BinaryOp && ((BinaryOp)input).isOuter() )
 			&& (_op == AggOp.MAXINDEX || _op == AggOp.MININDEX || _op == AggOp.SUM)
 			&& (isCompareOperator(((BinaryOp)input).getOp())))
 			ret = true;
-
 		return ret;
 	}
 

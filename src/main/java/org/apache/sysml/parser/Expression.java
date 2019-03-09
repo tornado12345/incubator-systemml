@@ -86,19 +86,22 @@ public abstract class Expression implements ParseInfo
 		CUMMIN,
 		CUMPROD,
 		CUMSUM,
+		CUMSUMPROD,
 		DIAG,
 		EIGEN,
 		EVAL,
 		EXISTS,
-		CONV2D, CONV2D_BACKWARD_FILTER, CONV2D_BACKWARD_DATA, BIAS_ADD, BIAS_MULTIPLY,
+		CONV2D, CONV2D_BACKWARD_FILTER, CONV2D_BACKWARD_DATA, BIASADD, BIASMULT,
 		MAX_POOL, AVG_POOL, MAX_POOL_BACKWARD, AVG_POOL_BACKWARD,
+		LSTM, LSTM_BACKWARD,
 		EXP,
 		FLOOR,
 		IFELSE,
 		INTERQUANTILE,
 		INVERSE,
 		IQM,
-		LENGTH, 
+		LENGTH,
+		LIST,
 		LOG,
 		LU,
 		MAX,
@@ -156,9 +159,11 @@ public abstract class Expression implements ParseInfo
 	public enum ParameterizedBuiltinFunctionOp {
 		GROUPEDAGG, RMEMPTY, REPLACE, ORDER, LOWER_TRI, UPPER_TRI,
 		// Distribution Functions
-		CDF, INVCDF, PNORM, QNORM, PT, QT, PF, QF, PCHISQ, QCHISQ, PEXP, QEXP,
+		CDF, INVCDF, PNORM, QNORM, PT, QT, PF, QF, PCHISQ, QCHISQ, PEXP, QEXP, PBINOMIAL, QBINOMIAL,
 		TRANSFORMAPPLY, TRANSFORMDECODE, TRANSFORMENCODE, TRANSFORMCOLMAP, TRANSFORMMETA,
-		TOSTRING,	// The "toString" method for DML; named arguments accepted to format output
+		TOSTRING, // The "toString" method for DML; named arguments accepted to format output
+		LIST, // named argument lists; unnamed lists become builtin function
+		PARAMSERV,
 		INVALID
 	}
 	
@@ -180,7 +185,7 @@ public abstract class Expression implements ParseInfo
 	 * Data types (matrix, scalar, frame, object, unknown).
 	 */
 	public enum DataType {
-		MATRIX, SCALAR, FRAME, OBJECT, UNKNOWN;
+		MATRIX, SCALAR, FRAME, LIST, OBJECT, UNKNOWN;
 		
 		public boolean isMatrix() {
 			return (this == MATRIX);
@@ -191,13 +196,19 @@ public abstract class Expression implements ParseInfo
 		public boolean isScalar() {
 			return (this == SCALAR);
 		}
+		public boolean isList() {
+			return (this == LIST);
+		}
 	}
 
 	/**
 	 * Value types (int, double, string, boolean, object, unknown).
 	 */
 	public enum ValueType {
-		INT, DOUBLE, STRING, BOOLEAN, OBJECT, UNKNOWN
+		INT, DOUBLE, STRING, BOOLEAN, OBJECT, UNKNOWN;
+		public boolean isNumeric() {
+			return this == INT || this == DOUBLE;
+		}
 	}
 
 	/**
@@ -446,9 +457,10 @@ public abstract class Expression implements ParseInfo
 	 * @return The value type ({@link ValueType})
 	 */
 	public static ValueType computeValueType(Identifier identifier1, Identifier identifier2, boolean cast) {
-		ValueType v1 = identifier1.getValueType();
-		ValueType v2 = identifier2.getValueType();
-
+		return computeValueType(identifier1, identifier1.getValueType(), identifier2.getValueType(), cast);
+	}
+	
+	public static ValueType computeValueType(Expression expr1, ValueType v1, ValueType v2, boolean cast) {
 		if (v1 == v2)
 			return v1;
 
@@ -465,8 +477,8 @@ public abstract class Expression implements ParseInfo
 		}
 
 		//raise error with id1 location
-		identifier1.raiseValidateError("Invalid Valuetypes for operation "+v1+" "+v2, false, 
-				LanguageException.LanguageErrorCodes.INVALID_PARAMETERS);
+		expr1.raiseValidateError("Invalid Valuetypes for operation "+v1+" "+v2, false,
+			LanguageException.LanguageErrorCodes.INVALID_PARAMETERS);
 		return null; //never reached because unconditional
 	}
 

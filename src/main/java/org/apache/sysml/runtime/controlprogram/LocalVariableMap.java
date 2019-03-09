@@ -26,10 +26,13 @@ import java.util.Map.Entry;
 import java.util.Set;
 import java.util.StringTokenizer;
 
+import org.apache.sysml.conf.ConfigurationManager;
 import org.apache.sysml.runtime.controlprogram.caching.CacheableData;
-import org.apache.sysml.runtime.controlprogram.parfor.ProgramConverter;
+import org.apache.sysml.runtime.util.ProgramConverter;
 import org.apache.sysml.runtime.controlprogram.parfor.util.IDSequence;
 import org.apache.sysml.runtime.instructions.cp.Data;
+import org.apache.sysml.runtime.instructions.cp.ListObject;
+import org.apache.sysml.utils.Statistics;
 
 /**
  * Replaces <code>HashMap&lang;String, Data&rang;</code> as the table of
@@ -111,7 +114,8 @@ public class LocalVariableMap implements Cloneable
 	}
 
 	public boolean hasReferences( Data d ) {
-		return localMap.containsValue(d);
+		return localMap.values().stream().anyMatch(e -> (e instanceof ListObject) ?
+			((ListObject)e).getData().contains(d) : e == d);
 	}
 	
 	public void setRegisteredOutputs(HashSet<String> outputs) {
@@ -123,11 +127,31 @@ public class LocalVariableMap implements Cloneable
 	}
 
 	public double getPinnedDataSize() {
-		//note: this method returns the total size of pinned data objects
-		//that are not subject to automatic eviction.
+		// note: this method returns the total size of distinct pinned
+		// data objects that are not subject to automatic eviction
+		// (in JMLC all matrices and frames are pinned)
+
+		//compute map of distinct cachable data
+		Map<Integer, Data> dict = new HashMap<>();
+		double total = 0.0;
+		for( Entry<String,Data> e : localMap.entrySet() ) {
+			int hash = System.identityHashCode(e.getValue());
+			if( !dict.containsKey(hash) && e.getValue() instanceof CacheableData ) {
+				dict.put(hash, e.getValue());
+				double size = ((CacheableData<?>) e.getValue()).getDataSize();
+				if (ConfigurationManager.isJMLCMemStatistics() && ConfigurationManager.isFinegrainedStatistics())
+					Statistics.maintainCPHeavyHittersMem(e.getKey(), size);
+				total += size;
+			}
+		}
+
+		//compute total in-memory size
+		return total;
+	}
+	
+	public long countPinnedData() {
 		return localMap.values().stream()
-			.filter(d -> (d instanceof CacheableData))
-			.mapToDouble(d -> ((CacheableData<?>)d).getDataSize()).sum();
+			.filter(d -> (d instanceof CacheableData)).count();
 	}
 	
 	public String serialize() {

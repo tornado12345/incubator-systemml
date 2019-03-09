@@ -28,9 +28,11 @@ import org.apache.sysml.hops.FunctionOp;
 import org.apache.sysml.hops.Hop;
 import org.apache.sysml.hops.LiteralOp;
 import org.apache.sysml.hops.Hop.DataOpTypes;
+import org.apache.sysml.hops.HopsException;
 import org.apache.sysml.hops.recompile.Recompiler;
 import org.apache.sysml.hops.rewrite.HopRewriteUtils;
 import org.apache.sysml.parser.DMLProgram;
+import org.apache.sysml.parser.DataIdentifier;
 import org.apache.sysml.parser.FunctionStatement;
 import org.apache.sysml.parser.FunctionStatementBlock;
 import org.apache.sysml.parser.StatementBlock;
@@ -72,21 +74,32 @@ public class IPAPassInlineFunctions extends IPAPass
 				ArrayList<Hop> hops = fstmt.getBody().get(0).getHops();
 				List<FunctionOp> fcalls = fgraph.getFunctionCalls(fkey);
 				List<StatementBlock> fcallsSB = fgraph.getFunctionCallsSB(fkey);
+				boolean removedAll = true;
 				for(int i=0; i<fcalls.size(); i++) {
 					FunctionOp op = fcalls.get(i);
+					if( LOG.isDebugEnabled() )
+						LOG.debug("-- inline '"+fkey+"' at line "+op.getBeginLine());
 					
 					//step 0: robustness for special cases
 					if( op.getInput().size() != fstmt.getInputParams().size()
-						|| op.getOutputVariableNames().length != fstmt.getOutputParams().size() )
+						|| op.getOutputVariableNames().length != fstmt.getOutputParams().size() ) {
+						removedAll = false;
 						continue;
+					}
 					
 					//step 1: deep copy hop dag
 					ArrayList<Hop> hops2 = Recompiler.deepCopyHopsDag(hops);
 					
 					//step 2: replace inputs
 					HashMap<String,Hop> inMap = new HashMap<>();
-					for(int j=0; j<op.getInput().size(); j++)
-						inMap.put(fstmt.getInputParams().get(j).getName(), op.getInput().get(j));
+					for(int j=0; j<op.getInput().size(); j++) {
+						String argName = op.getInputVariableNames()[j];
+						DataIdentifier di = fstmt.getInputParam(argName);
+						if( di == null )
+							throw new HopsException("Non-existing named function argument: '"+argName
+								+"' in function call '"+op.getFunctionKey()+"' (line "+op.getBeginLine()+").");
+						inMap.put(argName, op.getInput().get(j));
+					}
 					replaceTransientReads(hops2, inMap);
 					
 					//step 3: replace outputs
@@ -96,8 +109,11 @@ public class IPAPassInlineFunctions extends IPAPass
 						outMap.put(fstmt.getOutputParams().get(j).getName(), opOutputs[j]);
 					for(int j=0; j<hops2.size(); j++) {
 						Hop out = hops2.get(j);
-						if( HopRewriteUtils.isData(out, DataOpTypes.TRANSIENTWRITE) )
+						if( HopRewriteUtils.isData(out, DataOpTypes.TRANSIENTWRITE) ) {
 							out.setName(outMap.get(out.getName()));
+							if( out.getName() == null )
+								hops2.remove(j);
+						}
 					}
 					fcallsSB.get(i).getHops().remove(op);
 					fcallsSB.get(i).getHops().addAll(hops2);
@@ -105,7 +121,8 @@ public class IPAPassInlineFunctions extends IPAPass
 				
 				//update the function call graph to avoid repeated inlining
 				//(and thus op replication) on repeated IPA calls
-				fgraph.removeFunctionCalls(fkey);
+				if( removedAll )
+					fgraph.removeFunctionCalls(fkey);
 			}
 		}
 	}

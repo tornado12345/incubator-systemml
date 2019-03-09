@@ -19,9 +19,11 @@
 
 package org.apache.sysml.hops.estim;
 
+import org.apache.commons.lang.NotImplementedException;
 import org.apache.sysml.hops.OptimizerUtils;
 import org.apache.sysml.runtime.matrix.MatrixCharacteristics;
 import org.apache.sysml.runtime.matrix.data.DenseBlock;
+import org.apache.sysml.runtime.matrix.data.LibMatrixReorg;
 import org.apache.sysml.runtime.matrix.data.MatrixBlock;
 import org.apache.sysml.runtime.matrix.data.SparseBlock;
 import org.apache.sysml.runtime.util.UtilFunctions;
@@ -52,81 +54,49 @@ public class EstimatorDensityMap extends SparsityEstimator
 	}
 	
 	@Override
-	public double estim(MMNode root) {
-		//recursive density map computation of non-leaf nodes
-		if( !root.getLeft().isLeaf() )
-			estim(root.getLeft()); //obtain synopsis
-		if( !root.getRight().isLeaf() )
-			estim(root.getLeft()); //obtain synopsis
-		MatrixBlock m1Map = !root.getLeft().isLeaf() ?
-			(MatrixBlock)root.getLeft().getSynopsis() : computeDensityMap(root.getLeft().getData());
-		MatrixBlock m2Map = !root.getRight().isLeaf() ?
-			(MatrixBlock)root.getRight().getSynopsis() : computeDensityMap(root.getRight().getData());
+	public MatrixCharacteristics estim(MMNode root) {
+		DensityMap m1Map = getCachedSynopsis(root.getLeft());
+		DensityMap m2Map = getCachedSynopsis(root.getRight());
 		
 		//estimate output density map and sparsity
-		MatrixBlock outMap = estimIntern(m1Map, m2Map,
-			false, root.getRows(), root.getLeft().getCols(), root.getCols());
+		DensityMap outMap = estimIntern(m1Map, m2Map, root.getOp());
 		root.setSynopsis(outMap); //memoize density map
-		return OptimizerUtils.getSparsity( //aggregate output histogram
-			root.getRows(), root.getCols(), (long)outMap.sum());
+		return root.setMatrixCharacteristics(new MatrixCharacteristics(
+			outMap.getNumRowsOrig(), outMap.getNumColumnsOrig(), outMap.getNonZeros()));
 	}
 
 	@Override
 	public double estim(MatrixBlock m1, MatrixBlock m2) {
-		MatrixBlock m1Map = computeDensityMap(m1);
-		MatrixBlock m2Map = computeDensityMap(m2);
-		MatrixBlock outMap = estimIntern(m1Map, m2Map,
-			true, m1.getNumRows(), m1.getNumColumns(), m2.getNumColumns());
-		return OptimizerUtils.getSparsity( //aggregate output histogram
-			m1.getNumRows(), m2.getNumColumns(), (long)outMap.sum());
+		return estim(m1, m2, OpCode.MM);
 	}
-
+	
 	@Override
-	public double estim(MatrixCharacteristics mc1, MatrixCharacteristics mc2) {
-		LOG.warn("Meta-data-only estimates not supported in EstimatorDensityMap, falling back to EstimatorBasicAvg.");
-		return new EstimatorBasicAvg().estim(mc1, mc2);
+	public double estim(MatrixBlock m1, MatrixBlock m2, OpCode op) {
+		if( isExactMetadataOp(op) )
+			return estimExactMetaData(m1.getMatrixCharacteristics(), m2 != null ?
+				m2.getMatrixCharacteristics() : null, op).getSparsity();
+		DensityMap m1Map = new DensityMap(m1, _b);
+		DensityMap m2Map = (m1 == m2 || m2 == null) ? //self product
+			m1Map : new DensityMap(m2, _b);
+		DensityMap outMap = estimIntern(m1Map, m2Map, op);
+		return OptimizerUtils.getSparsity( //aggregate output histogram
+			outMap.getNumRowsOrig(), outMap.getNumColumnsOrig(), outMap.getNonZeros());
 	}
-
-	private MatrixBlock computeDensityMap(MatrixBlock in) {
-		int rlen = (int)Math.ceil((double)in.getNumRows()/_b);
-		int clen = (int)Math.ceil((double)in.getNumColumns()/_b);
-		MatrixBlock out = new MatrixBlock(rlen, clen, false);
-		if( in.isEmptyBlock(false) )
-			return out;
-		
-		//compute nnz histogram
-		DenseBlock c = out.allocateBlock().getDenseBlock();
-		if( in.isInSparseFormat() ) {
-			SparseBlock sblock = in.getSparseBlock();
-			for(int i=0; i<in.getNumRows(); i++) {
-				if( sblock.isEmpty(i) ) continue;
-				int alen = sblock.size(i);
-				int apos = sblock.pos(i);
-				int[] aix = sblock.indexes(i);
-				for(int k=apos; k<apos+alen; k++)
-					c.incr(i/_b, aix[k]/_b);
-			}
-		}
-		else {
-			for(int i=0; i<in.getNumRows(); i++) {
-				for(int j=0; j<in.getNumColumns(); j++) {
-					double aval = in.quickGetValue(i, j);
-					if( aval != 0 )
-						c.incr(i/_b, j/_b);
-				}
-			}
-		}
-		
-		//scale histogram by block size, w/ awareness of boundary blocks
-		for(int i=0; i<rlen; i++){
-			int lrlen = UtilFunctions.computeBlockSize(in.getNumRows(), i+1, _b);
-			for(int j=0; j<clen; j++) {
-				int lclen = UtilFunctions.computeBlockSize(in.getNumColumns(), j+1, _b);
-				c.set(i, j, c.get(i, j)/lrlen/lclen);
-			}
-		}
-		out.recomputeNonZeros();
-		return out;
+	
+	@Override
+	public double estim(MatrixBlock m, OpCode op) {
+		return estim(m, null, op);
+	}
+	
+	private DensityMap getCachedSynopsis(MMNode node) {
+		if( node == null )
+			return null;
+		//ensure synopsis is properly cached and reused
+		if( node.isLeaf() && node.getSynopsis() == null )
+			node.setSynopsis(new DensityMap(node.getData(), _b));
+		else if( !node.isLeaf() )
+			estim(node); //recursively obtain synopsis
+		return (DensityMap) node.getSynopsis();
 	}
 	
 	/**
@@ -134,28 +104,44 @@ public class EstimatorDensityMap extends SparsityEstimator
 	 * 
 	 * @param m1Map density map left-hand-side operand
 	 * @param m2Map density map right-hand-side operand
-	 * @param retNnz return number of non-zeros instead of sparsity per cell
-	 * @param mOrig number of rows of output matrix, required for returning nnz
-	 * @param cdOrig common dimension of original matrix multiply
-	 * @param nOrig number of columns of output matrix, required for returning nnz
 	 * @return density map
 	 */
-	private MatrixBlock estimIntern(MatrixBlock m1Map, MatrixBlock m2Map, boolean retNnz, int mOrig, int cdOrig, int nOrig) {
+	public DensityMap estimIntern(DensityMap m1Map, DensityMap m2Map, OpCode op) {
+		switch(op) {
+			case MM:      return estimInternMM(m1Map, m2Map);
+			case MULT:    return estimInternMult(m1Map, m2Map);
+			case PLUS:    return estimInternPlus(m1Map, m2Map);
+			case NEQZERO: return m1Map;
+			case EQZERO:  return estimInternEqZero(m1Map);
+			
+			case RBIND:
+			case CBIND:
+				//TODO simple append not possible due to partial blocks at end of m1Map
+			
+			case TRANS:   return estimInternTrans(m1Map);
+			case DIAG:    return estimInternDiag(m1Map);
+			case RESHAPE: return estimInternReshape(m1Map);
+			default:
+				throw new NotImplementedException();
+		}
+	}
+	
+	private DensityMap estimInternMM(DensityMap m1Map, DensityMap m2Map) {
 		final int m = m1Map.getNumRows();
 		final int cd = m1Map.getNumColumns();
 		final int n = m2Map.getNumColumns();
-		MatrixBlock out = new MatrixBlock(m, n, false);
-		if( m1Map.isEmptyBlock(false) || m2Map.isEmptyBlock(false) )
-			return out;
-		
-		//compute output density map with IKJ schedule
+		MatrixBlock out = new MatrixBlock(m1Map.getNumRows(), m2Map.getNumColumns(), false);
 		DenseBlock c = out.allocateBlock().getDenseBlock();
+		m1Map.toSparsity();
+		m2Map.toSparsity();
 		for(int i=0; i<m; i++) {
 			for(int k=0; k<cd; k++) {
-				int lbk = UtilFunctions.computeBlockSize(cdOrig, k+1, _b);
-				double sp1 = m1Map.quickGetValue(i, k);
+				int lbk = m1Map.getColBlockize(k);
+				double sp1 = m1Map.get(i, k);
+				if( sp1 == 0 ) continue;
 				for(int j=0; j<n; j++) {
-					double sp2 = m2Map.quickGetValue(k, j);
+					double sp2 = m2Map.get(k, j);
+					if( sp2 == 0 ) continue;
 					//custom multiply for scalar sparsity
 					double tmp1 = 1 - Math.pow(1-sp1*sp2, lbk);
 					//custom add for scalar sparsity
@@ -163,16 +149,220 @@ public class EstimatorDensityMap extends SparsityEstimator
 					c.set(i, j, tmp1+tmp2 - tmp1*tmp2);
 				}
 			}
-			//scale to non-zeros instead of sparsity if needed
-			if( retNnz ) {
-				int lbm = UtilFunctions.computeBlockSize(mOrig, i+1, _b);
-				for( int j=0; j<n; j++ ) {
-					int lbn = UtilFunctions.computeBlockSize(nOrig, j+1, _b);
-					c.set(i, j, c.get(i, j) * lbm * lbn);
-				}
-			}
 		}
 		out.recomputeNonZeros();
-		return out;
+		return new DensityMap(out, m1Map.getNumRowsOrig(),
+			m2Map.getNumColumnsOrig(), _b, true);
+	}
+	
+	private DensityMap estimInternMult(DensityMap m1Map, DensityMap m2Map) {
+		MatrixBlock out = new MatrixBlock(m1Map.getNumRows(), m1Map.getNumColumns(), false);
+		DenseBlock c = out.allocateBlock().getDenseBlock();
+		m1Map.toSparsity();
+		m2Map.toSparsity();
+		for(int i=0; i<m1Map.getNumRows(); i++)
+			for(int j=0; j<m1Map.getNumColumns(); j++)
+				c.set(i, j, m1Map.get(i, j) * m2Map.get(i, j));
+		out.recomputeNonZeros();
+		return new DensityMap(out, m1Map.getNumRowsOrig(),
+			m1Map.getNumColumnsOrig(), _b, true);
+	}
+	
+	private DensityMap estimInternPlus(DensityMap m1Map, DensityMap m2Map) {
+		MatrixBlock out = new MatrixBlock(m1Map.getNumRows(), m1Map.getNumColumns(), false);
+		DenseBlock c = out.allocateBlock().getDenseBlock();
+		m1Map.toSparsity();
+		m2Map.toSparsity();
+		for(int i=0; i<m1Map.getNumRows(); i++)
+			for(int j=0; j<m1Map.getNumColumns(); j++) {
+				double sp1 = m1Map.get(i, j);
+				double sp2 = m2Map.get(i, j);
+				c.set(i, j, sp1 + sp2 - sp1 * sp2);
+			}
+		out.recomputeNonZeros();
+		return new DensityMap(out, m1Map.getNumRowsOrig(),
+			m1Map.getNumColumnsOrig(), _b, true);
+	}
+	
+	private DensityMap estimInternTrans(DensityMap m1Map) {
+		MatrixBlock out = LibMatrixReorg.transpose(m1Map.getMap(), 
+			new MatrixBlock(m1Map.getNumColumns(), m1Map.getNumRows(), false));
+		return new DensityMap(out, m1Map.getNumColumnsOrig(),
+			m1Map.getNumRowsOrig(), _b, m1Map._scaled);
+	}
+	
+	private DensityMap estimInternDiag(DensityMap m1Map) {
+		if( m1Map.getNumColumnsOrig() > 1 )
+			throw new NotImplementedException();
+		m1Map.toNnz();
+		MatrixBlock out = LibMatrixReorg.diag(m1Map.getMap(), 
+			new MatrixBlock(m1Map.getNumRows(), m1Map.getNumRows(), false));
+		return new DensityMap(out, m1Map.getNumRowsOrig(),
+			m1Map.getNumRowsOrig(), _b, m1Map._scaled);
+	}
+	
+	private DensityMap estimInternReshape(DensityMap m1Map) {
+		MatrixBlock out = new MatrixBlock(1,1,(double)m1Map.getNonZeros());
+		int b = Math.max(m1Map.getNumRowsOrig(), m1Map.getNumColumnsOrig());
+		return new DensityMap(out, m1Map.getNumRowsOrig(),
+			m1Map.getNumColumnsOrig(), b, false);
+	}
+	
+	private DensityMap estimInternEqZero(DensityMap m1Map) {
+		MatrixBlock out = new MatrixBlock(m1Map.getNumRows(), m1Map.getNumColumns(), false);
+		m1Map.toSparsity();
+		for(int i=0; i<m1Map.getNumRows(); i++)
+			for(int j=0; j<m1Map.getNumColumns(); j++)
+				out.quickSetValue(i, j, 1-m1Map.get(i, j));
+		return new DensityMap(out, m1Map.getNumRowsOrig(),
+			m1Map.getNumColumnsOrig(), _b, m1Map._scaled);
+	}
+	
+	public static class DensityMap {
+		private final MatrixBlock _map;
+		private final int _rlen;
+		private final int _clen;
+		private final int _b;
+		private boolean _scaled; //false->nnz, true->sp
+		
+		public DensityMap(MatrixBlock in, int b) {
+			_rlen = in.getNumRows();
+			_clen = in.getNumColumns();
+			_b = b;
+			_map = init(in);
+			_scaled = false;
+			if( !isPow2(_b) )
+				System.out.println("WARN: Invalid block size: "+_b);
+		}
+		
+		public DensityMap(MatrixBlock map, int rlenOrig, int clenOrig, int b, boolean scaled) {
+			_rlen = rlenOrig;
+			_clen = clenOrig;
+			_b = b;
+			_map = map;
+			_scaled = scaled;
+			if( !isPow2(_b) )
+				System.out.println("WARN: Invalid block size: "+_b);
+		}
+		
+		public MatrixBlock getMap() {
+			return _map;
+		}
+		
+		public int getNumRows() {
+			return _map.getNumRows();
+		}
+		
+		public int getNumColumns() {
+			return _map.getNumColumns();
+		}
+		
+		public int getNumRowsOrig() {
+			return _rlen;
+		}
+		
+		public int getNumColumnsOrig() {
+			return _clen;
+		}
+		
+		public long getNonZeros() {
+			if( _scaled ) toNnz();
+			return (long)Math.round(_map.sum());
+		}
+		
+		public int getRowBlockize(int r) {
+			return UtilFunctions.computeBlockSize(_rlen, r+1, _b);
+		}
+		
+		public int getColBlockize(int c) {
+			return UtilFunctions.computeBlockSize(_clen, c+1, _b);
+		}
+		
+		public double get(int r, int c) {
+			return _map.quickGetValue(r, c);
+		}
+		
+		public void toSparsity() {
+			if( _scaled ) return;
+			//scale histogram by block size, w/ awareness of boundary blocks
+			int rlen = _map.getNumRows();
+			int clen = _map.getNumColumns();
+			DenseBlock c = _map.getDenseBlock();
+			for(int i=0; i<rlen; i++){
+				int lrlen = getRowBlockize(i);
+				for(int j=0; j<clen; j++) {
+					double cval = c.get(i, j);
+					if( cval == 0 ) continue;
+					c.set(i, j, cval/lrlen/getColBlockize(j));
+				}
+			}
+			_scaled = true;
+		}
+		
+		public void toNnz() {
+			if( !_scaled ) return;
+			//scale histogram by block size, w/ awareness of boundary blocks
+			int rlen = _map.getNumRows();
+			int clen = _map.getNumColumns();
+			DenseBlock c = _map.getDenseBlock();
+			for(int i=0; i<rlen; i++){
+				int lrlen = getRowBlockize(i);
+				for(int j=0; j<clen; j++) {
+					double cval = c.get(i, j);
+					if( cval == 0 ) continue;
+					c.set(i, j, cval * lrlen * getColBlockize(j));
+				}
+			}
+			_scaled = false;
+		}
+		
+		private MatrixBlock init(MatrixBlock in) {
+			int rlen = (int)Math.ceil((double)_rlen/_b);
+			int clen = (int)Math.ceil((double)_clen/_b);
+			MatrixBlock out = new MatrixBlock(rlen, clen, false);
+			
+			//fast-path empty input
+			if( in.isEmptyBlock(false) )
+				return out;
+			
+			//allocate dense output block
+			DenseBlock c = out.allocateBlock().getDenseBlock();
+			
+			//fast-path fully dense input
+			if( in.getLength() == in.getNonZeros() ) {
+				c.set(1); //set sparsity 1.0 into all cells
+				out.setNonZeros(in.getLength());
+				return out;
+			}
+			
+			//compute nnz histogram
+			if( in.isInSparseFormat() ) {
+				SparseBlock sblock = in.getSparseBlock();
+				for(int i=0; i<in.getNumRows(); i++) {
+					if( sblock.isEmpty(i) ) continue;
+					int alen = sblock.size(i);
+					int apos = sblock.pos(i);
+					int[] aix = sblock.indexes(i);
+					for(int k=apos; k<apos+alen; k++)
+						c.incr(i/_b, aix[k]/_b);
+				}
+			}
+			else {
+				for(int i=0; i<_rlen; i++) {
+					for(int j=0; j<_clen; j++) {
+						double aval = in.quickGetValue(i, j);
+						if( aval != 0 )
+							c.incr(i/_b, j/_b);
+					}
+				}
+			}
+			out.recomputeNonZeros();
+			return out;
+		}
+		
+		private boolean isPow2(int value) {
+			double tmp = (Math.log(value) / Math.log(2));
+			return Math.floor(tmp) == Math.ceil(tmp);
+		}
 	}
 }

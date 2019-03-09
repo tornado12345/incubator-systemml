@@ -21,7 +21,6 @@ package org.apache.sysml.test.integration.functions.recompile;
 
 import java.util.HashMap;
 
-import org.junit.Assert;
 import org.junit.Test;
 
 import org.apache.sysml.hops.OptimizerUtils;
@@ -42,38 +41,36 @@ public class RandSizeExpressionEvalTest extends AutomatedTestBase
 	private final static int cols = 14;
 	
 	@Override
-	public void setUp() 
-	{
+	public void setUp() {
 		addTestConfiguration( TEST_NAME, new TestConfiguration(TEST_CLASS_DIR, TEST_NAME, new String[]{} ));
 	}
 
 	@Test
-	public void testComplexRand() 
-	{
+	public void testComplexRand() {
 		runRandTest(TEST_NAME, false, false);
 	}
 	
 	@Test
-	public void testComplexRandExprEval() 
-	{
+	public void testComplexRandExprEval() {
 		runRandTest(TEST_NAME, true, false);
 	}
 	
 	@Test
-	public void testComplexRandConstFold() 
-	{
+	public void testComplexRandConstFold() {
 		runRandTest(TEST_NAME, false, true);
 	}
 	
 	private void runRandTest( String testName, boolean evalExpr, boolean constFold )
-	{	
+	{
+		if(shouldSkipTest())
+			return;
+		
 		boolean oldFlagEval = OptimizerUtils.ALLOW_SIZE_EXPRESSION_EVALUATION;
 		boolean oldFlagFold = OptimizerUtils.ALLOW_CONSTANT_FOLDING;
-		
 		boolean oldFlagRand1 = OptimizerUtils.ALLOW_RAND_JOB_RECOMPILE;
 		boolean oldFlagRand2 = OptimizerUtils.ALLOW_BRANCH_REMOVAL;
 		boolean oldFlagRand3 = OptimizerUtils.ALLOW_WORSTCASE_SIZE_EXPRESSION_EVALUATION;
-				
+		
 		try
 		{
 			TestConfiguration config = getTestConfiguration(testName);
@@ -81,10 +78,10 @@ public class RandSizeExpressionEvalTest extends AutomatedTestBase
 			config.addVariable("cols", cols);
 			loadTestConfiguration(config);
 			
-			/* This is for running the junit test the new way, i.e., construct the arguments directly */
 			String HOME = SCRIPT_DIR + TEST_DIR;
 			fullDMLScriptName = HOME + testName + ".dml";
-			programArgs = new String[]{"-args", Integer.toString(rows), Integer.toString(cols), output("R") };
+			programArgs = new String[]{"-explain", "-args",
+				Integer.toString(rows), Integer.toString(cols), output("R") };
 	
 			OptimizerUtils.ALLOW_SIZE_EXPRESSION_EVALUATION = evalExpr;
 			OptimizerUtils.ALLOW_CONSTANT_FOLDING = constFold;
@@ -93,35 +90,29 @@ public class RandSizeExpressionEvalTest extends AutomatedTestBase
 			OptimizerUtils.ALLOW_RAND_JOB_RECOMPILE = false;
 			OptimizerUtils.ALLOW_BRANCH_REMOVAL = false;
 			OptimizerUtils.ALLOW_WORSTCASE_SIZE_EXPRESSION_EVALUATION = false;
-						
-			boolean exceptionExpected = false;
-			runTest(true, exceptionExpected, null, -1); 
+			
+			runTest(true, false, null, -1); 
 			
 			//check correct propagated size via final results
 			HashMap<CellIndex, Double> dmlfile = readDMLMatrixFromHDFS("R");
-			Assert.assertEquals("Unexpected results.", Double.valueOf(rows*cols*3.0), dmlfile.get(new CellIndex(1,1)));
+			assertEquals("Unexpected results.", Double.valueOf(rows*cols*3.0), dmlfile.get(new CellIndex(1,1)));
 			
 			//check expected number of compiled and executed MR jobs
-			if( evalExpr || constFold )
-			{
-				Assert.assertEquals("Unexpected number of executed MR jobs.", 
-						  0, Statistics.getNoOfExecutedMRJobs());			
+			if( evalExpr || constFold ) {
+				assertEquals("Unexpected number of executed MR jobs.",
+					0, Statistics.getNoOfExecutedMRJobs());
 			}
-			else
-			{
-				Assert.assertEquals("Unexpected number of executed MR jobs.", 
-						            2, Statistics.getNoOfExecutedMRJobs()); //Rand, GMR (sum)
-			}		
+			else {
+				assertEquals("Unexpected number of executed MR jobs.",
+					2, Statistics.getNoOfExecutedMRJobs()); //Rand, GMR (sum)
+			}
 		}
-		finally
-		{
+		finally {
 			OptimizerUtils.ALLOW_SIZE_EXPRESSION_EVALUATION = oldFlagEval;
 			OptimizerUtils.ALLOW_CONSTANT_FOLDING = oldFlagFold;
-			
 			OptimizerUtils.ALLOW_RAND_JOB_RECOMPILE = oldFlagRand1;
 			OptimizerUtils.ALLOW_BRANCH_REMOVAL = oldFlagRand2;
 			OptimizerUtils.ALLOW_WORSTCASE_SIZE_EXPRESSION_EVALUATION = oldFlagRand3;
 		}
 	}
-	
 }

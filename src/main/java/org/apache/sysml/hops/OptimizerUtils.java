@@ -46,7 +46,6 @@ import org.apache.sysml.runtime.controlprogram.ForProgramBlock;
 import org.apache.sysml.runtime.controlprogram.LocalVariableMap;
 import org.apache.sysml.runtime.controlprogram.caching.LazyWriteBuffer;
 import org.apache.sysml.runtime.controlprogram.context.SparkExecutionContext;
-import org.apache.sysml.runtime.controlprogram.parfor.ProgramConverter;
 import org.apache.sysml.runtime.controlprogram.parfor.stat.InfrastructureAnalyzer;
 import org.apache.sysml.runtime.functionobjects.IntegerDivide;
 import org.apache.sysml.runtime.functionobjects.Modulus;
@@ -86,7 +85,7 @@ public class OptimizerUtils
 	 * e.g., when input/output dimensions are unknown. The default is set to a large 
 	 * value so that operations are scheduled on MR while avoiding overflows as well.  
 	 */
-	public static double DEFAULT_SIZE;	
+	public static double DEFAULT_SIZE;
 	
 	
 	public static final long DOUBLE_SIZE = 8;
@@ -445,6 +444,12 @@ public class OptimizerUtils
 		return InfrastructureAnalyzer.getLocalParallelism() == k;
 	}
 
+	public static boolean isTopLevelParFor() {
+		//since every local parfor with degree of parallelism k>1 changes the
+		//local memory budget, we can simply probe the current memory fraction
+		return InfrastructureAnalyzer.getLocalMaxMemoryFraction() >= 0.99;
+	}
+	
 	public static boolean checkSparkBroadcastMemoryBudget( double size )
 	{
 		double memBudgetExec = SparkExecutionContext.getBroadcastMemoryBudget();
@@ -547,18 +552,18 @@ public class OptimizerUtils
 	}
 
 	public static boolean isSparkExecutionMode() {
-		return (   DMLScript.rtplatform == RUNTIME_PLATFORM.SPARK
-				|| DMLScript.rtplatform == RUNTIME_PLATFORM.HYBRID_SPARK);
+		return (   ConfigurationManager.getExecutionMode() == RUNTIME_PLATFORM.SPARK
+				|| ConfigurationManager.getExecutionMode() == RUNTIME_PLATFORM.HYBRID_SPARK);
 	}
 
 	public static boolean isHadoopExecutionMode() {
-		return (   DMLScript.rtplatform == RUNTIME_PLATFORM.HADOOP
-				|| DMLScript.rtplatform == RUNTIME_PLATFORM.HYBRID);
+		return (   ConfigurationManager.getExecutionMode() == RUNTIME_PLATFORM.HADOOP
+				|| ConfigurationManager.getExecutionMode() == RUNTIME_PLATFORM.HYBRID);
 	}
 
 	public static boolean isHybridExecutionMode() {
-		return (  DMLScript.rtplatform == RUNTIME_PLATFORM.HYBRID 
-			   || DMLScript.rtplatform == RUNTIME_PLATFORM.HYBRID_SPARK );
+		return (  ConfigurationManager.getExecutionMode() == RUNTIME_PLATFORM.HYBRID 
+			   || ConfigurationManager.getExecutionMode() == RUNTIME_PLATFORM.HYBRID_SPARK );
 	}
 	
 	/**
@@ -909,7 +914,11 @@ public class OptimizerUtils
 	 * @return true if the given matrix characteristics exceed threshold
 	 */
 	public static boolean exceedsCachingThreshold(long dim2, double outMem) {
-		return !(dim2 > 1 && outMem < getLocalMemBudget()
+		//NOTE: We heuristically cache matrices that are close to or larger
+		//than the local memory budget. The different relative fractions 
+		//according to number of columns is reflecting common operations
+		//(e.g., two inputs/one output for binary vector operations)
+		return !(dim2 > 1 && outMem < getLocalMemBudget()/2
 			|| dim2 == 1 && outMem < getLocalMemBudget()/3);
 	}
 	
@@ -921,7 +930,7 @@ public class OptimizerUtils
 	public static String getUniqueTempFileName() {
 		return ConfigurationManager.getScratchSpace()
 			+ Lop.FILE_SEPARATOR + Lop.PROCESS_PREFIX + DMLScript.getUUID()
-			+ Lop.FILE_SEPARATOR + ProgramConverter.CP_ROOT_THREAD_ID + Lop.FILE_SEPARATOR 
+			+ Lop.FILE_SEPARATOR + Lop.CP_ROOT_THREAD_ID + Lop.FILE_SEPARATOR 
 			+ Dag.getNextUniqueFilenameSuffix();
 	}
 
@@ -965,6 +974,10 @@ public class OptimizerUtils
 	// Sparsity Estimates //
 	////////////////////////
 	
+	public static long getMatMultNnz(double sp1, double sp2, long m, long k, long n, boolean worstcase) {
+		return getNnz( m, n, getMatMultSparsity(sp1, sp2, m, k, n, worstcase));
+	}
+	
 	/**
 	 * Estimates the result sparsity for Matrix Multiplication A %*% B. 
 	 *  
@@ -976,8 +989,7 @@ public class OptimizerUtils
 	 * @param worstcase true if worst case
 	 * @return the sparsity
 	 */
-	public static double getMatMultSparsity(double sp1, double sp2, long m, long k, long n, boolean worstcase) 
-	{
+	public static double getMatMultSparsity(double sp1, double sp2, long m, long k, long n, boolean worstcase) {
 		if( worstcase ){
 			double nnz1 = sp1 * m * k;
 			double nnz2 = sp2 * k * n;
@@ -1079,10 +1091,12 @@ public class OptimizerUtils
 				case MIN:
 				case MAX:
 				case OR:
-					ret = Math.min(1, sp1 + sp2); break;
+					ret = worstcase ? Math.min(1, sp1 + sp2) :
+						sp1 + sp2 - sp1 * sp2; break;
 				case MULT:
 				case AND:
-					ret = Math.min(sp1, sp2); break;
+					ret = worstcase ? Math.min(sp1, sp2) :
+						sp1 * sp2; break;
 				case DIV:
 					ret = Math.min(1, sp1 + (1-sp2)); break;
 				case MODULUS:
@@ -1150,6 +1164,10 @@ public class OptimizerUtils
 			default:
 				return n1 * n2;
 		}
+	}
+	
+	public static long getNnz(long dim1, long dim2, double sp) {
+		return (long) Math.round(sp * dim1 * dim2);
 	}
 	
 	public static double getSparsity( MatrixCharacteristics mc ) {

@@ -56,9 +56,9 @@ public abstract class GPUTests extends AutomatedTestBase {
 	protected static SparkSession spark;
 	protected final double DOUBLE_PRECISION_THRESHOLD = 1e-9;    // for relative error
 	private static final boolean PRINT_MAT_ERROR = false;
-	
-	// We will use this flag until lower precision is supported on CP. 
-	private final static String FLOATING_POINT_PRECISION = "double";  
+
+	// We will use this flag until lower precision is supported on CP.
+	private final static String FLOATING_POINT_PRECISION = "double";
 	protected final double SINGLE_PRECISION_THRESHOLD = 1e-3;    // for relative error
 	
 	
@@ -106,7 +106,7 @@ public abstract class GPUTests extends AutomatedTestBase {
 			int freeCount = GPUContextPool.getAvailableCount();
 			Assert.assertTrue("All GPUContexts have not been returned to the GPUContextPool", count == freeCount);
 
-			List<GPUContext> gCtxs = GPUContextPool.reserveAllGPUContexts();
+			List<GPUContext> gCtxs = GPUContextPool.getAllGPUContexts();
 			for (GPUContext gCtx : gCtxs) {
 				gCtx.initializeThread();
 				try {
@@ -116,9 +116,6 @@ public abstract class GPUTests extends AutomatedTestBase {
 						throw e;
 				}
 			}
-			GPUContextPool.freeAllGPUContexts();
-
-
 		} catch (DMLRuntimeException e) {
 			// Ignore
 		}
@@ -212,7 +209,7 @@ public abstract class GPUTests extends AutomatedTestBase {
 		return in1;
 	}
 	
-	private void printMatrixIfNotEqual(MatrixBlock expectedMB, MatrixBlock actualMB) {
+	private void printMatrixIfNotEqual(MatrixBlock expectedMB, MatrixBlock actualMB, double threshold) {
 		long rows = expectedMB.getNumRows();
 		long cols = expectedMB.getNumColumns();
 		boolean matrixNotEqual = false;
@@ -222,7 +219,7 @@ public abstract class GPUTests extends AutomatedTestBase {
 				double actualDouble = actualMB.quickGetValue(i, j);
 				if (expectedDouble != 0.0 && !Double.isNaN(expectedDouble) && Double.isFinite(expectedDouble)) {
 					double relativeError = Math.abs((expectedDouble - actualDouble) / expectedDouble);
-					if(relativeError >= getTHRESHOLD()) {
+					if(relativeError >= threshold) {
 						matrixNotEqual = true;
 						break;
 					}
@@ -250,12 +247,13 @@ public abstract class GPUTests extends AutomatedTestBase {
 	 *
 	 * @param expected expected matrix
 	 * @param actual   actual matrix
+	 * @param threshold relative threshold
 	 */
-	private void assertEqualMatrices(Matrix expected, Matrix actual) {
+	private void assertEqualMatrices(Matrix expected, Matrix actual, double threshold) {
 		try {
 			// Faster way to compare two matrices
 			MLContext cpuMLC = new MLContext(spark);
-			String scriptStr = "num_mismatch = sum((abs(X - Y) / X) > " + getTHRESHOLD() + ");";
+			String scriptStr = "num_mismatch = sum((abs(X - Y) / X) > " + threshold + ");";
 			Script script = ScriptFactory.dmlFromString(scriptStr).in("X", expected).in("Y", actual).out("num_mismatch");
 			long num_mismatch = cpuMLC.execute(script).getLong("num_mismatch");
 			cpuMLC.close();
@@ -271,7 +269,7 @@ public abstract class GPUTests extends AutomatedTestBase {
 			Assert.assertEquals(rows, actualMB.getNumRows());
 			Assert.assertEquals(cols, actualMB.getNumColumns());
 
-			if(PRINT_MAT_ERROR) printMatrixIfNotEqual(expectedMB, actualMB);
+			if(PRINT_MAT_ERROR) printMatrixIfNotEqual(expectedMB, actualMB, threshold);
 			
 			for (int i = 0; i < rows; i++) {
 				for (int j = 0; j < cols; j++) {
@@ -285,12 +283,12 @@ public abstract class GPUTests extends AutomatedTestBase {
 								"Relative error(%f) is more than threshold (%f). Expected = %f, Actual = %f, differed at [%d, %d]",
 								relativeError, getTHRESHOLD(), expectedDouble, actualDouble, i, j);
 						if(FLOATING_POINT_PRECISION.equals("double"))
-							Assert.assertTrue(format.toString(), relativeError < getTHRESHOLD());
+							Assert.assertTrue(format.toString(), relativeError < threshold);
 						else
-							Assert.assertTrue(format.toString(), relativeError < getTHRESHOLD() || absoluteError < getTHRESHOLD());
+							Assert.assertTrue(format.toString(), relativeError < threshold || absoluteError < threshold);
 						format.close();
 					} else {
-						Assert.assertEquals(expectedDouble, actualDouble, getTHRESHOLD());
+						Assert.assertEquals(expectedDouble, actualDouble, threshold);
 					}
 				}
 			}
@@ -309,6 +307,16 @@ public abstract class GPUTests extends AutomatedTestBase {
 	protected void assertHeavyHitterPresent(String heavyHitterOpCode) {
 		Set<String> heavyHitterOpCodes = Statistics.getCPHeavyHitterOpCodes();
 		Assert.assertTrue(heavyHitterOpCodes.contains(heavyHitterOpCode));
+	}
+	
+	/**
+	 * asserts that the expected op was executed
+	 *
+	 * @param heavyHitterOpCode opcode of the heavy hitter for the unary op
+	 */
+	protected void assertHeavyHitterNotPresent(String heavyHitterOpCode) {
+		Set<String> heavyHitterOpCodes = Statistics.getCPHeavyHitterOpCodes();
+		Assert.assertTrue(!heavyHitterOpCodes.contains(heavyHitterOpCode));
 	}
 
 	/**
@@ -349,6 +357,7 @@ public abstract class GPUTests extends AutomatedTestBase {
 		// and other side effects.
 		synchronized(GPUTests.class) {
 			MLContext gpuMLC = new MLContext(spark);
+			// gpuMLC.setExplain(true); gpuMLC.setExplainLevel("recompile_runtime");
 			gpuMLC.setConfigProperty("sysml.floating.point.precision", FLOATING_POINT_PRECISION);
 			if(IGNORE_CLEAR_MEMORY_BUG)
 				gpuMLC.setConfigProperty("sysml.gpu.eager.cudaFree", "true");
@@ -366,7 +375,7 @@ public abstract class GPUTests extends AutomatedTestBase {
 			return outputs;
 		}
 	}
-
+	
 	/**
 	 * Assert that the two objects are equal. Supported types are Boolean, Integer, String, Double and Matrix
 	 *
@@ -374,6 +383,17 @@ public abstract class GPUTests extends AutomatedTestBase {
 	 * @param actual
 	 */
 	protected void assertEqualObjects(Object expected, Object actual) {
+		assertEqualObjects(expected, actual, getTHRESHOLD());
+	}
+
+	/**
+	 * Assert that the two objects are equal. Supported types are Boolean, Integer, String, Double and Matrix
+	 *
+	 * @param expected expected value
+	 * @param actual actual value 
+	 * @param threshold relative error threshold
+	 */
+	protected void assertEqualObjects(Object expected, Object actual, double threshold) {
 		Assert.assertEquals(expected.getClass(), actual.getClass());
 
 		if (expected instanceof Boolean) {
@@ -384,16 +404,16 @@ public abstract class GPUTests extends AutomatedTestBase {
 			if (expectedDouble != 0.0 && !Double.isNaN(expectedDouble) && Double.isFinite(expectedDouble)) {
 				double relativeError = Math.abs((expectedDouble - actualDouble) / expectedDouble);
 				Assert.assertTrue("Comparing floating point numbers, relative error(" + relativeError
-						+ ") is more than threshold (" + getTHRESHOLD() + ")", relativeError < getTHRESHOLD());
+						+ ") is more than threshold (" + threshold + ")", relativeError < threshold);
 			} else {
-				Assert.assertEquals(expectedDouble, actualDouble, getTHRESHOLD());
+				Assert.assertEquals(expectedDouble, actualDouble, threshold);
 			}
 		} else if (expected instanceof String) {
 			Assert.assertEquals(expected.toString(), actual.toString());
 		} else if (expected instanceof Integer) {
 			Assert.assertEquals(((Integer) expected).intValue(), ((Integer) actual).intValue());
 		} else if (expected instanceof Matrix)
-			assertEqualMatrices((Matrix) expected, (Matrix) actual);
+			assertEqualMatrices((Matrix) expected, (Matrix) actual, threshold);
 		else {
 			Assert.fail("Invalid types for comparison");
 		}

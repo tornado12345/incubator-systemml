@@ -31,12 +31,17 @@ import static jcuda.runtime.JCuda.cudaGetDeviceCount;
 import static jcuda.runtime.JCuda.cudaSetDevice;
 import static jcuda.runtime.JCuda.cudaSetDeviceFlags;
 
+import java.util.HashSet;
+
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
-import org.apache.sysml.api.DMLScript;
+import org.apache.sysml.api.DMLScript.EvictionPolicy;
+import org.apache.sysml.conf.ConfigurationManager;
+import org.apache.sysml.conf.DMLConfig;
 import org.apache.sysml.runtime.DMLRuntimeException;
 import org.apache.sysml.runtime.controlprogram.caching.MatrixObject;
 import org.apache.sysml.utils.GPUStatistics;
+
 import jcuda.Pointer;
 import jcuda.jcublas.cublasHandle;
 import jcuda.jcudnn.cudnnHandle;
@@ -63,6 +68,7 @@ public class GPUContext {
 	 * active device assigned to this GPUContext instance
 	 */
 	private final int deviceNum;
+	
 	/**
 	 * cudnnHandle for Deep Neural Network operations on the GPU
 	 */
@@ -86,6 +92,25 @@ public class GPUContext {
 	
 	private GPUMemoryManager memoryManager;
 	
+	// whether to synchronize GPU after every instruction 
+	// global for all GPUContext for simplicity, but initialized every time to check if the configuration has been updated
+	// Note: cudaDeviceSynchronize is static method of JCuda
+	public static boolean SYNCHRONIZE_GPU = false;
+	// whether to perform eager CUDA free on rmvar
+	public final boolean EAGER_CUDA_FREE = ConfigurationManager.getDMLConfig().getBooleanValue(DMLConfig.EAGER_CUDA_FREE);
+	
+	public static final EvictionPolicy GPU_EVICTION_POLICY;
+	static {
+		String evictionPolicy = ConfigurationManager.getDMLConfig().getTextValue(DMLConfig.GPU_EVICTION_POLICY).toUpperCase();
+		EvictionPolicy policyToUse = EvictionPolicy.MIN_EVICT;
+		try {
+			policyToUse = EvictionPolicy.valueOf(evictionPolicy);
+		} catch(IllegalArgumentException e) {
+			LOG.warn("Unsupported eviction policy:" + evictionPolicy + ". Using min_evict instead.");
+		}
+		GPU_EVICTION_POLICY = policyToUse;
+	}
+	
 	public GPUMemoryManager getMemoryManager() {
 		return memoryManager;
 	}
@@ -95,14 +120,15 @@ public class GPUContext {
 		cudaSetDevice(deviceNum);
 
 		cudaSetDeviceFlags(cudaDeviceScheduleBlockingSync);
+		SYNCHRONIZE_GPU = ConfigurationManager.getDMLConfig().getBooleanValue(DMLConfig.SYNCHRONIZE_GPU);
 
 		long start = -1;
-		if (DMLScript.STATISTICS)
+		if (ConfigurationManager.isStatistics())
 			start = System.nanoTime();
 		initializeCudaLibraryHandles();
 		
 
-		if (DMLScript.STATISTICS)
+		if (ConfigurationManager.isStatistics())
 			GPUStatistics.cudaLibrariesInitTime = System.nanoTime() - start;
 
 		memoryManager = new GPUMemoryManager(this);
@@ -130,9 +156,11 @@ public class GPUContext {
 		}
 	}
 
-	private void initializeCudaLibraryHandles() {
-		deleteCudaLibraryHandles();
-
+	private void initializeCudaLibraryHandles() throws DMLRuntimeException {
+		// We don't need to explicitly delete the handles if we are planning to create them again. 
+		// This has a huge performance impact on scripts that has large number of layers (i.e. FunctionCallCP) for example ResNet.
+		// If this is absolutely required for parfor, please add appropriate safeguard for non-parfor scripts. 
+		// deleteCudaLibraryHandles();
 		if (cudnnHandle == null) {
 			cudnnHandle = new cudnnHandle();
 			cudnnCreate(cudnnHandle);
@@ -149,11 +177,6 @@ public class GPUContext {
 		if (cusparseHandle == null) {
 			cusparseHandle = new cusparseHandle();
 			cusparseCreate(cusparseHandle);
-		}
-
-		if (cusolverDnHandle == null) {
-			cusolverDnHandle = new cusolverDnHandle();
-			cusolverDnCreate(cusolverDnHandle);
 		}
 		
 		if (kernels == null) {
@@ -184,16 +207,6 @@ public class GPUContext {
 	}
 
 	/**
-	 * Convenience method for {@link #allocate(String, long)}.
-	 *
-	 * @param size size of data (in bytes) to allocate
-	 * @return jcuda pointer
-	 */
-	public Pointer allocate(long size) {
-		return memoryManager.malloc(null, size);
-	}
-
-	/**
 	 * Invokes memory manager's malloc method
 	 *
 	 * @param instructionName name of instruction for which to record per instruction performance statistics, null if don't want to record
@@ -202,36 +215,6 @@ public class GPUContext {
 	 */
 	public Pointer allocate(String instructionName, long size) {
 		return memoryManager.malloc(instructionName, size);
-	}
-
-
-	/**
-	 * Does lazy cudaFree calls.
-	 *
-	 * @param toFree {@link Pointer} instance to be freed
-	 */
-	public void cudaFreeHelper(final Pointer toFree) {
-		cudaFreeHelper(null, toFree, DMLScript.EAGER_CUDA_FREE);
-	}
-
-	/**
-	 * Does lazy/eager cudaFree calls.
-	 *
-	 * @param toFree {@link Pointer} instance to be freed
-	 * @param eager  true if to be done eagerly
-	 */
-	public void cudaFreeHelper(final Pointer toFree, boolean eager) {
-		cudaFreeHelper(null, toFree, eager);
-	}
-
-	/**
-	 * Does lazy cudaFree calls.
-	 *
-	 * @param instructionName name of the instruction for which to record per instruction free time, null if do not want to record
-	 * @param toFree          {@link Pointer} instance to be freed
-	 */
-	public void cudaFreeHelper(String instructionName, final Pointer toFree) {
-		cudaFreeHelper(instructionName, toFree, DMLScript.EAGER_CUDA_FREE);
 	}
 
 	/**
@@ -252,7 +235,7 @@ public class GPUContext {
 	 * @return the available memory in bytes
 	 */
 	public long getAvailableMemory() {
-		return memoryManager.getAvailableMemory();
+		return memoryManager.allocator.getAvailableMemory();
 	}
 
 	/**
@@ -290,7 +273,7 @@ public class GPUContext {
 	 */
 	public GPUObject createGPUObject(MatrixObject mo) {
 		GPUObject ret = new GPUObject(this, mo);
-		getMemoryManager().addGPUObject(ret);
+		getMemoryManager().getGPUMatrixMemoryManager().addGPUObject(ret);
 		return ret;
 	}
 
@@ -376,6 +359,15 @@ public class GPUContext {
 	 * @return cusolverDnHandle for current thread
 	 */
 	public cusolverDnHandle getCusolverDnHandle() {
+		if (cusolverDnHandle == null) {
+			synchronized(this) {
+				if (cusolverDnHandle == null) {
+					// Since cusolverDnHandle handle is rarely used and occupies unnecessary memory, it is only initialized when needed.
+					cusolverDnHandle = new cusolverDnHandle();
+					cusolverDnCreate(cusolverDnHandle);
+				}
+			}
+		}
 		return cusolverDnHandle;
 	}
 
@@ -434,8 +426,8 @@ public class GPUContext {
 		memoryManager.clearMemory();
 	}
 	
-	public void clearTemporaryMemory() {
-		memoryManager.clearTemporaryMemory();
+	public void clearTemporaryMemory(HashSet<MatrixObject> outputMatrixObjects) {
+		memoryManager.clearTemporaryMemory(outputMatrixObjects);
 	}
 
 	@Override

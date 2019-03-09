@@ -120,27 +120,33 @@ public class FunctionCallIdentifier extends DataIdentifier
 					_name + " has both parameter types.", conditional);
 		}
 		
-		// Step 4: validate expressions for each passed parameter
+		// Step 4: validate expressions for each passed parameter and defaults
 		for( ParameterExpression paramExpr : _paramExprs ) {
 			if (paramExpr.getExpr() instanceof FunctionCallIdentifier) {
 				raiseValidateError("UDF function call not supported as parameter to function call", false);
 			}
 			paramExpr.getExpr().validateExpression(ids, constVars, conditional);
 		}
+		FunctionStatement fstmt = (FunctionStatement)fblock.getStatement(0);
+		for( Expression expDef : fstmt.getInputDefaults() ) {
+			if( expDef != null )
+				expDef.validateExpression(ids, constVars, conditional);
+		}
 		
 		// Step 5: constant propagation into function call statement
-		for( ParameterExpression paramExpr : _paramExprs ) {
-			Expression expri = paramExpr.getExpr();
-			if( expri instanceof DataIdentifier && !(expri instanceof IndexedIdentifier)
-				&& constVars.containsKey(((DataIdentifier)expri).getName()) )
-			{
-				//replace varname with constant in function call expression
-				paramExpr.setExpr(constVars.get(((DataIdentifier)expri).getName()));
+		if( !conditional ) {
+			for( ParameterExpression paramExpr : _paramExprs ) {
+				Expression expri = paramExpr.getExpr();
+				if( expri instanceof DataIdentifier && !(expri instanceof IndexedIdentifier)
+					&& constVars.containsKey(((DataIdentifier)expri).getName()) )
+				{
+					//replace varname with constant in function call expression
+					paramExpr.setExpr(constVars.get(((DataIdentifier)expri).getName()));
+				}
 			}
 		}
 	
 		// Step 6: check correctness of number of arguments and their types 
-		FunctionStatement fstmt = (FunctionStatement)fblock.getStatement(0);
 		if (fstmt.getInputParams().size() < _paramExprs.size()) { 
 			raiseValidateError("function " + _name 
 					+ " has incorrect number of parameters. Function requires " 

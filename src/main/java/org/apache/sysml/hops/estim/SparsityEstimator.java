@@ -19,14 +19,33 @@
 
 package org.apache.sysml.hops.estim;
 
+import org.apache.commons.lang.ArrayUtils;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
+import org.apache.sysml.hops.HopsException;
 import org.apache.sysml.runtime.matrix.MatrixCharacteristics;
 import org.apache.sysml.runtime.matrix.data.MatrixBlock;
 
 public abstract class SparsityEstimator 
 {
 	protected static final Log LOG = LogFactory.getLog(SparsityEstimator.class.getName());
+	
+	//internal configuration
+	public static boolean MULTI_THREADED_BUILD = false;
+	public static boolean MULTI_THREADED_ESTIM = false;
+	public static final int MIN_PAR_THRESHOLD = 10 * 1024;
+	
+	private static OpCode[] EXACT_META_DATA_OPS = new OpCode[] {
+		OpCode.EQZERO, OpCode.NEQZERO, OpCode.CBIND,
+		OpCode.RBIND, OpCode.TRANS, OpCode.DIAG, OpCode.RESHAPE
+	};
+	
+	public static enum OpCode {
+		MM, 
+		MULT, PLUS, EQZERO, NEQZERO,
+		CBIND, RBIND, 
+		TRANS, DIAG, RESHAPE;
+	}
 	
 	/**
 	 * Estimates the output sparsity of a DAG of matrix multiplications
@@ -35,11 +54,11 @@ public abstract class SparsityEstimator
 	 * @param root
 	 * @return
 	 */
-	public abstract double estim(MMNode root);
+	public abstract MatrixCharacteristics estim(MMNode root);
+	
 	
 	/**
-	 * Estimates the output sparsity of a single matrix multiplication
-	 * for the two given matrices.
+	 * Estimates the output sparsity for a single matrix multiplication.
 	 * 
 	 * @param m1 left-hand-side operand
 	 * @param m2 right-hand-side operand
@@ -48,13 +67,52 @@ public abstract class SparsityEstimator
 	public abstract double estim(MatrixBlock m1, MatrixBlock m2);
 	
 	/**
-	 * Estimates the output sparsity of a single matrix multiplication
-	 * for the two given matrices represented by meta data only.
+	 * Estimates the output sparsity for a given binary operation.
 	 * 
-	 * @param mc1 left-hand-side operand
-	 * @param mc2 right-hand-side operand
+	 * @param m1 left-hand-side operand
+	 * @param m2 right-hand-side operand
+	 * @param op operator code
 	 * @return sparsity
 	 */
-	public abstract double estim(MatrixCharacteristics mc1, MatrixCharacteristics mc2);
-
+	public abstract double estim(MatrixBlock m1, MatrixBlock m2, OpCode op);
+	
+	/**
+	 * Estimates the output sparsity for a given unary operation.
+	 * 
+	 * @param m1 left-hand-side operand
+	 * @param op operator code
+	 * @return sparsity
+	 */
+	public abstract double estim(MatrixBlock m, OpCode op);
+	
+	protected boolean isExactMetadataOp(OpCode op) {
+		return ArrayUtils.contains(EXACT_META_DATA_OPS, op);
+	}
+	
+	protected MatrixCharacteristics estimExactMetaData(MatrixCharacteristics mc1, MatrixCharacteristics mc2, OpCode op) {
+		switch( op ) {
+			case EQZERO:
+				return new MatrixCharacteristics(mc1.getRows(), mc1.getCols(),
+					(long) mc1.getRows() * mc1.getCols() - mc1.getNonZeros());
+			case DIAG:
+				return (mc1.getCols() == 1) ?
+					new MatrixCharacteristics(mc1.getRows(), mc1.getRows(), mc1.getNonZeros()) :
+					new MatrixCharacteristics(mc1.getRows(), 1, Math.min(mc1.getRows(), mc1.getNonZeros()));
+			// binary operations that preserve sparsity exactly
+			case CBIND:
+				return new MatrixCharacteristics(mc1.getRows(), 
+					mc1.getCols() + mc2.getCols(), mc1.getNonZeros() + mc2.getNonZeros());
+			case RBIND:
+				return new MatrixCharacteristics(mc1.getRows() + mc2.getRows(), 
+					mc1.getCols(), mc1.getNonZeros() + mc2.getNonZeros());
+			case TRANS:
+				return new MatrixCharacteristics(mc1.getCols(), mc1.getRows(), mc1.getNonZeros());
+			// unary operation that preserve sparsity exactly
+			case NEQZERO:
+			case RESHAPE:
+				return mc1;
+			default:
+				throw new HopsException("Opcode is not an exact meta data operation: "+op.name());
+		}
+	}
 }

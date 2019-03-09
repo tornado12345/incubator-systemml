@@ -48,13 +48,13 @@ import org.apache.sysml.parser.DataExpression;
 import org.apache.sysml.parser.Expression.DataType;
 import org.apache.sysml.parser.Expression.ValueType;
 import org.apache.sysml.runtime.DMLRuntimeException;
+import org.apache.sysml.runtime.io.FileFormatPropertiesCSV;
+import org.apache.sysml.runtime.io.FileFormatProperties;
 import org.apache.sysml.runtime.io.IOUtilFunctions;
 import org.apache.sysml.runtime.io.MatrixReader;
 import org.apache.sysml.runtime.io.MatrixReaderFactory;
 import org.apache.sysml.runtime.matrix.MatrixCharacteristics;
 import org.apache.sysml.runtime.matrix.MetaDataNumItemsByEachReducer;
-import org.apache.sysml.runtime.matrix.data.CSVFileFormatProperties;
-import org.apache.sysml.runtime.matrix.data.FileFormatProperties;
 import org.apache.sysml.runtime.matrix.data.InputInfo;
 import org.apache.sysml.runtime.matrix.data.MatrixBlock;
 import org.apache.sysml.runtime.matrix.data.OutputInfo;
@@ -477,15 +477,15 @@ public class MapReduceTool
 					mtd.put(DataExpression.ROWBLOCKCOUNTPARAM, mc.getRowsPerBlock());
 					mtd.put(DataExpression.COLUMNBLOCKCOUNTPARAM, mc.getColsPerBlock());
 				}
-				mtd.put(DataExpression.READNUMNONZEROPARAM, mc.getNonZeros());
+				mtd.put(DataExpression.READNNZPARAM, mc.getNonZeros());
 			}
 		}
 			
 		//handle format type and additional arguments	
 		mtd.put(DataExpression.FORMAT_TYPE, OutputInfo.outputInfoToStringExternal(outinfo));
 		if (outinfo == OutputInfo.CSVOutputInfo) {
-			CSVFileFormatProperties csvProperties = (formatProperties==null) ?
-				new CSVFileFormatProperties() : (CSVFileFormatProperties)formatProperties;
+			FileFormatPropertiesCSV csvProperties = (formatProperties==null) ?
+				new FileFormatPropertiesCSV() : (FileFormatPropertiesCSV)formatProperties;
 			mtd.put(DataExpression.DELIM_HAS_HEADER_ROW, csvProperties.hasHeader());
 			mtd.put(DataExpression.DELIM_DELIMITER, csvProperties.getDelim());
 		}

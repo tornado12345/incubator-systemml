@@ -27,9 +27,9 @@ import org.apache.sysml.parser.Expression.*;
 
 public class CumulativeOffsetBinary extends Lop 
 {
-	
 	private OperationTypes _op;
 	private double _initValue = 0;
+	private boolean _broadcast = false;
 	
 	public CumulativeOffsetBinary(Lop data, Lop offsets, DataType dt, ValueType vt, OperationTypes op, ExecType et) 
 	{
@@ -40,7 +40,7 @@ public class CumulativeOffsetBinary extends Lop
 		init(data, offsets, dt, vt, et);
 	}
 	
-	public CumulativeOffsetBinary(Lop data, Lop offsets, DataType dt, ValueType vt, double init, OperationTypes op, ExecType et)
+	public CumulativeOffsetBinary(Lop data, Lop offsets, DataType dt, ValueType vt, double init, boolean broadcast, OperationTypes op, ExecType et)
 	{
 		super(Lop.Type.CumulativeOffsetBinary, dt, vt);
 		checkSupportedOperations(op);
@@ -48,6 +48,7 @@ public class CumulativeOffsetBinary extends Lop
 		
 		//in case of Spark, CumulativeOffset includes CumulativeSplit and hence needs the init value
 		_initValue = init;
+		_broadcast = broadcast;
 		
 		init(data, offsets, dt, vt, et);
 	}
@@ -88,8 +89,9 @@ public class CumulativeOffsetBinary extends Lop
 
 	private static void checkSupportedOperations(OperationTypes op) {
 		//sanity check for supported aggregates
-		if( !(op == OperationTypes.KahanSum || op == OperationTypes.Product ||
-		      op == OperationTypes.Min || op == OperationTypes.Max) )
+		if( !( op == OperationTypes.KahanSum || op == OperationTypes.Product
+			|| op == OperationTypes.SumProduct
+			|| op == OperationTypes.Min || op == OperationTypes.Max) )
 		{
 			throw new LopsException("Unsupported aggregate operation type: "+op);
 		}
@@ -97,11 +99,12 @@ public class CumulativeOffsetBinary extends Lop
 	
 	private String getOpcode() {
 		switch( _op ) {
-			case KahanSum: 	return "bcumoffk+";
-			case Product: 	return "bcumoff*";
-			case Min:		return "bcumoffmin";
-			case Max: 		return "bcumoffmax";
-			default: 		return null;
+			case KahanSum:   return "bcumoffk+";
+			case Product:    return "bcumoff*";
+			case SumProduct: return "bcumoff+*";
+			case Min:        return "bcumoffmin";
+			case Max:        return "bcumoffmax";
+			default:         return null;
 		}
 	}
 	
@@ -127,7 +130,9 @@ public class CumulativeOffsetBinary extends Lop
 		
 		if( getExecType() == ExecType.SPARK ) {
 			sb.append( OPERAND_DELIMITOR );
-			sb.append( _initValue );	
+			sb.append( _initValue );
+			sb.append( OPERAND_DELIMITOR );
+			sb.append( _broadcast );
 		}
 		
 		return sb.toString();

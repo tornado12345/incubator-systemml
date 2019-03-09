@@ -21,13 +21,11 @@ package org.apache.sysml.hops;
 
 import java.util.ArrayList;
 
-import org.apache.sysml.api.DMLScript;
-import org.apache.sysml.hops.Hop.MultiThreadedHop;
+import org.apache.sysml.conf.ConfigurationManager;
 import org.apache.sysml.hops.rewrite.HopRewriteUtils;
 import org.apache.sysml.lops.Aggregate;
 import org.apache.sysml.lops.Group;
 import org.apache.sysml.lops.Lop;
-import org.apache.sysml.lops.LopsException;
 import org.apache.sysml.lops.SortKeys;
 import org.apache.sysml.lops.Transform;
 import org.apache.sysml.lops.LopProperties.ExecType;
@@ -49,12 +47,11 @@ import org.apache.sysml.runtime.matrix.MatrixCharacteristics;
  *  and (2) most importantly semantic of reshape is exactly a reorg op. 
  */
 
-public class ReorgOp extends Hop implements MultiThreadedHop
+public class ReorgOp extends MultiThreadedHop
 {
 	public static boolean FORCE_DIST_SORT_INDEXES = false;
 	
 	private ReOrgOp op;
-	private int _maxNumThreads = -1; //-1 for unlimited
 	
 	private ReorgOp() {
 		//default constructor for clone
@@ -104,16 +101,6 @@ public class ReorgOp extends Hop implements MultiThreadedHop
 		}
 	}
 
-	@Override
-	public void setMaxNumThreads( int k ) {
-		_maxNumThreads = k;
-	}
-	
-	@Override
-	public int getMaxNumThreads() {
-		return _maxNumThreads;
-	}
-	
 	public ReOrgOp getOp()
 	{
 		return op;
@@ -128,26 +115,28 @@ public class ReorgOp extends Hop implements MultiThreadedHop
 	
 	@Override
 	public boolean isGPUEnabled() {
-		if(!DMLScript.USE_ACCELERATOR)
+		if(!ConfigurationManager.isGPU())
 			return false;
 		switch( op ) {
 			case TRANS: {
-				Lop lin;
-				try {
-					lin = getInput().get(0).constructLops();
-				} catch (HopsException | LopsException e) {
-					throw new RuntimeException("Unable to create child lop", e);
-				}
-				if( lin instanceof Transform && ((Transform)lin).getOperationType()==OperationTypes.Transpose )
-					return false; //if input is already a transpose, avoid redundant transpose ops
-				else if( getDim1()==1 && getDim2()==1 )
+				if( getDim1()==1 && getDim2()==1 ) {
 					return false; //if input of size 1x1, avoid unnecessary transpose
-				else
+				}
+				else if( getInput().get(0) instanceof ReorgOp &&  ((ReorgOp) getInput().get(0)).getOp() == ReOrgOp.TRANS) {
+					// Following checks causes stackoverflow:
+					// lin = getInput().get(0).constructLops();
+					// lin instanceof Transform && ((Transform)lin).getOperationType()==OperationTypes.Transpose
+					return false; //if input is already a transpose, avoid redundant transpose ops
+				}
+				else {
 					return true;
+				}
+			}
+			case RESHAPE: {
+				return true;
 			}
 			case DIAG:
 			case REV:
-			case RESHAPE:
 			case SORT:
 				return false;
 			default:
@@ -466,28 +455,31 @@ public class ReorgOp extends Hop implements MultiThreadedHop
 				
 				// CASE b) DIAG M2V
 				// input is [k,k] matrix and output is [k,1] matrix
-				// #nnz in the output is likely to be k (a dense matrix)		
+				// #nnz in the output is likely to be k (a dense matrix)
 				if( k > 1 )
 					ret = new long[]{k, 1, ((mc.getNonZeros()>=0) ? Math.min(k,mc.getNonZeros()) : k) };
 				
-				break;		
+				break;
 			}
 			case RESHAPE:
 			{
-				// input is a [k1,k2] matrix and output is a [k3,k4] matrix with k1*k2=k3*k4
-				// #nnz in output is exactly the same as in input		
+				// input is a [k1,k2] matrix and output is a [k3,k4] matrix with k1*k2=k3*k4, except for
+				// special cases where an input or output dimension is zero (i.e., 0x5 -> 1x0 is valid)
+				// #nnz in output is exactly the same as in input
 				if( mc.dimsKnown() ) {
-					if( _dim1 >= 0  )
-						ret = new long[]{ _dim1, mc.getRows()*mc.getCols()/_dim1, mc.getNonZeros()};
-					else if( _dim2 >= 0 ) 
-						ret = new long[]{ mc.getRows()*mc.getCols()/_dim2, _dim2, mc.getNonZeros()};
+					if( _dim1 > 0  )
+						ret = new long[]{_dim1, mc.getRows()*mc.getCols()/_dim1, mc.getNonZeros()};
+					else if( _dim2 > 0 ) 
+						ret = new long[]{mc.getRows()*mc.getCols()/_dim2, _dim2, mc.getNonZeros()};
+					else if( _dim1 >= 0 && _dim2 >= 0 )
+						ret = new long[]{_dim1, _dim2, -1};
 				}
 				break;
 			}
 			case SORT:
 			{
 				// input is a [k1,k2] matrix and output is a [k1,k3] matrix, where k3=k2 if no index return;
-				// otherwise k3=1 (for the index vector)	
+				// otherwise k3=1 (for the index vector)
 				Hop input4 = getInput().get(3); //indexreturn
 				boolean unknownIxRet = !(input4 instanceof LiteralOp);
 				
@@ -590,27 +582,27 @@ public class ReorgOp extends Hop implements MultiThreadedHop
 				
 				// CASE b) DIAG_M2V
 				// input is [k,k] matrix and output is [k,1] matrix
-				// #nnz in the output is likely to be k (a dense matrix)		
+				// #nnz in the output is likely to be k (a dense matrix)
 				if( input1.getDim2()>1 ){
-					setDim2(1);	
+					setDim2(1);
 					setNnz( (input1.getNnz()>=0) ? Math.min(k,input1.getNnz()) : k );
 				}
 				
-				break;		
+				break;
 			}
 			case RESHAPE:
 			{
 				// input is a [k1,k2] matrix and output is a [k3,k4] matrix with k1*k2=k3*k4
-				// #nnz in output is exactly the same as in input		
+				// #nnz in output is exactly the same as in input
 				Hop input2 = getInput().get(1); //rows 
 				Hop input3 = getInput().get(2); //cols 
 				refreshRowsParameterInformation(input2); //refresh rows
  				refreshColsParameterInformation(input3); //refresh cols
  				setNnz(input1.getNnz());
- 				if( !dimsKnown() &&input1.dimsKnown() ) { //reshape allows to infer dims, if input and 1 dim known
-	 				if(_dim1 >= 0) 
+ 				if( !dimsKnown() && input1.dimsKnown() ) { //reshape allows to infer dims, if input and 1 dim known
+	 				if(_dim1 > 0) 
 						_dim2 = (input1._dim1*input1._dim2)/_dim1;
-					else if(_dim2 >= 0)
+					else if(_dim2 > 0)
 						_dim1 = (input1._dim1*input1._dim2)/_dim2; 
  				}
 				break;
@@ -694,5 +686,5 @@ public class ReorgOp extends Hop implements MultiThreadedHop
 		}
 		
 		return ret;
-	}	
+	}
 }

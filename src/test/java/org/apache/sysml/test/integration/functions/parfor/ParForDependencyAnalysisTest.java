@@ -24,6 +24,7 @@ import java.io.FileReader;
 import java.util.HashMap;
 
 import org.apache.sysml.api.DMLScript;
+import org.apache.sysml.api.DMLScript.RUNTIME_PLATFORM;
 import org.apache.sysml.conf.ConfigurationManager;
 import org.apache.sysml.conf.DMLConfig;
 import org.apache.sysml.parser.DMLProgram;
@@ -66,6 +67,8 @@ import org.junit.Test;
  *    49a: dep, 49b: dep
  * * accumulators
  *    53a: no, 53b dep, 53c dep, 53d dep, 53e dep
+ * * lists
+ *    54a: no, 54b: no, 54c: dep, 54d: dep
  */
 public class ParForDependencyAnalysisTest extends AutomatedTestBase
 {
@@ -74,9 +77,7 @@ public class ParForDependencyAnalysisTest extends AutomatedTestBase
 	private static final String TEST_CLASS_DIR = TEST_DIR + ParForDependencyAnalysisTest.class.getSimpleName() + "/";
 	
 	@Override
-	public void setUp() {
-		
-	}
+	public void setUp() {}
 	
 	@Test
 	public void testDependencyAnalysis1() { runTest("parfor1.dml", false); }
@@ -316,8 +317,20 @@ public class ParForDependencyAnalysisTest extends AutomatedTestBase
 	@Test
 	public void testDependencyAnalysis53e() { runTest("parfor53e.dml", true); }
 	
+	@Test
+	public void testDependencyAnalysis54a() { runTest("parfor54a.dml", false); }
+	
+	@Test
+	public void testDependencyAnalysis54b() { runTest("parfor54b.dml", false); }
+	
+	@Test
+	public void testDependencyAnalysis54c() { runTest("parfor54c.dml", true); }
+	
+	@Test
+	public void testDependencyAnalysis54d() { runTest("parfor54d.dml", true); }
 	
 	private void runTest( String scriptFilename, boolean expectedException ) {
+		rtplatform = RUNTIME_PLATFORM.HYBRID; // Set hybrid as the default rtplaform for the parfor package
 		boolean raisedException = false;
 		try
 		{

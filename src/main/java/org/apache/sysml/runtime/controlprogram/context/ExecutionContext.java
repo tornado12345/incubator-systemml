@@ -20,11 +20,14 @@
 package org.apache.sysml.runtime.controlprogram.context;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
+import java.util.stream.Collectors;
 
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.sysml.api.DMLScript;
+import org.apache.sysml.conf.ConfigurationManager;
 import org.apache.sysml.debug.DMLFrame;
 import org.apache.sysml.debug.DMLProgramCounter;
 import org.apache.sysml.debug.DebugState;
@@ -42,6 +45,7 @@ import org.apache.sysml.runtime.instructions.cp.CPInstruction;
 import org.apache.sysml.runtime.instructions.cp.CPOperand;
 import org.apache.sysml.runtime.instructions.cp.Data;
 import org.apache.sysml.runtime.instructions.cp.FunctionCallCPInstruction;
+import org.apache.sysml.runtime.instructions.cp.ListObject;
 import org.apache.sysml.runtime.instructions.cp.ScalarObject;
 import org.apache.sysml.runtime.instructions.cp.ScalarObjectFactory;
 import org.apache.sysml.runtime.instructions.gpu.context.GPUContext;
@@ -50,10 +54,13 @@ import org.apache.sysml.runtime.matrix.MatrixCharacteristics;
 import org.apache.sysml.runtime.matrix.MetaDataFormat;
 import org.apache.sysml.runtime.matrix.MetaData;
 import org.apache.sysml.runtime.matrix.data.FrameBlock;
+import org.apache.sysml.runtime.matrix.data.InputInfo;
 import org.apache.sysml.runtime.matrix.data.MatrixBlock;
+import org.apache.sysml.runtime.matrix.data.OutputInfo;
 import org.apache.sysml.runtime.matrix.data.Pair;
 import org.apache.sysml.runtime.util.MapReduceTool;
 import org.apache.sysml.utils.GPUStatistics;
+import org.apache.sysml.utils.Statistics;
 
 
 public class ExecutionContext {
@@ -71,7 +78,7 @@ public class ExecutionContext {
 	/**
 	 * List of {@link GPUContext}s owned by this {@link ExecutionContext}
 	 */
-    protected List<GPUContext> _gpuContexts = new ArrayList<>();
+	protected List<GPUContext> _gpuContexts = new ArrayList<>();
 
 	protected ExecutionContext()
 	{
@@ -94,6 +101,10 @@ public class ExecutionContext {
 	
 	public Program getProgram(){
 		return _prog;
+	}
+
+	public void setProgram(Program prog) {
+		_prog = prog;
 	}
 	
 	public LocalVariableMap getVariables() {
@@ -215,6 +226,10 @@ public class ExecutionContext {
 		return (FrameObject) dat;
 	}
 
+	public CacheableData<?> getCacheableData(CPOperand input) {
+		return getCacheableData(input.getName());
+	}
+	
 	public CacheableData<?> getCacheableData(String varname) {
 		Data dat = getVariable(varname);
 		//error handling if non existing or no matrix
@@ -242,9 +257,9 @@ public class ExecutionContext {
 	 * @return matrix block
 	 */
 	public MatrixBlock getMatrixInput(String varName, String opcode) {
-		long t1 = opcode != null && DMLScript.STATISTICS && DMLScript.FINEGRAINED_STATISTICS ? System.nanoTime() : 0;
+		long t1 = opcode != null && ConfigurationManager.isStatistics() && ConfigurationManager.isFinegrainedStatistics() ? System.nanoTime() : 0;
 		MatrixBlock mb = getMatrixInput(varName);
-		if(opcode != null && DMLScript.STATISTICS && DMLScript.FINEGRAINED_STATISTICS) {
+		if(opcode != null && ConfigurationManager.isStatistics() && ConfigurationManager.isFinegrainedStatistics()) {
 			long t2 = System.nanoTime();
 			if(mb.isInSparseFormat())
 				GPUStatistics.maintainCPMiscTimes(opcode, CPInstruction.MISC_TIMER_GET_SPARSE_MB, t2-t1);
@@ -321,7 +336,7 @@ public class ExecutionContext {
 	public Pair<MatrixObject, Boolean> getSparseMatrixOutputForGPUInstruction(String varName, long numRows, long numCols, long nnz) {
 		MatrixObject mo = allocateGPUMatrixObject(varName, numRows, numCols);
 		mo.getMatrixCharacteristics().setNonZeros(nnz);
-				boolean allocated = mo.getGPUObject(getGPUContext(0)).acquireDeviceModifySparse();
+		boolean allocated = mo.getGPUObject(getGPUContext(0)).acquireDeviceModifySparse();
 		return new Pair<>(mo, allocated);
 	}
 
@@ -390,9 +405,9 @@ public class ExecutionContext {
 	}
 	
 	public void releaseMatrixInput(String varName, String opcode) {
-		long t1 = opcode != null && DMLScript.STATISTICS && DMLScript.FINEGRAINED_STATISTICS ? System.nanoTime() : 0;
+		long t1 = opcode != null && ConfigurationManager.isStatistics() && ConfigurationManager.isFinegrainedStatistics() ? System.nanoTime() : 0;
 		releaseMatrixInput(varName);
-		if(opcode != null && DMLScript.STATISTICS && DMLScript.FINEGRAINED_STATISTICS) {
+		if(opcode != null && ConfigurationManager.isStatistics() && ConfigurationManager.isFinegrainedStatistics()) {
 			long t2 = System.nanoTime();
 			GPUStatistics.maintainCPMiscTimes(opcode, CPInstruction.MISC_TIMER_RELEASE_INPUT_MB, t2-t1);
 		}
@@ -425,7 +440,8 @@ public class ExecutionContext {
 	}
 	
 	public ScalarObject getScalarInput(CPOperand input) {
-		return getScalarInput(input.getName(), input.getValueType(), input.isLiteral());
+		return input.isLiteral() ? input.getLiteral() : 
+			getScalarInput(input.getName(), input.getValueType(), false);
 	}
 	
 	public ScalarObject getScalarInput(String name, ValueType vt, boolean isLiteral) {
@@ -443,12 +459,23 @@ public class ExecutionContext {
 	public void setScalarOutput(String varName, ScalarObject so) {
 		setVariable(varName, so);
 	}
-	
+
+	public ListObject getListObject(String name) {
+		Data dat = getVariable(name);
+		//error handling if non existing or no list
+		if (dat == null)
+			throw new DMLRuntimeException("Variable '" + name + "' does not exist in the symbol table.");
+		if (!(dat instanceof ListObject))
+			throw new DMLRuntimeException("Variable '" + name + "' is not a list.");
+		return (ListObject) dat;
+	}
+
 	public void releaseMatrixOutputForGPUInstruction(String varName) {
 		MatrixObject mo = getMatrixObject(varName);
 		if(mo.getGPUObject(getGPUContext(0)) == null || !mo.getGPUObject(getGPUContext(0)).isAllocated()) {
 			throw new DMLRuntimeException("No output is allocated on GPU");
 		}
+		setMetaData(varName, new MetaDataFormat(mo.getMatrixCharacteristics(), OutputInfo.BinaryBlockOutputInfo, InputInfo.BinaryBlockInputInfo));
 		mo.getGPUObject(getGPUContext(0)).releaseOutput();
 	}
 	
@@ -483,6 +510,21 @@ public class ExecutionContext {
 		setVariable(varName, fo);
 	}
 	
+	public List<MatrixBlock> getMatrixInputs(CPOperand[] inputs) {
+		return Arrays.stream(inputs).filter(in -> in.isMatrix())
+			.map(in -> getMatrixInput(in.getName())).collect(Collectors.toList());
+	}
+	
+	public List<ScalarObject> getScalarInputs(CPOperand[] inputs) {
+		return Arrays.stream(inputs).filter(in -> in.isScalar())
+			.map(in -> getScalarInput(in)).collect(Collectors.toList());
+	}
+	
+	public void releaseMatrixInputs(CPOperand[] inputs) {
+		Arrays.stream(inputs).filter(in -> in.isMatrix())
+			.forEach(in -> releaseMatrixInput(in.getName()));
+	}
+	
 	/**
 	 * Pin a given list of variables i.e., set the "clean up" state in 
 	 * corresponding matrix objects, so that the cached data inside these
@@ -497,23 +539,42 @@ public class ExecutionContext {
 	 * @param varList variable list
 	 * @return indicator vector of old cleanup state of matrix objects
 	 */
-	public boolean[] pinVariables(ArrayList<String> varList) 
+	public boolean[] pinVariables(List<String> varList) 
 	{
-		//2-pass approach since multiple vars might refer to same matrix object
-		boolean[] varsState = new boolean[varList.size()];
-		
-		//step 1) get current information
+		//analyze list variables
+		int nlist = 0;
+		int nlistItems = 0;
 		for( int i=0; i<varList.size(); i++ ) {
 			Data dat = _variables.get(varList.get(i));
-			if( dat instanceof MatrixObject )
-				varsState[i] = ((MatrixObject)dat).isCleanupEnabled();
+			if( dat instanceof ListObject ) {
+				nlistItems += ((ListObject)dat).getNumCacheableData();
+				nlist++;
+			}
+		}
+		
+		//2-pass approach since multiple vars might refer to same matrix object
+		boolean[] varsState = new boolean[varList.size()-nlist+nlistItems];
+		
+		//step 1) get current information
+		for( int i=0, pos=0; i<varList.size(); i++ ) {
+			Data dat = _variables.get(varList.get(i));
+			if( dat instanceof CacheableData<?>  )
+				varsState[pos++] = ((CacheableData<?>)dat).isCleanupEnabled();
+			else if( dat instanceof ListObject )
+				for( Data dat2 : ((ListObject)dat).getData() )
+					if( dat2 instanceof CacheableData<?> )
+						varsState[pos++] = ((CacheableData<?>)dat2).isCleanupEnabled();
 		}
 		
 		//step 2) pin variables
 		for( int i=0; i<varList.size(); i++ ) {
 			Data dat = _variables.get(varList.get(i));
-			if( dat instanceof MatrixObject )
-				((MatrixObject)dat).enableCleanup(false); 
+			if( dat instanceof CacheableData<?> )
+				((CacheableData<?>)dat).enableCleanup(false);
+			else if( dat instanceof ListObject )
+				for( Data dat2 : ((ListObject)dat).getData() )
+					if( dat2 instanceof CacheableData<?> )
+						((CacheableData<?>)dat2).enableCleanup(false);
 		}
 		
 		return varsState;
@@ -535,11 +596,15 @@ public class ExecutionContext {
 	 * @param varList variable list
 	 * @param varsState variable state
 	 */
-	public void unpinVariables(ArrayList<String> varList, boolean[] varsState) {
-		for( int i=0; i<varList.size(); i++ ) {
+	public void unpinVariables(List<String> varList, boolean[] varsState) {
+		for( int i=0, pos=0; i<varList.size(); i++ ) {
 			Data dat = _variables.get(varList.get(i));
-			if( dat instanceof MatrixObject )
-				((MatrixObject)dat).enableCleanup(varsState[i]);
+			if( dat instanceof CacheableData<?> )
+				((CacheableData<?>)dat).enableCleanup(varsState[pos++]);
+			else if( dat instanceof ListObject )
+				for( Data dat2 : ((ListObject)dat).getData() )
+					if( dat2 instanceof CacheableData<?> )
+						((CacheableData<?>)dat2).enableCleanup(varsState[pos++]);
 		}
 	}
 	
@@ -568,11 +633,27 @@ public class ExecutionContext {
 		return ret;
 	}
 	
+	public final void cleanupDataObject(Data dat) {
+		if( dat == null ) return;
+		if ( dat instanceof CacheableData )
+			cleanupCacheableData( (CacheableData<?>)dat );
+		else if( dat instanceof ListObject )
+			for( Data dat2 : ((ListObject)dat).getData() )
+				if( dat2 instanceof CacheableData<?> )
+					cleanupCacheableData( (CacheableData<?>)dat2 );
+	}
+	
 	public void cleanupCacheableData(CacheableData<?> mo) {
+		if (ConfigurationManager.isJMLCMemStatistics())
+			Statistics.removeCPMemObject(System.identityHashCode(mo));
 		//early abort w/o scan of symbol table if no cleanup required
 		boolean fileExists = (mo.isHDFSFileExists() && mo.getFileName() != null);
-		if( !CacheableData.isCachingActive() && !fileExists )
+		if( !CacheableData.isCachingActive() && !fileExists ) {
+			if ( mo.isCleanupEnabled() && !getVariables().hasReferences(mo) )
+				mo.clearGPUData();
 			return;
+		}
+			
 		
 		try {
 			//compute ref count only if matrix cleanup actually necessary

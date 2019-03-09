@@ -1,4 +1,4 @@
-#-------------------------------------------------------------
+# -------------------------------------------------------------
 #
 # Licensed to the Apache Software Foundation (ASF) under one
 # or more contributor license agreements.  See the NOTICE file
@@ -17,12 +17,14 @@
 # specific language governing permissions and limitations
 # under the License.
 #
-#-------------------------------------------------------------
+# -------------------------------------------------------------
 
 from .mlcontext import *
 from .defmatrix import *
 from .converters import *
+from .classloader import *
 
 __all__ = mlcontext.__all__
 __all__ += defmatrix.__all__
 __all__ += converters.__all__
+__all__ += classloader.__all__

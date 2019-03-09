@@ -44,6 +44,7 @@ import org.apache.sysml.lops.ReBlock;
 import org.apache.sysml.lops.Ternary;
 import org.apache.sysml.lops.Unary;
 import org.apache.sysml.lops.UnaryCP;
+import org.apache.sysml.lops.ParameterizedBuiltin;
 import org.apache.sysml.parser.Expression.DataType;
 import org.apache.sysml.parser.Expression.ValueType;
 import org.apache.sysml.parser.ParseInfo;
@@ -62,14 +63,6 @@ public abstract class Hop implements ParseInfo
 	protected static final Log LOG =  LogFactory.getLog(Hop.class.getName());
 	
 	public static final long CPThreshold = 2000;
-
-	/**
-	 * Optional hop interface, to be implemented by multi-threaded hops.
-	 */
-	public interface MultiThreadedHop {
-		public abstract void setMaxNumThreads( int k );
-		public abstract int getMaxNumThreads();
-	}
 
 	// static variable to assign an unique ID to every hop that is created
 	private static IDSequence _seqHopID = new IDSequence();
@@ -148,7 +141,7 @@ public abstract class Hop implements ParseInfo
 	 * Check whether this Hop has a correct number of inputs.
 	 *
 	 * (Some Hops can have a variable number of inputs, such as DataOp, DataGenOp, ParameterizedBuiltinOp,
-	 * ReorgOp, TernaryOp, QuaternaryOp, MultipleOp, ConvolutionOp, and SpoofFusedOp.)
+	 * ReorgOp, TernaryOp, QuaternaryOp, MultipleOp, DnnOp, and SpoofFusedOp.)
 	 *
 	 * Parameterized Hops (such as DataOp) can check that the number of parameters matches the number of inputs.
 	 *
@@ -196,10 +189,10 @@ public abstract class Hop implements ParseInfo
 	
 	public void checkAndSetForcedPlatform()
 	{
-		if(DMLScript.USE_ACCELERATOR && DMLScript.FORCE_ACCELERATOR && isGPUEnabled())
+		if(ConfigurationManager.isGPU() && ConfigurationManager.isForcedGPU() && isGPUEnabled())
 			_etypeForced = ExecType.GPU; // enabled with -gpu force option
-		else if ( DMLScript.rtplatform == RUNTIME_PLATFORM.SINGLE_NODE ) {
-			if(OptimizerUtils.isMemoryBasedOptLevel() && DMLScript.USE_ACCELERATOR && isGPUEnabled()) {
+		else if ( ConfigurationManager.getExecutionMode() == RUNTIME_PLATFORM.SINGLE_NODE ) {
+			if(OptimizerUtils.isMemoryBasedOptLevel() && ConfigurationManager.isGPU() && isGPUEnabled()) {
 				// enabled with -exec singlenode -gpu option
 				_etypeForced = findExecTypeByMemEstimate();
 				if(_etypeForced != ExecType.CP && _etypeForced != ExecType.GPU)
@@ -210,9 +203,9 @@ public abstract class Hop implements ParseInfo
 				_etypeForced = ExecType.CP;  
 			}
 		}
-		else if ( DMLScript.rtplatform == RUNTIME_PLATFORM.HADOOP )
+		else if ( ConfigurationManager.getExecutionMode() == RUNTIME_PLATFORM.HADOOP )
 			_etypeForced = ExecType.MR; // enabled with -exec hadoop option
-		else if ( DMLScript.rtplatform == RUNTIME_PLATFORM.SPARK )
+		else if ( ConfigurationManager.getExecutionMode() == RUNTIME_PLATFORM.SPARK )
 			_etypeForced = ExecType.SPARK; // enabled with -exec spark option
 	}
 	
@@ -224,9 +217,9 @@ public abstract class Hop implements ParseInfo
 			
 			//force exec type mr if necessary
 			if( invalid ) { 
-				if( DMLScript.rtplatform == RUNTIME_PLATFORM.HYBRID )
+				if( ConfigurationManager.getExecutionMode() == RUNTIME_PLATFORM.HYBRID )
 					_etype = ExecType.MR;
-				else if( DMLScript.rtplatform == RUNTIME_PLATFORM.HYBRID_SPARK )
+				else if( ConfigurationManager.getExecutionMode() == RUNTIME_PLATFORM.HYBRID_SPARK )
 					_etype = ExecType.SPARK;
 			}
 		}
@@ -297,7 +290,7 @@ public abstract class Hop implements ParseInfo
 	{
 		//determine execution type
 		ExecType et = ExecType.CP;
-		if( DMLScript.rtplatform != RUNTIME_PLATFORM.SINGLE_NODE 
+		if( ConfigurationManager.getExecutionMode() != RUNTIME_PLATFORM.SINGLE_NODE 
 			&& !(getDataType()==DataType.SCALAR) )
 		{
 			et = OptimizerUtils.isSparkExecutionMode() ? ExecType.SPARK : ExecType.MR;
@@ -610,8 +603,7 @@ public abstract class Hop implements ParseInfo
 		
 		switch( getDataType() )
 		{
-			case SCALAR:
-			{
+			case SCALAR: {
 				//memory estimate always known
 				if( getValueType()== ValueType.DOUBLE) //default case
 					_outputMemEstimate = OptimizerUtils.DOUBLE_SIZE;
@@ -621,6 +613,7 @@ public abstract class Hop implements ParseInfo
 			}
 			case FRAME:
 			case MATRIX:
+			case LIST:
 			{
 				//1a) mem estimate based on exactly known dimensions and sparsity
 				if( dimsKnown(true) ) { 
@@ -666,8 +659,7 @@ public abstract class Hop implements ParseInfo
 				break;
 			}
 			case OBJECT:
-			case UNKNOWN:	
-			{
+			case UNKNOWN: {
 				//memory estimate always unknown
 				_outputMemEstimate = OptimizerUtils.DEFAULT_SIZE;
 				break;
@@ -743,15 +735,15 @@ public abstract class Hop implements ParseInfo
 		char c = ' ';
 		double memEst = getMemEstimate();
 		if ( memEst < OptimizerUtils.getLocalMemBudget() ) {
-			if (DMLScript.USE_ACCELERATOR && isGPUEnabled() && memEst < GPUContextPool.initialGPUMemBudget())
+			if (ConfigurationManager.isGPU() && isGPUEnabled() && memEst < GPUContextPool.initialGPUMemBudget())
 				et = ExecType.GPU;
 			else
 				et = ExecType.CP;
 		}
 		else {
-			if( DMLScript.rtplatform == DMLScript.RUNTIME_PLATFORM.HYBRID )
+			if( ConfigurationManager.getExecutionMode() == DMLScript.RUNTIME_PLATFORM.HYBRID )
 				et = ExecType.MR;
-			else if( DMLScript.rtplatform == DMLScript.RUNTIME_PLATFORM.HYBRID_SPARK )
+			else if( ConfigurationManager.getExecutionMode() == DMLScript.RUNTIME_PLATFORM.HYBRID_SPARK )
 				et = ExecType.SPARK;
 			
 			c = '*';
@@ -917,12 +909,13 @@ public abstract class Hop implements ParseInfo
 		}
 	}
 	
-	public void resetVisitStatus()  {
+	public Hop resetVisitStatus()  {
 		if( !isVisited() )
-			return;
+			return this;
 		for( Hop h : getInput() )
 			h.resetVisitStatus();
 		setVisited(false);
+		return this;
 	}
 	
 	public void resetVisitStatusForced(HashSet<Long> memo) {
@@ -1053,7 +1046,7 @@ public abstract class Hop implements ParseInfo
 		PRINT, ASSERT, EIGEN, NROW, NCOL, LENGTH, ROUND, IQM, STOP, CEIL, FLOOR, MEDIAN, INVERSE, CHOLESKY,
 		SVD, EXISTS,
 		//cumulative sums, products, extreme values
-		CUMSUM, CUMPROD, CUMMIN, CUMMAX,
+		CUMSUM, CUMPROD, CUMMIN, CUMMAX, CUMSUMPROD,
 		//fused ML-specific operators for performance 
 		SPROP, //sample proportion: P * (1 - P)
 		SIGMOID, //sigmoid function: 1 / (1 + exp(-X))
@@ -1088,7 +1081,7 @@ public abstract class Hop implements ParseInfo
 	
 	// Operations that require a variable number of operands
 	public enum OpOpN {
-		PRINTF, CBIND, RBIND, EVAL
+		PRINTF, CBIND, RBIND, MIN, MAX, EVAL, LIST
 	}
 	
 	public enum AggOp {
@@ -1103,10 +1096,12 @@ public abstract class Hop implements ParseInfo
 		//DIAG_V2M, DIAG_M2V, 
 	}
 	
-	public enum ConvOp {
+	public enum OpOpDnn {
 		MAX_POOL, MAX_POOL_BACKWARD, AVG_POOL, AVG_POOL_BACKWARD,
 		CONV2D, CONV2D_BACKWARD_FILTER, CONV2D_BACKWARD_DATA,
-		BIAS_ADD, BIAS_MULTIPLY
+		BIASADD, BIASMULT, BATCH_NORM2D_TEST, CHANNEL_SUMS,
+		UPDATE_NESTEROV_X, RESHAPE_COLMEANS, UPDATE_EMA_VAR, UPDATE_EMA, INV_VAR,
+		BATCH_NORM2D_BACKWARD_DX, BATCH_NORM2D_BACKWARD_DGAMMA
 	}
 	
 	public enum DataGenMethod {
@@ -1117,7 +1112,7 @@ public abstract class Hop implements ParseInfo
 		INVALID, CDF, INVCDF, GROUPEDAGG, RMEMPTY, REPLACE, REXPAND,
 		LOWER_TRI, UPPER_TRI,
 		TRANSFORMAPPLY, TRANSFORMDECODE, TRANSFORMCOLMAP, TRANSFORMMETA,
-		TOSTRING
+		TOSTRING, LIST, PARAMSERV
 	}
 
 	public enum FileFormatTypes {
@@ -1167,18 +1162,27 @@ public abstract class Hop implements ParseInfo
 
 	}
 	
-	protected static final HashMap<ConvOp, org.apache.sysml.lops.ConvolutionTransform.OperationTypes> HopsConv2Lops;
+	protected static final HashMap<OpOpDnn, org.apache.sysml.lops.DnnTransform.OperationTypes> HopsConv2Lops;
 	static {
 		HopsConv2Lops = new HashMap<>();
-		HopsConv2Lops.put(ConvOp.MAX_POOL, org.apache.sysml.lops.ConvolutionTransform.OperationTypes.MAX_POOL);
-		HopsConv2Lops.put(ConvOp.MAX_POOL_BACKWARD, org.apache.sysml.lops.ConvolutionTransform.OperationTypes.MAX_POOL_BACKWARD);
-		HopsConv2Lops.put(ConvOp.AVG_POOL, org.apache.sysml.lops.ConvolutionTransform.OperationTypes.AVG_POOL);
-		HopsConv2Lops.put(ConvOp.AVG_POOL_BACKWARD, org.apache.sysml.lops.ConvolutionTransform.OperationTypes.AVG_POOL_BACKWARD);
-		HopsConv2Lops.put(ConvOp.CONV2D, org.apache.sysml.lops.ConvolutionTransform.OperationTypes.CONV2D);
-		HopsConv2Lops.put(ConvOp.BIAS_ADD, org.apache.sysml.lops.ConvolutionTransform.OperationTypes.BIAS_ADD);
-		HopsConv2Lops.put(ConvOp.BIAS_MULTIPLY, org.apache.sysml.lops.ConvolutionTransform.OperationTypes.BIAS_MULTIPLY);
-		HopsConv2Lops.put(ConvOp.CONV2D_BACKWARD_FILTER, org.apache.sysml.lops.ConvolutionTransform.OperationTypes.CONV2D_BACKWARD_FILTER);
-		HopsConv2Lops.put(ConvOp.CONV2D_BACKWARD_DATA, org.apache.sysml.lops.ConvolutionTransform.OperationTypes.CONV2D_BACKWARD_DATA);
+		HopsConv2Lops.put(OpOpDnn.MAX_POOL, org.apache.sysml.lops.DnnTransform.OperationTypes.MAX_POOL);
+		HopsConv2Lops.put(OpOpDnn.MAX_POOL_BACKWARD, org.apache.sysml.lops.DnnTransform.OperationTypes.MAX_POOL_BACKWARD);
+		HopsConv2Lops.put(OpOpDnn.AVG_POOL, org.apache.sysml.lops.DnnTransform.OperationTypes.AVG_POOL);
+		HopsConv2Lops.put(OpOpDnn.AVG_POOL_BACKWARD, org.apache.sysml.lops.DnnTransform.OperationTypes.AVG_POOL_BACKWARD);
+		HopsConv2Lops.put(OpOpDnn.CONV2D, org.apache.sysml.lops.DnnTransform.OperationTypes.CONV2D);
+		HopsConv2Lops.put(OpOpDnn.BIASADD, org.apache.sysml.lops.DnnTransform.OperationTypes.BIAS_ADD);
+		HopsConv2Lops.put(OpOpDnn.BIASMULT, org.apache.sysml.lops.DnnTransform.OperationTypes.BIAS_MULTIPLY);
+		HopsConv2Lops.put(OpOpDnn.CONV2D_BACKWARD_FILTER, org.apache.sysml.lops.DnnTransform.OperationTypes.CONV2D_BACKWARD_FILTER);
+		HopsConv2Lops.put(OpOpDnn.CONV2D_BACKWARD_DATA, org.apache.sysml.lops.DnnTransform.OperationTypes.CONV2D_BACKWARD_DATA);
+		HopsConv2Lops.put(OpOpDnn.BATCH_NORM2D_TEST, org.apache.sysml.lops.DnnTransform.OperationTypes.BATCH_NORM2D_TEST);
+		HopsConv2Lops.put(OpOpDnn.UPDATE_EMA_VAR, org.apache.sysml.lops.DnnTransform.OperationTypes.UPDATE_EMA_VAR);
+		HopsConv2Lops.put(OpOpDnn.CHANNEL_SUMS, org.apache.sysml.lops.DnnTransform.OperationTypes.CHANNEL_SUMS);
+		HopsConv2Lops.put(OpOpDnn.UPDATE_NESTEROV_X, org.apache.sysml.lops.DnnTransform.OperationTypes.UPDATE_NESTEROV_X);
+		HopsConv2Lops.put(OpOpDnn.RESHAPE_COLMEANS, org.apache.sysml.lops.DnnTransform.OperationTypes.RESHAPE_COLMEANS);
+		HopsConv2Lops.put(OpOpDnn.UPDATE_EMA, org.apache.sysml.lops.DnnTransform.OperationTypes.UPDATE_EMA);
+		HopsConv2Lops.put(OpOpDnn.INV_VAR, org.apache.sysml.lops.DnnTransform.OperationTypes.INV_VAR);
+		HopsConv2Lops.put(OpOpDnn.BATCH_NORM2D_BACKWARD_DX, org.apache.sysml.lops.DnnTransform.OperationTypes.BATCH_NORM2D_BACKWARD_DX);
+		HopsConv2Lops.put(OpOpDnn.BATCH_NORM2D_BACKWARD_DGAMMA, org.apache.sysml.lops.DnnTransform.OperationTypes.BATCH_NORM2D_BACKWARD_DGAMMA);
 	}
 
 	protected static final HashMap<Hop.Direction, org.apache.sysml.lops.PartialAggregate.DirectionTypes> HopsDirection2Lops;
@@ -1308,6 +1312,7 @@ public abstract class Hop implements ParseInfo
 		HopsOpOp1LopsU.put(OpOp1.CUMPROD, org.apache.sysml.lops.Unary.OperationTypes.CUMPROD);
 		HopsOpOp1LopsU.put(OpOp1.CUMMIN, org.apache.sysml.lops.Unary.OperationTypes.CUMMIN);
 		HopsOpOp1LopsU.put(OpOp1.CUMMAX, org.apache.sysml.lops.Unary.OperationTypes.CUMMAX);
+		HopsOpOp1LopsU.put(OpOp1.CUMSUMPROD, org.apache.sysml.lops.Unary.OperationTypes.CUMSUMPROD);
 		HopsOpOp1LopsU.put(OpOp1.INVERSE, org.apache.sysml.lops.Unary.OperationTypes.INVERSE);
 		HopsOpOp1LopsU.put(OpOp1.CHOLESKY, org.apache.sysml.lops.Unary.OperationTypes.CHOLESKY);
 		HopsOpOp1LopsU.put(OpOp1.CAST_AS_SCALAR, org.apache.sysml.lops.Unary.OperationTypes.NOTSUPPORTED);
@@ -1374,7 +1379,10 @@ public abstract class Hop implements ParseInfo
 		HopsOpOpNLops.put(OpOpN.PRINTF, Nary.OperationType.PRINTF);
 		HopsOpOpNLops.put(OpOpN.CBIND, Nary.OperationType.CBIND);
 		HopsOpOpNLops.put(OpOpN.RBIND, Nary.OperationType.RBIND);
+		HopsOpOpNLops.put(OpOpN.MIN, Nary.OperationType.MIN);
+		HopsOpOpNLops.put(OpOpN.MAX, Nary.OperationType.MAX);
 		HopsOpOpNLops.put(OpOpN.EVAL, Nary.OperationType.EVAL);
+		HopsOpOpNLops.put(OpOpN.LIST, Nary.OperationType.LIST);
 	}
 
 	protected static final HashMap<Hop.OpOp1, String> HopsOpOp12String;
@@ -1414,18 +1422,20 @@ public abstract class Hop implements ParseInfo
 	protected static final HashMap<Hop.ParamBuiltinOp, org.apache.sysml.lops.ParameterizedBuiltin.OperationTypes> HopsParameterizedBuiltinLops;
 	static {
 		HopsParameterizedBuiltinLops = new HashMap<>();
-		HopsParameterizedBuiltinLops.put(ParamBuiltinOp.CDF, org.apache.sysml.lops.ParameterizedBuiltin.OperationTypes.CDF);
-		HopsParameterizedBuiltinLops.put(ParamBuiltinOp.INVCDF, org.apache.sysml.lops.ParameterizedBuiltin.OperationTypes.INVCDF);
-		HopsParameterizedBuiltinLops.put(ParamBuiltinOp.RMEMPTY, org.apache.sysml.lops.ParameterizedBuiltin.OperationTypes.RMEMPTY);
-		HopsParameterizedBuiltinLops.put(ParamBuiltinOp.REPLACE, org.apache.sysml.lops.ParameterizedBuiltin.OperationTypes.REPLACE);
-		HopsParameterizedBuiltinLops.put(ParamBuiltinOp.REXPAND, org.apache.sysml.lops.ParameterizedBuiltin.OperationTypes.REXPAND);
-		HopsParameterizedBuiltinLops.put(ParamBuiltinOp.LOWER_TRI, org.apache.sysml.lops.ParameterizedBuiltin.OperationTypes.LOWER_TRI);
-		HopsParameterizedBuiltinLops.put(ParamBuiltinOp.UPPER_TRI, org.apache.sysml.lops.ParameterizedBuiltin.OperationTypes.UPPER_TRI);
-		HopsParameterizedBuiltinLops.put(ParamBuiltinOp.TRANSFORMAPPLY, org.apache.sysml.lops.ParameterizedBuiltin.OperationTypes.TRANSFORMAPPLY);
-		HopsParameterizedBuiltinLops.put(ParamBuiltinOp.TRANSFORMDECODE, org.apache.sysml.lops.ParameterizedBuiltin.OperationTypes.TRANSFORMDECODE);
-		HopsParameterizedBuiltinLops.put(ParamBuiltinOp.TRANSFORMCOLMAP, org.apache.sysml.lops.ParameterizedBuiltin.OperationTypes.TRANSFORMCOLMAP);
-		HopsParameterizedBuiltinLops.put(ParamBuiltinOp.TRANSFORMMETA, org.apache.sysml.lops.ParameterizedBuiltin.OperationTypes.TRANSFORMMETA);
-		HopsParameterizedBuiltinLops.put(ParamBuiltinOp.TOSTRING, org.apache.sysml.lops.ParameterizedBuiltin.OperationTypes.TOSTRING);		
+		HopsParameterizedBuiltinLops.put(ParamBuiltinOp.CDF, ParameterizedBuiltin.OperationTypes.CDF);
+		HopsParameterizedBuiltinLops.put(ParamBuiltinOp.INVCDF, ParameterizedBuiltin.OperationTypes.INVCDF);
+		HopsParameterizedBuiltinLops.put(ParamBuiltinOp.RMEMPTY, ParameterizedBuiltin.OperationTypes.RMEMPTY);
+		HopsParameterizedBuiltinLops.put(ParamBuiltinOp.REPLACE, ParameterizedBuiltin.OperationTypes.REPLACE);
+		HopsParameterizedBuiltinLops.put(ParamBuiltinOp.REXPAND, ParameterizedBuiltin.OperationTypes.REXPAND);
+		HopsParameterizedBuiltinLops.put(ParamBuiltinOp.LOWER_TRI, ParameterizedBuiltin.OperationTypes.LOWER_TRI);
+		HopsParameterizedBuiltinLops.put(ParamBuiltinOp.UPPER_TRI, ParameterizedBuiltin.OperationTypes.UPPER_TRI);
+		HopsParameterizedBuiltinLops.put(ParamBuiltinOp.TRANSFORMAPPLY, ParameterizedBuiltin.OperationTypes.TRANSFORMAPPLY);
+		HopsParameterizedBuiltinLops.put(ParamBuiltinOp.TRANSFORMDECODE, ParameterizedBuiltin.OperationTypes.TRANSFORMDECODE);
+		HopsParameterizedBuiltinLops.put(ParamBuiltinOp.TRANSFORMCOLMAP, ParameterizedBuiltin.OperationTypes.TRANSFORMCOLMAP);
+		HopsParameterizedBuiltinLops.put(ParamBuiltinOp.TRANSFORMMETA, ParameterizedBuiltin.OperationTypes.TRANSFORMMETA);
+		HopsParameterizedBuiltinLops.put(ParamBuiltinOp.TOSTRING, ParameterizedBuiltin.OperationTypes.TOSTRING);
+		HopsParameterizedBuiltinLops.put(ParamBuiltinOp.LIST, ParameterizedBuiltin.OperationTypes.LIST);
+		HopsParameterizedBuiltinLops.put(ParamBuiltinOp.PARAMSERV, ParameterizedBuiltin.OperationTypes.PARAMSERV);
 	}
 
 	protected static final HashMap<Hop.OpOp2, String> HopsOpOp2String;
@@ -1537,6 +1547,7 @@ public abstract class Hop implements ParseInfo
 		HopsData2String.put(DataOpTypes.PERSISTENTWRITE, "PWrite");
 		HopsData2String.put(DataOpTypes.TRANSIENTWRITE, "TWrite");
 		HopsData2String.put(DataOpTypes.TRANSIENTREAD, "TRead");
+		HopsData2String.put(DataOpTypes.FUNCTIONOUTPUT, "FunOut");
 	}
 
 	public static OpOp2 getOpOp2ForOuterVectorOperation(String op) 
@@ -1717,11 +1728,11 @@ public abstract class Hop implements ParseInfo
 		return ret;
 	}
 	
-	public double computeBoundsInformation( Hop input, LocalVariableMap vars ) {
+	public final double computeBoundsInformation( Hop input, LocalVariableMap vars ) {
 		return computeBoundsInformation(input, vars, new HashMap<Long, Double>());
 	}
 	
-	public double computeBoundsInformation( Hop input, LocalVariableMap vars, HashMap<Long, Double> memo ) {
+	public final double computeBoundsInformation( Hop input, LocalVariableMap vars, HashMap<Long, Double> memo ) {
 		double ret = Double.MAX_VALUE;
 		try {
 			ret = OptimizerUtils.rEvalSimpleDoubleExpression(input, memo, vars);

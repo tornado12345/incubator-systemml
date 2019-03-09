@@ -22,7 +22,6 @@ package org.apache.sysml.test.integration.functions.codegen;
 import java.io.File;
 import java.util.HashMap;
 
-import org.junit.Assert;
 import org.junit.Test;
 import org.apache.sysml.api.DMLScript;
 import org.apache.sysml.api.DMLScript.RUNTIME_PLATFORM;
@@ -39,6 +38,7 @@ public class CompressedCellwiseTest extends AutomatedTestBase
 	private static final String TEST_NAME1 = "CompressedCellwiseMain";
 	private static final String TEST_NAME2 = "CompressedCellwiseSide";
 	private static final String TEST_NAME3 = "CompressedCellwiseSumSq";
+	private static final String TEST_NAME4 = "CompressedCellwiseSumSeq";
 	
 	private static final String TEST_DIR = "functions/codegen/";
 	private static final String TEST_CLASS_DIR = TEST_DIR + CompressedCellwiseTest.class.getSimpleName() + "/";
@@ -71,6 +71,7 @@ public class CompressedCellwiseTest extends AutomatedTestBase
 		addTestConfiguration( TEST_NAME1, new TestConfiguration(TEST_CLASS_DIR, TEST_NAME1, new String[] { "R" }) );
 		addTestConfiguration( TEST_NAME2, new TestConfiguration(TEST_CLASS_DIR, TEST_NAME2, new String[] { "R" }) );
 		addTestConfiguration( TEST_NAME3, new TestConfiguration(TEST_CLASS_DIR, TEST_NAME3, new String[] { "R" }) );
+		addTestConfiguration( TEST_NAME4, new TestConfiguration(TEST_CLASS_DIR, TEST_NAME4, new String[] { "R" }) );
 	}
 		
 	@Test
@@ -316,22 +317,75 @@ public class CompressedCellwiseTest extends AutomatedTestBase
 	public void testCompressedCellwiseSumSqEmptyRand3CP() {
 		testCompressedCellwise( TEST_NAME3, SparsityType.EMPTY, ValueType.RAND_ROUND_OLE, ExecType.CP );
 	}
+
+	@Test
+	public void testCompressedCellwiseSumSeqDenseConstCP() {
+		testCompressedCellwise( TEST_NAME4, SparsityType.DENSE, ValueType.CONST, ExecType.CP );
+	}
 	
+	@Test
+	public void testCompressedCellwiseSumSeqDenseRandCP() {
+		testCompressedCellwise( TEST_NAME4, SparsityType.DENSE, ValueType.RAND, ExecType.CP );
+	}
+	
+	@Test
+	public void testCompressedCellwiseSumSeqDenseRand2CP() {
+		testCompressedCellwise( TEST_NAME4, SparsityType.DENSE, ValueType.RAND_ROUND_DDC, ExecType.CP );
+	}
+	
+	@Test
+	public void testCompressedCellwiseSumSeqDenseRand3CP() {
+		testCompressedCellwise( TEST_NAME4, SparsityType.DENSE, ValueType.RAND_ROUND_OLE, ExecType.CP );
+	}
+	
+	@Test
+	public void testCompressedCellwiseSumSeqSparseConstCP() {
+		testCompressedCellwise( TEST_NAME4, SparsityType.SPARSE, ValueType.CONST, ExecType.CP );
+	}
+	
+	@Test
+	public void testCompressedCellwiseSumSeqSparseRandCP() {
+		testCompressedCellwise( TEST_NAME4, SparsityType.SPARSE, ValueType.RAND, ExecType.CP );
+	}
+	
+	@Test
+	public void testCompressedCellwiseSumSeqSparseRand2CP() {
+		testCompressedCellwise( TEST_NAME4, SparsityType.SPARSE, ValueType.RAND_ROUND_DDC, ExecType.CP );
+	}
+	
+	@Test
+	public void testCompressedCellwiseSumSeqSparseRand3CP() {
+		testCompressedCellwise( TEST_NAME4, SparsityType.SPARSE, ValueType.RAND_ROUND_OLE, ExecType.CP );
+	}
+	
+	@Test
+	public void testCompressedCellwiseSumSeqEmptyConstCP() {
+		testCompressedCellwise( TEST_NAME4, SparsityType.EMPTY, ValueType.CONST, ExecType.CP );
+	}
+	
+	@Test
+	public void testCompressedCellwiseSumSeqEmptyRandCP() {
+		testCompressedCellwise( TEST_NAME4, SparsityType.EMPTY, ValueType.RAND, ExecType.CP );
+	}
+	
+	@Test
+	public void testCompressedCellwiseSumSeqEmptyRand2CP() {
+		testCompressedCellwise( TEST_NAME4, SparsityType.EMPTY, ValueType.RAND_ROUND_DDC, ExecType.CP );
+	}
+	
+	@Test
+	public void testCompressedCellwiseSumSeqEmptyRand3CP() {
+		testCompressedCellwise( TEST_NAME4, SparsityType.EMPTY, ValueType.RAND_ROUND_OLE, ExecType.CP );
+	}
 	
 	private void testCompressedCellwise(String testname, SparsityType stype, ValueType vtype, ExecType et)
 	{	
-		boolean oldRewrites = OptimizerUtils.ALLOW_ALGEBRAIC_SIMPLIFICATION;
-		RUNTIME_PLATFORM platformOld = rtplatform;
-		switch( et ){
-			case MR: rtplatform = RUNTIME_PLATFORM.HADOOP; break;
-			case SPARK: rtplatform = RUNTIME_PLATFORM.SPARK; break;
-			default: rtplatform = RUNTIME_PLATFORM.HYBRID_SPARK; break;
-		}
-	
 		boolean sparkConfigOld = DMLScript.USE_LOCAL_SPARK_CONFIG;
-		if( rtplatform == RUNTIME_PLATFORM.SPARK || rtplatform == RUNTIME_PLATFORM.HYBRID_SPARK )
-			DMLScript.USE_LOCAL_SPARK_CONFIG = true;
-		
+		RUNTIME_PLATFORM platformOld = setRuntimePlatform(et);
+		if(shouldSkipTest())
+			return;
+	
+		boolean oldRewrites = OptimizerUtils.ALLOW_ALGEBRAIC_SIMPLIFICATION;
 		try
 		{
 			OptimizerUtils.ALLOW_ALGEBRAIC_SIMPLIFICATION = true;
@@ -340,11 +394,11 @@ public class CompressedCellwiseTest extends AutomatedTestBase
 			
 			String HOME = SCRIPT_DIR + TEST_DIR;
 			fullDMLScriptName = HOME + testname + ".dml";
-			programArgs = new String[]{"-explain", "-stats", 
+			programArgs = new String[]{"-explain", "-stats",
 					"-args", input("X"), output("R") };
 			
 			fullRScriptName = HOME + testname + ".R";
-			rCmd = getRCmd(inputDir(), expectedDir());			
+			rCmd = getRCmd(inputDir(), expectedDir());
 
 			//generate input data
 			double sparsity = -1;
@@ -371,9 +425,9 @@ public class CompressedCellwiseTest extends AutomatedTestBase
 			HashMap<CellIndex, Double> dmlfile = readDMLMatrixFromHDFS("R");
 			HashMap<CellIndex, Double> rfile  = readRMatrixFromFS("R");	
 			TestUtils.compareMatrices(dmlfile, rfile, eps, "Stat-DML", "Stat-R");
-			Assert.assertTrue(heavyHittersContainsSubString("spoofCell") 
+			assertTrue(heavyHittersContainsSubString("spoofCell") 
 				|| heavyHittersContainsSubString("sp_spoofCell"));
-			Assert.assertTrue(heavyHittersContainsSubString("compress")
+			assertTrue(heavyHittersContainsSubString("compress")
 				|| heavyHittersContainsSubString("sp_compress"));
 		}
 		finally {
@@ -384,7 +438,7 @@ public class CompressedCellwiseTest extends AutomatedTestBase
 			OptimizerUtils.ALLOW_OPERATOR_FUSION = true;
 			CompressedMatrixBlock.ALLOW_DDC_ENCODING = true;
 		}
-	}	
+	}
 
 	/**
 	 * Override default configuration with custom test configuration to ensure

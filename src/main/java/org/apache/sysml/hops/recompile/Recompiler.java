@@ -28,8 +28,6 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 
-import org.apache.commons.logging.Log;
-import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
 import org.apache.wink.json4j.JSONObject;
@@ -46,12 +44,13 @@ import org.apache.sysml.hops.Hop.DataGenMethod;
 import org.apache.sysml.hops.Hop.DataOpTypes;
 import org.apache.sysml.hops.Hop.FileFormatTypes;
 import org.apache.sysml.hops.Hop.OpOp1;
+import org.apache.sysml.hops.Hop.ReOrgOp;
 import org.apache.sysml.hops.HopsException;
 import org.apache.sysml.hops.IndexingOp;
 import org.apache.sysml.hops.LiteralOp;
 import org.apache.sysml.hops.MemoTable;
+import org.apache.sysml.hops.MultiThreadedHop;
 import org.apache.sysml.hops.OptimizerUtils;
-import org.apache.sysml.hops.ReorgOp;
 import org.apache.sysml.hops.UnaryOp;
 import org.apache.sysml.hops.codegen.SpoofCompiler;
 import org.apache.sysml.hops.rewrite.HopRewriteUtils;
@@ -83,7 +82,7 @@ import org.apache.sysml.runtime.controlprogram.caching.CacheableData;
 import org.apache.sysml.runtime.controlprogram.caching.FrameObject;
 import org.apache.sysml.runtime.controlprogram.caching.MatrixObject;
 import org.apache.sysml.runtime.controlprogram.context.ExecutionContext;
-import org.apache.sysml.runtime.controlprogram.parfor.ProgramConverter;
+import org.apache.sysml.runtime.util.ProgramConverter;
 import org.apache.sysml.runtime.controlprogram.parfor.opt.OptTreeConverter;
 import org.apache.sysml.runtime.controlprogram.parfor.stat.InfrastructureAnalyzer;
 import org.apache.sysml.runtime.instructions.Instruction;
@@ -119,8 +118,6 @@ import org.apache.sysml.utils.JSONHelper;
  */
 public class Recompiler 
 {
-	private static final Log LOG = LogFactory.getLog(Recompiler.class.getName());
-	
 	//Max threshold for in-memory reblock of text input [in bytes]
 	//reason: single-threaded text read at 20MB/s, 1GB input -> 50s (should exploit parallelism)
 	//note that we scale this threshold up by the degree of available parallelism
@@ -298,17 +295,25 @@ public class Recompiler
 	private static ArrayList<Instruction> recompile(StatementBlock sb, ArrayList<Hop> hops, LocalVariableMap vars, RecompileStatus status,
 		boolean inplace, boolean replaceLit, boolean updateStats, boolean forceEt, boolean pred, ExecType et, long tid ) 
 	{
+		boolean codegen = ConfigurationManager.isCodegenEnabled()
+			&& !(forceEt && et == null ) //not on reset
+			&& SpoofCompiler.RECOMPILE_CODEGEN;
+		
 		// prepare hops dag for recompile
 		if( !inplace ){ 
 			// deep copy hop dag (for non-reversable rewrites)
 			hops = deepCopyHopsDag(hops);
 		}
-		else {
+		else if( !codegen ) {
 			// clear existing lops
 			Hop.resetVisitStatus(hops);
 			for( Hop hopRoot : hops )
 				rClearLops( hopRoot );
 		}
+		
+		// get max parallelism constraint, see below
+		Hop.resetVisitStatus(hops);
+		int maxK = rGetMaxParallelism(hops);
 		
 		// replace scalar reads with literals 
 		if( !inplace && replaceLit ) {
@@ -355,9 +360,7 @@ public class Recompiler
 		}
 		
 		// codegen if enabled
-		if( ConfigurationManager.isCodegenEnabled()
-			&& !(forceEt && et == null ) //not on reset
-			&& SpoofCompiler.RECOMPILE_CODEGEN ) {
+		if( codegen ) {
 			//create deep copy for in-place
 			if( inplace )
 				hops = deepCopyHopsDag(hops);
@@ -365,6 +368,11 @@ public class Recompiler
 			hops = SpoofCompiler.optimize(hops,
 				(status==null || !status.isInitialCodegen()));
 		}
+		
+		// set max parallelism constraint to ensure compilation 
+		// incl rewrites does not lose these hop-lop constraints
+		Hop.resetVisitStatus(hops);
+		rSetMaxParallelism(hops, maxK);
 		
 		// construct lops
 		Dag<Lop> dag = new Dag<>();
@@ -391,20 +399,20 @@ public class Recompiler
 	
 	private static void logExplainDAG(StatementBlock sb, ArrayList<Hop> hops, ArrayList<Instruction> inst) {
 		if( DMLScript.EXPLAIN == ExplainType.RECOMPILE_HOPS ) {
-			LOG.info("EXPLAIN RECOMPILE \nGENERIC (lines "+sb.getBeginLine()+"-"+sb.getEndLine()+"):\n" +
-			Explain.explainHops(hops, 1));
+			System.out.println("EXPLAIN RECOMPILE \nGENERIC (lines "+sb.getBeginLine()+"-"+sb.getEndLine()+"):\n" +
+				Explain.explainHops(hops, 1));
 		}
 		if( DMLScript.EXPLAIN == ExplainType.RECOMPILE_RUNTIME ) {
-			LOG.info("EXPLAIN RECOMPILE \nGENERIC (lines "+sb.getBeginLine()+"-"+sb.getEndLine()+"):\n" +
-			Explain.explain(inst, 1));
+			System.out.println("EXPLAIN RECOMPILE \nGENERIC (lines "+sb.getBeginLine()+"-"+sb.getEndLine()+"):\n" +
+				Explain.explain(inst, 1));
 		}
 	}
 	
 	private static void logExplainPred(Hop hops, ArrayList<Instruction> inst) {
 		if( DMLScript.EXPLAIN == ExplainType.RECOMPILE_HOPS )
-			LOG.info("EXPLAIN RECOMPILE \nPRED (line "+hops.getBeginLine()+"):\n" + Explain.explain(hops,1));
+			System.out.println("EXPLAIN RECOMPILE \nPRED (line "+hops.getBeginLine()+"):\n" + Explain.explain(hops,1));
 		if( DMLScript.EXPLAIN == ExplainType.RECOMPILE_RUNTIME )
-			LOG.info("EXPLAIN RECOMPILE \nPRED (line "+hops.getBeginLine()+"):\n" + Explain.explain(inst,1));
+			System.out.println("EXPLAIN RECOMPILE \nPRED (line "+hops.getBeginLine()+"):\n" + Explain.explain(inst,1));
 	}
 
 	public static void recompileProgramBlockHierarchy( ArrayList<ProgramBlock> pbs, LocalVariableMap vars, long tid, ResetType resetRecompile ) {
@@ -583,8 +591,7 @@ public class Recompiler
 		//update function names
 		if( hop instanceof FunctionOp && ((FunctionOp)hop).getFunctionType() != FunctionType.MULTIRETURN_BUILTIN) {
 			FunctionOp fop = (FunctionOp) hop;
-			fop.setFunctionName( fop.getFunctionName() +
-					             ProgramConverter.CP_CHILD_THREAD + pid);
+			fop.setFunctionName( fop.getFunctionName() + Lop.CP_CHILD_THREAD + pid);
 		}
 		
 		if( hop.getInput() != null )
@@ -1282,17 +1289,12 @@ public class Recompiler
 			for( Hop c : hop.getInput() )
 				rUpdateStatistics(c, vars);	
 		
-		boolean updatedSizeExpr = false;
-		
 		//update statistics for transient reads according to current statistics
 		//(with awareness not to override persistent reads to an existing name)
-		if(     hop instanceof DataOp 
-			&& ((DataOp)hop).getDataOpType() != DataOpTypes.PERSISTENTREAD )
-		{
+		if( HopRewriteUtils.isData(hop, DataOpTypes.TRANSIENTREAD) ) {
 			DataOp d = (DataOp) hop;
 			String varName = d.getName();
-			if( vars.keySet().contains( varName ) )
-			{
+			if( vars.keySet().contains( varName ) ) {
 				Data dat = vars.get(varName);
 				if( dat instanceof MatrixObject ) {
 					MatrixObject mo = (MatrixObject) dat;
@@ -1308,10 +1310,9 @@ public class Recompiler
 			}
 		}
 		//special case for persistent reads with unknown size (read-after-write)
-		else if( hop instanceof DataOp 
-				&& ((DataOp)hop).getDataOpType() == DataOpTypes.PERSISTENTREAD
-				&& !hop.dimsKnown() && ((DataOp)hop).getInputFormatType()!=FileFormatTypes.CSV
-				&& !ConfigurationManager.getCompilerConfigFlag(ConfigType.IGNORE_READ_WRITE_METADATA) )
+		else if( HopRewriteUtils.isData(hop, DataOpTypes.PERSISTENTREAD)
+			&& !hop.dimsKnown() && ((DataOp)hop).getInputFormatType()!=FileFormatTypes.CSV
+			&& !ConfigurationManager.getCompilerConfigFlag(ConfigType.IGNORE_READ_WRITE_METADATA) )
 		{
 			//update hop with read meta data
 			DataOp dop = (DataOp) hop; 
@@ -1332,7 +1333,8 @@ public class Recompiler
 				HashMap<Long, Long> memo = new HashMap<>();
 				d.refreshRowsParameterInformation(d.getInput().get(ix1), vars, memo);
 				d.refreshColsParameterInformation(d.getInput().get(ix2), vars, memo);
-				updatedSizeExpr = initUnknown & d.dimsKnown();
+				if( !(initUnknown & d.dimsKnown()) )
+					d.refreshSizeInformation();
 			} 
 			else if ( d.getOp() == DataGenMethod.SEQ ) 
 			{
@@ -1355,47 +1357,40 @@ public class Recompiler
 					d.setDim2( 1 );
 					d.setIncrementValue( incr );
 				}
-				updatedSizeExpr = initUnknown & d.dimsKnown();
+				if( !(initUnknown & d.dimsKnown()) )
+					d.refreshSizeInformation();
 			}
 			else {
 				throw new DMLRuntimeException("Unexpected data generation method: " + d.getOp());
 			}
 		}
 		//update size expression for reshape according to symbol table entries
-		else if (    hop instanceof ReorgOp 
-				 && ((ReorgOp)(hop)).getOp()==Hop.ReOrgOp.RESHAPE )
-		{
-			ReorgOp d = (ReorgOp) hop;
-			boolean initUnknown = !d.dimsKnown();
-			HashMap<Long, Long> memo = new HashMap<>();
-			d.refreshRowsParameterInformation(d.getInput().get(1), vars, memo);
-			d.refreshColsParameterInformation(d.getInput().get(2), vars, memo);
-			updatedSizeExpr = initUnknown & d.dimsKnown();
+		else if( HopRewriteUtils.isReorg(hop, ReOrgOp.RESHAPE) ) {
+			hop.refreshSizeInformation(); //update incl reset
+			if( !hop.dimsKnown() ) {
+				HashMap<Long, Long> memo = new HashMap<>();
+				hop.refreshRowsParameterInformation(hop.getInput().get(1), vars, memo);
+				hop.refreshColsParameterInformation(hop.getInput().get(2), vars, memo);
+			}
 		}
 		//update size expression for indexing according to symbol table entries
-		else if( hop instanceof IndexingOp )
-		{
-			IndexingOp iop = (IndexingOp)hop;
-			Hop input2 = iop.getInput().get(1); //inpRowL
-			Hop input3 = iop.getInput().get(2); //inpRowU
-			Hop input4 = iop.getInput().get(3); //inpColL
-			Hop input5 = iop.getInput().get(4); //inpColU
-			boolean initUnknown = !iop.dimsKnown();
-			HashMap<Long, Double> memo = new HashMap<>();
-			double rl = iop.computeBoundsInformation(input2, vars, memo);
-			double ru = iop.computeBoundsInformation(input3, vars, memo);
-			double cl = iop.computeBoundsInformation(input4, vars, memo);
-			double cu = iop.computeBoundsInformation(input5, vars, memo);
-			if( rl!=Double.MAX_VALUE && ru!=Double.MAX_VALUE )
-				iop.setDim1( (long)(ru-rl+1) );
-			if( cl!=Double.MAX_VALUE && cu!=Double.MAX_VALUE )
-				iop.setDim2( (long)(cu-cl+1) );
-			updatedSizeExpr = initUnknown & iop.dimsKnown();
+		else if( hop instanceof IndexingOp && hop.getDataType()!=DataType.LIST ) {
+			hop.refreshSizeInformation(); //update, incl reset
+			if( !hop.dimsKnown() ) {
+				HashMap<Long, Double> memo = new HashMap<>();
+				double rl = hop.computeBoundsInformation(hop.getInput().get(1), vars, memo);
+				double ru = hop.computeBoundsInformation(hop.getInput().get(2), vars, memo);
+				double cl = hop.computeBoundsInformation(hop.getInput().get(3), vars, memo);
+				double cu = hop.computeBoundsInformation(hop.getInput().get(4), vars, memo);
+				if( rl!=Double.MAX_VALUE && ru!=Double.MAX_VALUE )
+					hop.setDim1( (long)(ru-rl+1) );
+				if( cl!=Double.MAX_VALUE && cu!=Double.MAX_VALUE )
+					hop.setDim2( (long)(cu-cl+1) );
+			}
 		}
-		
+		else {
 		//propagate statistics along inner nodes of DAG,
 		//without overwriting inferred size expressions
-		if( !updatedSizeExpr ) {
 			hop.refreshSizeInformation();
 		}
 		
@@ -1416,21 +1411,51 @@ public class Recompiler
 		LiteralReplacement.rReplaceLiterals(hop, vars, scalarsOnly);
 	}
 	
-	public static void rSetExecType( Hop hop, ExecType etype )
-	{
+	public static void rSetExecType( Hop hop, ExecType etype ) {
 		if( hop.isVisited() )
 			return;
-		
 		//update function names
 		hop.setForcedExecType(etype);
-		
 		if( hop.getInput() != null )
 			for( Hop c : hop.getInput() )
 				rSetExecType(c, etype);
-		
 		hop.setVisited();
 	}
 	
+	public static int rGetMaxParallelism(List<Hop> hops) {
+		int ret = -1;
+		for( Hop c : hops )
+			ret = Math.max(ret, rGetMaxParallelism(c));
+		return ret;
+	}
+	
+	public static int rGetMaxParallelism(Hop hop) {
+		if( hop.isVisited() )
+			return -1;
+		//recursively process children and
+		int ret = rGetMaxParallelism(hop.getInput());
+		//obtain max num thread constraints
+		if( hop instanceof MultiThreadedHop )
+			ret = Math.max(ret, ((MultiThreadedHop)hop).getMaxNumThreads());
+		hop.setVisited();
+		return ret;
+	}
+	
+	public static void rSetMaxParallelism(List<Hop> hops, int k) {
+		for( Hop c : hops )
+			rSetMaxParallelism(c, k);
+	}
+	
+	public static void rSetMaxParallelism(Hop hop, int k) {
+		if( hop.isVisited() )
+			return;
+		//recursively process children
+		rSetMaxParallelism(hop.getInput(), k);
+		//set max num thread constraint
+		if( hop instanceof MultiThreadedHop )
+			((MultiThreadedHop)hop).setMaxNumThreads(k);
+		hop.setVisited();
+	}
 
 	/**
 	 * Returns true iff (1) all instruction are reblock instructions and (2) all

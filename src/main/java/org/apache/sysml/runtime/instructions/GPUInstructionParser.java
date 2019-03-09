@@ -26,10 +26,11 @@ import org.apache.sysml.runtime.instructions.gpu.AggregateBinaryGPUInstruction;
 import org.apache.sysml.runtime.instructions.gpu.ArithmeticBinaryGPUInstruction;
 import org.apache.sysml.runtime.instructions.gpu.BuiltinBinaryGPUInstruction;
 import org.apache.sysml.runtime.instructions.gpu.BuiltinUnaryGPUInstruction;
-import org.apache.sysml.runtime.instructions.gpu.ConvolutionGPUInstruction;
+import org.apache.sysml.runtime.instructions.gpu.DnnGPUInstruction;
 import org.apache.sysml.runtime.instructions.gpu.GPUInstruction;
 import org.apache.sysml.runtime.instructions.gpu.MatrixIndexingGPUInstruction;
 import org.apache.sysml.runtime.instructions.gpu.MatrixMatrixAxpyGPUInstruction;
+import org.apache.sysml.runtime.instructions.gpu.MatrixReshapeGPUInstruction;
 import org.apache.sysml.runtime.instructions.gpu.GPUInstruction.GPUINSTRUCTION_TYPE;
 import org.apache.sysml.runtime.instructions.gpu.MMTSJGPUInstruction;
 import org.apache.sysml.runtime.instructions.gpu.RelationalBinaryGPUInstruction;
@@ -44,25 +45,38 @@ public class GPUInstructionParser  extends InstructionParser
 		String2GPUInstructionType = new HashMap<>();
 
 		// Neural Network Operators
-		String2GPUInstructionType.put( "relu_backward",          GPUINSTRUCTION_TYPE.Convolution);
-		String2GPUInstructionType.put( "conv2d",                 GPUINSTRUCTION_TYPE.Convolution);
-		String2GPUInstructionType.put( "conv2d_bias_add",        GPUINSTRUCTION_TYPE.Convolution);
-		String2GPUInstructionType.put( "conv2d_backward_filter", GPUINSTRUCTION_TYPE.Convolution);
-		String2GPUInstructionType.put( "conv2d_backward_data",   GPUINSTRUCTION_TYPE.Convolution);
-		String2GPUInstructionType.put( "maxpooling",             GPUINSTRUCTION_TYPE.Convolution);
-		String2GPUInstructionType.put( "maxpooling_backward",    GPUINSTRUCTION_TYPE.Convolution);
-		String2GPUInstructionType.put( "avgpooling",             GPUINSTRUCTION_TYPE.Convolution);
-		String2GPUInstructionType.put( "avgpooling_backward",    GPUINSTRUCTION_TYPE.Convolution);
-		String2GPUInstructionType.put( "bias_add",               GPUINSTRUCTION_TYPE.Convolution);
-		String2GPUInstructionType.put( "bias_multiply",          GPUINSTRUCTION_TYPE.Convolution);
-		String2GPUInstructionType.put( "channel_sums",          GPUINSTRUCTION_TYPE.Convolution);
-
+		String2GPUInstructionType.put( "relu_backward",          GPUINSTRUCTION_TYPE.Dnn);
+		String2GPUInstructionType.put( "conv2d",                 GPUINSTRUCTION_TYPE.Dnn);
+		String2GPUInstructionType.put( "conv2d_bias_add",        GPUINSTRUCTION_TYPE.Dnn);
+		String2GPUInstructionType.put( "conv2d_backward_filter", GPUINSTRUCTION_TYPE.Dnn);
+		String2GPUInstructionType.put( "conv2d_backward_data",   GPUINSTRUCTION_TYPE.Dnn);
+		String2GPUInstructionType.put( "maxpooling",             GPUINSTRUCTION_TYPE.Dnn);
+		String2GPUInstructionType.put( "maxpooling_backward",    GPUINSTRUCTION_TYPE.Dnn);
+		String2GPUInstructionType.put( "relu_maxpooling",        GPUINSTRUCTION_TYPE.Dnn);
+		String2GPUInstructionType.put( "relu_maxpooling_backward", GPUINSTRUCTION_TYPE.Dnn);
+		String2GPUInstructionType.put( "avgpooling",             GPUINSTRUCTION_TYPE.Dnn);
+		String2GPUInstructionType.put( "avgpooling_backward",    GPUINSTRUCTION_TYPE.Dnn);
+		String2GPUInstructionType.put( "bias_add",               GPUINSTRUCTION_TYPE.Dnn);
+		String2GPUInstructionType.put( "bias_multiply",          GPUINSTRUCTION_TYPE.Dnn);
+		String2GPUInstructionType.put( "channel_sums",          GPUINSTRUCTION_TYPE.Dnn);
+		String2GPUInstructionType.put( "lstm",                 	GPUINSTRUCTION_TYPE.Dnn);
+		String2GPUInstructionType.put( "lstm_backward",         GPUINSTRUCTION_TYPE.Dnn);
+		String2GPUInstructionType.put( "batch_norm2d_test",      GPUINSTRUCTION_TYPE.Dnn);
+		String2GPUInstructionType.put( "update_nesterov_x",     GPUINSTRUCTION_TYPE.Dnn);
+		String2GPUInstructionType.put( "update_ema_var",      	GPUINSTRUCTION_TYPE.Dnn);
+		String2GPUInstructionType.put( "update_ema",      		GPUINSTRUCTION_TYPE.Dnn);
+		String2GPUInstructionType.put( "reshape_colmeans",      GPUINSTRUCTION_TYPE.Dnn);
+		String2GPUInstructionType.put( "inv_var",      			GPUINSTRUCTION_TYPE.Dnn);
+		String2GPUInstructionType.put( "batch_norm2d_bwd_dx",   GPUINSTRUCTION_TYPE.Dnn);
+		String2GPUInstructionType.put( "batch_norm2d_bwd_dgamma",   GPUINSTRUCTION_TYPE.Dnn);
+		
 		// Matrix Multiply Operators
 		String2GPUInstructionType.put( "ba+*",  GPUINSTRUCTION_TYPE.AggregateBinary);
 		String2GPUInstructionType.put( "tsmm",  GPUINSTRUCTION_TYPE.MMTSJ);
 
 		// Reorg/Transpose
 		String2GPUInstructionType.put( "r'",    GPUINSTRUCTION_TYPE.Reorg);
+		String2GPUInstructionType.put( "rshape",GPUINSTRUCTION_TYPE.MatrixReshape);
 
 		// Matrix Manipulation
 		String2GPUInstructionType.put( "append", GPUINSTRUCTION_TYPE.Append);
@@ -178,14 +192,17 @@ public class GPUInstructionParser  extends InstructionParser
 			case Append:
 				return MatrixAppendGPUInstruction.parseInstruction(str);
 
-			case Convolution:
-				return ConvolutionGPUInstruction.parseInstruction(str);
+			case Dnn:
+				return DnnGPUInstruction.parseInstruction(str);
 				
 			case MMTSJ:
 				return MMTSJGPUInstruction.parseInstruction(str);
 				
 			case Reorg:
 				return ReorgGPUInstruction.parseInstruction(str);
+				
+			case MatrixReshape:
+				return MatrixReshapeGPUInstruction.parseInstruction(str);
 				
 			case ArithmeticBinary:
 				String opcode = InstructionUtils.getOpCode(str);

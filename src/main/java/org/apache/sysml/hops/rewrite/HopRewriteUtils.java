@@ -20,18 +20,20 @@
 package org.apache.sysml.hops.rewrite;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 
 import org.apache.commons.lang.ArrayUtils;
-import org.apache.sysml.api.DMLScript;
 import org.apache.sysml.api.DMLScript.RUNTIME_PLATFORM;
 import org.apache.sysml.conf.ConfigurationManager;
 import org.apache.sysml.hops.AggBinaryOp;
 import org.apache.sysml.hops.AggUnaryOp;
 import org.apache.sysml.hops.BinaryOp;
 import org.apache.sysml.hops.DataOp;
+import org.apache.sysml.hops.DnnOp;
 import org.apache.sysml.hops.Hop;
 import org.apache.sysml.hops.Hop.AggOp;
 import org.apache.sysml.hops.Hop.DataGenMethod;
@@ -41,6 +43,7 @@ import org.apache.sysml.hops.Hop.Direction;
 import org.apache.sysml.hops.Hop.FileFormatTypes;
 import org.apache.sysml.hops.Hop.OpOp2;
 import org.apache.sysml.hops.Hop.OpOp3;
+import org.apache.sysml.hops.Hop.OpOpDnn;
 import org.apache.sysml.hops.Hop.OpOpN;
 import org.apache.sysml.hops.Hop.ParamBuiltinOp;
 import org.apache.sysml.hops.Hop.ReOrgOp;
@@ -69,6 +72,7 @@ import org.apache.sysml.parser.Expression.ValueType;
 import org.apache.sysml.runtime.instructions.cp.ScalarObject;
 import org.apache.sysml.runtime.instructions.cp.ScalarObjectFactory;
 import org.apache.sysml.runtime.instructions.cp.StringInitCPInstruction;
+import org.apache.sysml.runtime.matrix.MatrixCharacteristics;
 import org.apache.sysml.runtime.matrix.data.MatrixBlock;
 import org.apache.sysml.runtime.util.UtilFunctions;
 
@@ -86,26 +90,20 @@ public class HopRewriteUtils
 	// literal handling
 
 	public static boolean getBooleanValue( LiteralOp op ) {
-		switch( op.getValueType() )
-		{
+		switch( op.getValueType() ) {
 			case DOUBLE:  return op.getDoubleValue() != 0; 
-			case INT:	  return op.getLongValue()   != 0;
+			case INT:     return op.getLongValue()   != 0;
 			case BOOLEAN: return op.getBooleanValue();
-			
 			default: throw new HopsException("Invalid boolean value: "+op.getValueType());
 		}
 	}
 
-	public static boolean getBooleanValueSafe( LiteralOp op )
-	{
-		try
-		{
-			switch( op.getValueType() )
-			{
+	public static boolean getBooleanValueSafe( LiteralOp op ) {
+		try {
+			switch( op.getValueType() ) {
 				case DOUBLE:  return op.getDoubleValue() != 0; 
-				case INT:	  return op.getLongValue()   != 0;
+				case INT:     return op.getLongValue()   != 0;
 				case BOOLEAN: return op.getBooleanValue();
-				
 				default: throw new HopsException("Invalid boolean value: "+op.getValueType());
 			}
 		}
@@ -118,8 +116,9 @@ public class HopRewriteUtils
 
 	public static double getDoubleValue( LiteralOp op ) {
 		switch( op.getValueType() ) {
+			case STRING:
 			case DOUBLE:  return op.getDoubleValue(); 
-			case INT:	  return op.getLongValue();
+			case INT:     return op.getLongValue();
 			case BOOLEAN: return op.getBooleanValue() ? 1 : 0;
 			default: throw new HopsException("Invalid double value: "+op.getValueType());
 		}
@@ -128,7 +127,7 @@ public class HopRewriteUtils
 	public static double getDoubleValueSafe( LiteralOp op ) {
 		switch( op.getValueType() ) {
 			case DOUBLE:  return op.getDoubleValue(); 
-			case INT:	  return op.getLongValue();
+			case INT:     return op.getLongValue();
 			case BOOLEAN: return op.getBooleanValue() ? 1 : 0;
 			default: return Double.MAX_VALUE;
 		}
@@ -146,8 +145,9 @@ public class HopRewriteUtils
 	 */
 	public static long getIntValue( LiteralOp op ) {
 		switch( op.getValueType() ) {
-			case DOUBLE:  return UtilFunctions.toLong(op.getDoubleValue()); 
-			case INT:	  return op.getLongValue();
+			case DOUBLE:  return UtilFunctions.toLong(op.getDoubleValue());
+			case STRING:
+			case INT:     return op.getLongValue();
 			case BOOLEAN: return op.getBooleanValue() ? 1 : 0;
 			default: throw new HopsException("Invalid int value: "+op.getValueType());
 		}
@@ -155,11 +155,15 @@ public class HopRewriteUtils
 	
 	public static long getIntValueSafe( LiteralOp op ) {
 		switch( op.getValueType() ) {
-			case DOUBLE:  return UtilFunctions.toLong(op.getDoubleValue()); 
-			case INT:	  return op.getLongValue();
+			case DOUBLE:  return UtilFunctions.toLong(op.getDoubleValue());
+			case INT:     return op.getLongValue();
 			case BOOLEAN: return op.getBooleanValue() ? 1 : 0;
 			default: return Long.MAX_VALUE;
 		}
+	}
+	
+	public static boolean isLiteralOfValue( Hop hop, Double... val ) {
+		return Arrays.stream(val).anyMatch(d -> isLiteralOfValue(hop, d));
 	}
 	
 	public static boolean isLiteralOfValue( Hop hop, double val ) {
@@ -485,6 +489,13 @@ public class HopRewriteUtils
 			&& ArrayUtils.contains(ops, ((DataGenOp)hop).getOp()));
 	}
 	
+	public static boolean isDataGenOpWithLiteralInputs(Hop hop, DataGenMethod... ops) {
+		boolean ret = isDataGenOp(hop, ops);
+		for( Hop c : hop.getInput() )
+			ret &= c instanceof LiteralOp;
+		return ret;
+	}
+	
 	public static boolean isDataGenOpWithConstantValue(Hop hop) {
 		return hop instanceof DataGenOp
 			&& ((DataGenOp)hop).getOp()==DataGenMethod.RAND
@@ -611,7 +622,7 @@ public class HopRewriteUtils
 		return mmult;
 	}
 	
-	public static ParameterizedBuiltinOp createParameterizedBuiltinOp(Hop input, HashMap<String,Hop> args, ParamBuiltinOp op) {
+	public static ParameterizedBuiltinOp createParameterizedBuiltinOp(Hop input, LinkedHashMap<String,Hop> args, ParamBuiltinOp op) {
 		ParameterizedBuiltinOp pbop = new ParameterizedBuiltinOp("tmp", DataType.MATRIX, ValueType.DOUBLE, op, args);
 		pbop.setOutputBlocksizes(input.getRowsInBlock(), input.getColsInBlock());
 		copyLineNumbers(input, pbop);
@@ -708,6 +719,26 @@ public class HopRewriteUtils
 		return ternOp;
 	}
 	
+	public static DnnOp createDnnOp(OpOpDnn op, Hop... hops) {
+		ArrayList<Hop> inHops = new ArrayList<Hop>();
+		for(Hop h : hops) {
+			inHops.add(h);
+		}
+		return  new DnnOp("tmp", DataType.MATRIX, ValueType.DOUBLE,
+				op, inHops);
+	}
+	
+	public static DnnOp createDnnOp(HopDagPatternMatcher matcher, OpOpDnn op, String... varNames) {
+		ArrayList<Hop> inHops = new ArrayList<Hop>();
+		for(String v : varNames) {
+			inHops.add(matcher.getMatchedHop(v));
+		}
+		return  new DnnOp("tmp", DataType.MATRIX, ValueType.DOUBLE,
+				op, inHops);
+	}
+	
+	
+	
 	public static void setOutputParameters( Hop hop, long rlen, long clen, int brlen, int bclen, long nnz ) {
 		hop.setDim1( rlen );
 		hop.setDim2( clen );
@@ -761,6 +792,13 @@ public class HopRewriteUtils
 		return ( hop.getNnz()==0 );
 	}
 	
+	public static boolean isEqualMatrixSize(BinaryOp hop) {
+		return hop.getDataType().isMatrix()
+			&& hop.getInput().get(0).getDataType().isMatrix()
+			&& hop.getInput().get(1).getDataType().isMatrix()
+			&& isEqualSize(hop.getInput().get(0), hop.getInput().get(1));
+	}
+	
 	public static boolean isEqualSize( Hop hop1, Hop hop2 ) {
 		return (hop1.dimsKnown() && hop2.dimsKnown()
 			&& hop1.getDim1() == hop2.getDim1()
@@ -792,7 +830,7 @@ public class HopRewriteUtils
 	{
 		//awareness of forced exec single node (e.g., standalone), where we can 
 		//guarantee a single block independent of the size because always in CP.
-		if( DMLScript.rtplatform == RUNTIME_PLATFORM.SINGLE_NODE ) {
+		if( ConfigurationManager.getExecutionMode() == RUNTIME_PLATFORM.SINGLE_NODE ) {
 			return true;
 		}
 		
@@ -906,6 +944,10 @@ public class HopRewriteUtils
 		return isBinary(hop, type) && hop.getParent().size() <= maxParents;
 	}
 	
+	public static boolean isBinaryPPred(Hop hop) {
+		return hop instanceof BinaryOp && ((BinaryOp) hop).isPPredOperation();
+	}
+	
 	public static boolean isBinarySparseSafe(Hop hop) {
 		if( !(hop instanceof BinaryOp) )
 			return false;
@@ -996,6 +1038,10 @@ public class HopRewriteUtils
 		return hop instanceof AggBinaryOp && ((AggBinaryOp)hop).isMatrixMultiply();
 	}
 	
+	public static boolean isAggUnaryOp(Hop hop, AggOp op, Direction dir) {
+		return isAggUnaryOp(hop, op) && ((AggUnaryOp)hop).getDirection()==dir;
+	}
+	
 	public static boolean isAggUnaryOp(Hop hop, AggOp...op) {
 		if( !(hop instanceof AggUnaryOp) )
 			return false;
@@ -1010,6 +1056,10 @@ public class HopRewriteUtils
 	public static boolean isSumSq(Hop hop) {
 		return (hop instanceof AggUnaryOp && ((AggUnaryOp)hop).getOp()==AggOp.SUM_SQ);
 	}
+
+	public static boolean isParameterBuiltinOp(Hop hop, ParamBuiltinOp type) {
+		return hop instanceof ParameterizedBuiltinOp && ((ParameterizedBuiltinOp) hop).getOp().equals(type);
+	}
 	
 	public static boolean isNary(Hop hop, OpOpN type) {
 		return hop instanceof NaryOp && ((NaryOp)hop).getOp()==type;
@@ -1018,6 +1068,15 @@ public class HopRewriteUtils
 	public static boolean isNary(Hop hop, OpOpN... types) {
 		return ( hop instanceof NaryOp 
 			&& ArrayUtils.contains(types, ((NaryOp) hop).getOp()));
+	}
+	
+	public static boolean isDnn(Hop hop, OpOpDnn type) {
+		return hop instanceof DnnOp && ((DnnOp)hop).getOp()==type;
+	}
+	
+	public static boolean isDnn(Hop hop, OpOpDnn... types) {
+		return ( hop instanceof DnnOp 
+			&& ArrayUtils.contains(types, ((DnnOp) hop).getOp()));
 	}
 	
 	public static boolean isNonZeroIndicator(Hop pred, Hop hop )
@@ -1167,13 +1226,10 @@ public class HopRewriteUtils
 			|| (isColumnRightIndexing(input) && size.getInput().get(0)==input.getInput().get(0))));
 	}
 	
-	public static boolean hasOnlyWriteParents( Hop hop, boolean inclTransient, boolean inclPersistent )
-	{
+	public static boolean hasOnlyWriteParents( Hop hop, boolean inclTransient, boolean inclPersistent ) {
 		boolean ret = true;
-		
 		ArrayList<Hop> parents = hop.getParent();
-		for( Hop p : parents )
-		{
+		for( Hop p : parents ) {
 			if( inclTransient && inclPersistent )
 				ret &= ( p instanceof DataOp && (((DataOp)p).getDataOpType()==DataOpTypes.TRANSIENTWRITE
 				|| ((DataOp)p).getDataOpType()==DataOpTypes.PERSISTENTWRITE));
@@ -1182,8 +1238,14 @@ public class HopRewriteUtils
 			else if(inclPersistent)
 				ret &= ( p instanceof DataOp && ((DataOp)p).getDataOpType()==DataOpTypes.PERSISTENTWRITE);
 		}
-			
-				
+		return ret;
+	}
+	
+	public static boolean hasOnlyUnaryBinaryParents(Hop hop, boolean disallowLhs) {
+		boolean ret = true;
+		for( Hop p : hop.getParent() )
+			ret &= (p instanceof UnaryOp || (p instanceof BinaryOp 
+				&& (!disallowLhs || p.getInput().get(1)==hop)));
 		return ret;
 	}
 	
@@ -1322,18 +1384,69 @@ public class HopRewriteUtils
 	
 	public static long getMaxInputDim(Hop hop, boolean dim1) {
 		return hop.getInput().stream().mapToLong(
-			h -> (dim1?h.getDim1():h.getDim2())).max().orElse(-1);
+			h -> (dim1 ? h.getDim1() : h.getDim2())).max().orElse(-1);
 	}
 	
 	public static long getSumValidInputDims(Hop hop, boolean dim1) {
 		if( !hasValidInputDims(hop, dim1) )
 			return -1;
 		return hop.getInput().stream().mapToLong(
-			h -> (dim1?h.getDim1():h.getDim2())).sum();
+			h -> (dim1 ? h.getDim1() : h.getDim2())).sum();
 	}
 	
 	public static boolean hasValidInputDims(Hop hop, boolean dim1) {
 		return hop.getInput().stream().allMatch(
 			h -> dim1 ? h.rowsKnown() : h.colsKnown());
+	}
+	
+	public static long getSumValidInputNnz(Hop hop) {
+		if( !hasValidInputNnz(hop) )
+			return -1;
+		return hop.getInput().stream().mapToLong(h -> h.getNnz()).sum();
+	}
+	
+	public static boolean hasValidInputNnz(Hop hop) {
+		return hop.getInput().stream().allMatch(h -> h.getNnz() >= 0);
+	}
+	
+	public static long getMaxInputDim(MatrixCharacteristics[] mc, boolean dim1) {
+		return Arrays.stream(mc).mapToLong(
+			h -> (dim1 ? h.getRows() : h.getRows())).max().orElse(-1);
+	}
+	
+	public static long getSumValidInputDims(MatrixCharacteristics[] mc, boolean dim1) {
+		if( !hasValidInputDims(mc, dim1) )
+			return -1;
+		return Arrays.stream(mc).mapToLong(
+			h -> (dim1 ? h.getRows() : h.getCols())).sum();
+	}
+	
+	public static boolean hasValidInputDims(MatrixCharacteristics[] mc, boolean dim1) {
+		return Arrays.stream(mc).allMatch(
+			h -> dim1 ? h.rowsKnown() : h.colsKnown());
+	}
+	
+	public static long getSumValidInputNnz(MatrixCharacteristics[] mc, boolean worstcase) {
+		if( !hasValidInputNnz(mc, worstcase) )
+			return -1;
+		return Arrays.stream(mc).mapToLong(h -> h.nnzKnown() ?
+			h.getNonZeros() : h.getLength()).sum();
+	}
+	
+	public static boolean hasValidInputNnz(MatrixCharacteristics[] mc, boolean worstcase) {
+		return Arrays.stream(mc).allMatch(h -> h.nnzKnown() || (worstcase && h.dimsKnown()));
+	}
+	
+	public static boolean containsSecondOrderBuiltin(ArrayList<Hop> roots) {
+		Hop.resetVisitStatus(roots);
+		return roots.stream().anyMatch(r -> containsSecondOrderBuiltin(r));
+	}
+	
+	private static boolean containsSecondOrderBuiltin(Hop hop) {
+		if( hop.isVisited() ) return false;
+		hop.setVisited();
+		return HopRewriteUtils.isNary(hop, OpOpN.EVAL)
+			|| HopRewriteUtils.isParameterBuiltinOp(hop, Hop.ParamBuiltinOp.PARAMSERV)
+			|| hop.getInput().stream().anyMatch(c -> containsSecondOrderBuiltin(c));
 	}
 }

@@ -19,7 +19,7 @@
 
 package org.apache.sysml.runtime.instructions.cp;
 
-import org.apache.sysml.api.DMLScript;
+import org.apache.sysml.conf.ConfigurationManager;
 import org.apache.sysml.lops.LeftIndex;
 import org.apache.sysml.lops.RightIndex;
 import org.apache.sysml.parser.Expression.DataType;
@@ -34,8 +34,8 @@ import org.apache.sysml.utils.Statistics;
 
 public final class MatrixIndexingCPInstruction extends IndexingCPInstruction {
 
-	protected MatrixIndexingCPInstruction(CPOperand in, CPOperand rl, CPOperand ru, CPOperand cl,
-			CPOperand cu, CPOperand out, String opcode, String istr) {
+	public MatrixIndexingCPInstruction(CPOperand in, CPOperand rl, CPOperand ru, CPOperand cl, CPOperand cu,
+			CPOperand out, String opcode, String istr) {
 		super(in, rl, ru, cl, cu, out, opcode, istr);
 	}
 
@@ -82,7 +82,7 @@ public final class MatrixIndexingCPInstruction extends IndexingCPInstruction {
 		else if ( opcode.equalsIgnoreCase(LeftIndex.OPCODE))
 		{
 			UpdateType updateType = mo.getUpdateType();
-			if(DMLScript.STATISTICS) {
+			if(ConfigurationManager.isStatistics()) {
 				if( updateType.isInPlace() )
 					Statistics.incrementTotalLixUIP();
 				Statistics.incrementTotalLix();

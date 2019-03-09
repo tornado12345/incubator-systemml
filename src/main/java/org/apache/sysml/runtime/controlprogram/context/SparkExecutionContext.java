@@ -24,6 +24,7 @@ import java.util.Arrays;
 import java.util.HashMap;
 import java.util.LinkedList;
 import java.util.List;
+import java.util.concurrent.Future;
 import java.util.stream.Collectors;
 import java.util.stream.LongStream;
 
@@ -42,10 +43,10 @@ import org.apache.spark.storage.RDDInfo;
 import org.apache.spark.storage.StorageLevel;
 import org.apache.spark.util.LongAccumulator;
 import org.apache.sysml.api.DMLScript;
+import org.apache.sysml.conf.ConfigurationManager;
 import org.apache.sysml.api.DMLScript.RUNTIME_PLATFORM;
 import org.apache.sysml.api.mlcontext.MLContext;
 import org.apache.sysml.api.mlcontext.MLContextUtil;
-import org.apache.sysml.conf.ConfigurationManager;
 import org.apache.sysml.hops.OptimizerUtils;
 import org.apache.sysml.lops.Checkpoint;
 import org.apache.sysml.parser.Expression.ValueType;
@@ -71,6 +72,7 @@ import org.apache.sysml.runtime.instructions.spark.functions.CreateSparseBlockFu
 import org.apache.sysml.runtime.instructions.spark.utils.FrameRDDConverterUtils.LongFrameToLongWritableFrameFunction;
 import org.apache.sysml.runtime.instructions.spark.utils.RDDAggregateUtils;
 import org.apache.sysml.runtime.instructions.spark.utils.SparkUtils;
+import org.apache.sysml.runtime.io.IOUtilFunctions;
 import org.apache.sysml.runtime.matrix.MatrixCharacteristics;
 import org.apache.sysml.runtime.matrix.data.FrameBlock;
 import org.apache.sysml.runtime.matrix.data.InputInfo;
@@ -127,7 +129,7 @@ public class SparkExecutionContext extends ExecutionContext
 		super( allocateVars, prog );
 		
 		//spark context creation via internal initializer
-		if( !LAZY_SPARKCTX_CREATION || DMLScript.rtplatform==RUNTIME_PLATFORM.SPARK ) {
+		if( !LAZY_SPARKCTX_CREATION || ConfigurationManager.getExecutionMode()==RUNTIME_PLATFORM.SPARK ) {
 			initSparkContext();
 		}
 	}
@@ -193,7 +195,7 @@ public class SparkExecutionContext extends ExecutionContext
 		if( _spctx != null )
 			return;
 
-		long t0 = DMLScript.STATISTICS ? System.nanoTime() : 0;
+		long t0 = ConfigurationManager.isStatistics() ? System.nanoTime() : 0;
 
 		//create a default spark context (master, appname, etc refer to system properties
 		//as given in the spark configuration or during spark-submit)
@@ -240,7 +242,7 @@ public class SparkExecutionContext extends ExecutionContext
 			MRJobConfiguration.addBinaryBlockSerializationFramework( _spctx.hadoopConfiguration() );
 
 		//statistics maintenance
-		if( DMLScript.STATISTICS ){
+		if( ConfigurationManager.isStatistics() ){
 			Statistics.setSparkCtxCreateTime(System.nanoTime()-t0);
 		}
 	}
@@ -507,7 +509,7 @@ public class SparkExecutionContext extends ExecutionContext
 	}
 
 	public Broadcast<CacheBlock> broadcastVariable(CacheableData<CacheBlock> cd) {
-		long t0 = DMLScript.STATISTICS ? System.nanoTime() : 0;
+		long t0 = ConfigurationManager.isStatistics() ? System.nanoTime() : 0;
 		Broadcast<CacheBlock> brBlock = null;
 
 		// reuse existing non partitioned broadcast handle
@@ -536,7 +538,7 @@ public class SparkExecutionContext extends ExecutionContext
 					OptimizerUtils.estimateSize(cd.getMatrixCharacteristics()));
 				CacheableData.addBroadcastSize(cd.getBroadcastHandle().getNonPartitionedBroadcastSize());
 
-				if (DMLScript.STATISTICS) {
+				if (ConfigurationManager.isStatistics()) {
 					Statistics.accSparkBroadCastTime(System.nanoTime() - t0);
 					Statistics.incSparkBroadcastCount(1);
 				}
@@ -546,7 +548,7 @@ public class SparkExecutionContext extends ExecutionContext
 	}
 
 	@SuppressWarnings("unchecked")
-	public PartitionedBroadcast<MatrixBlock> getBroadcastForVariable(String varname) {
+	public PartitionedBroadcast<MatrixBlock> getBroadcastForMatrixObject(MatrixObject mo) {
 		//NOTE: The memory consumption of this method is the in-memory size of the 
 		//matrix object plus the partitioned size in 1k-1k blocks. Since the call
 		//to broadcast happens after the matrix object has been released, the memory
@@ -555,9 +557,7 @@ public class SparkExecutionContext extends ExecutionContext
 		//the broadcasts are created (other than in local mode) in order to avoid 
 		//unnecessary memory requirements during the lifetime of this broadcast handle.
 		
-		long t0 = DMLScript.STATISTICS ? System.nanoTime() : 0;
-
-		MatrixObject mo = getMatrixObject(varname);
+		long t0 = ConfigurationManager.isStatistics() ? System.nanoTime() : 0;
 
 		PartitionedBroadcast<MatrixBlock> bret = null;
 
@@ -605,7 +605,7 @@ public class SparkExecutionContext extends ExecutionContext
 			CacheableData.addBroadcastSize(mo.getBroadcastHandle().getPartitionedBroadcastSize());
 		}
 
-		if (DMLScript.STATISTICS) {
+		if (ConfigurationManager.isStatistics()) {
 			Statistics.accSparkBroadCastTime(System.nanoTime() - t0);
 			Statistics.incSparkBroadcastCount(1);
 		}
@@ -613,9 +613,14 @@ public class SparkExecutionContext extends ExecutionContext
 		return bret;
 	}
 
+	public PartitionedBroadcast<MatrixBlock> getBroadcastForVariable(String varname) {
+		MatrixObject mo = getMatrixObject(varname);
+		return getBroadcastForMatrixObject(mo);
+	}
+
 	@SuppressWarnings("unchecked")
 	public PartitionedBroadcast<FrameBlock> getBroadcastForFrameVariable(String varname) {
-		long t0 = DMLScript.STATISTICS ? System.nanoTime() : 0;
+		long t0 = ConfigurationManager.isStatistics() ? System.nanoTime() : 0;
 
 		FrameObject fo = getFrameObject(varname);
 
@@ -654,17 +659,18 @@ public class SparkExecutionContext extends ExecutionContext
 				if (!isLocalMaster())
 					pmb.clearBlocks();
 			}
-
-			bret = new PartitionedBroadcast<>(ret, fo.getMatrixCharacteristics());
-			if (fo.getBroadcastHandle() == null) {
+			
+			bret = new PartitionedBroadcast<>(ret, new MatrixCharacteristics(
+				fo.getMatrixCharacteristics()).setBlockSize(brlen, bclen));
+			if (fo.getBroadcastHandle() == null)
 				fo.setBroadcastHandle(new BroadcastObject<FrameBlock>());
-			}
+			
 			fo.getBroadcastHandle().setPartitionedBroadcast(bret,
 				OptimizerUtils.estimatePartitionedSizeExactSparsity(fo.getMatrixCharacteristics()));
 			CacheableData.addBroadcastSize(fo.getBroadcastHandle().getPartitionedBroadcastSize());
 		}
 
-		if (DMLScript.STATISTICS) {
+		if (ConfigurationManager.isStatistics()) {
 			Statistics.accSparkBroadCastTime(System.nanoTime() - t0);
 			Statistics.incSparkBroadcastCount(1);
 		}
@@ -702,7 +708,7 @@ public class SparkExecutionContext extends ExecutionContext
 	
 	public static JavaPairRDD<MatrixIndexes,MatrixBlock> toMatrixJavaPairRDD(JavaSparkContext sc, MatrixBlock src,
 			int brlen, int bclen, int numParts, boolean inclEmpty) {
-		long t0 = DMLScript.STATISTICS ? System.nanoTime() : 0;
+		long t0 = ConfigurationManager.isStatistics() ? System.nanoTime() : 0;
 		List<Tuple2<MatrixIndexes,MatrixBlock>> list = null;
 
 		if( src.getNumRows() <= brlen && src.getNumColumns() <= bclen ) {
@@ -720,7 +726,7 @@ public class SparkExecutionContext extends ExecutionContext
 		JavaPairRDD<MatrixIndexes,MatrixBlock> result = (numParts > 1) ?
 			sc.parallelizePairs(list, numParts) : sc.parallelizePairs(list);
 		
-		if (DMLScript.STATISTICS) {
+		if (ConfigurationManager.isStatistics()) {
 			Statistics.accSparkParallelizeTime(System.nanoTime() - t0);
 			Statistics.incSparkParallelizeCount(1);
 		}
@@ -751,7 +757,7 @@ public class SparkExecutionContext extends ExecutionContext
 	}
 
 	public static JavaPairRDD<Long,FrameBlock> toFrameJavaPairRDD(JavaSparkContext sc, FrameBlock src) {
-		long t0 = DMLScript.STATISTICS ? System.nanoTime() : 0;
+		long t0 = ConfigurationManager.isStatistics() ? System.nanoTime() : 0;
 		LinkedList<Tuple2<Long,FrameBlock>> list = new LinkedList<>();
 
 		//create and write subblocks of matrix
@@ -773,7 +779,7 @@ public class SparkExecutionContext extends ExecutionContext
 		}
 
 		JavaPairRDD<Long,FrameBlock> result = sc.parallelizePairs(list);
-		if (DMLScript.STATISTICS) {
+		if (ConfigurationManager.isStatistics()) {
 			Statistics.accSparkParallelizeTime(System.nanoTime() - t0);
 			Statistics.incSparkParallelizeCount(1);
 		}
@@ -815,10 +821,10 @@ public class SparkExecutionContext extends ExecutionContext
 	 * @return matrix block
 	 */
 	public static MatrixBlock toMatrixBlock(JavaPairRDD<MatrixIndexes,MatrixBlock> rdd, int rlen, int clen, int brlen, int bclen, long nnz) {
-		long t0 = DMLScript.STATISTICS ? System.nanoTime() : 0;
+		long t0 = ConfigurationManager.isStatistics() ? System.nanoTime() : 0;
 
 		MatrixBlock out = null;
-
+		
 		if( rlen <= brlen && clen <= bclen ) //SINGLE BLOCK
 		{
 			//special case without copy and nnz maintenance
@@ -840,9 +846,14 @@ public class SparkExecutionContext extends ExecutionContext
 
 			//create output matrix block (w/ lazy allocation)
 			out = new MatrixBlock(rlen, clen, sparse, lnnz);
-
+			
+			//kickoff asynchronous allocation
+			Future<MatrixBlock> fout = out.allocateBlockAsync();
+			
+			//trigger pending RDD operations and collect blocks
 			List<Tuple2<MatrixIndexes,MatrixBlock>> list = rdd.collect();
-
+			out = IOUtilFunctions.get(fout); //wait for allocation
+			
 			//copy blocks one-at-a-time into output matrix block
 			long aNnz = 0;
 			for( Tuple2<MatrixIndexes,MatrixBlock> keyval : list )
@@ -884,7 +895,7 @@ public class SparkExecutionContext extends ExecutionContext
 			out.examSparsity();
 		}
 
-		if (DMLScript.STATISTICS) {
+		if (ConfigurationManager.isStatistics()) {
 			Statistics.accSparkCollectTime(System.nanoTime() - t0);
 			Statistics.incSparkCollectCount(1);
 		}
@@ -911,7 +922,7 @@ public class SparkExecutionContext extends ExecutionContext
 	 */
 	public static MatrixBlock toMatrixBlock(JavaPairRDD<MatrixIndexes, MatrixCell> rdd, int rlen, int clen, long nnz)
 	{
-		long t0 = DMLScript.STATISTICS ? System.nanoTime() : 0;
+		long t0 = ConfigurationManager.isStatistics() ? System.nanoTime() : 0;
 
 		MatrixBlock out = null;
 
@@ -942,7 +953,7 @@ public class SparkExecutionContext extends ExecutionContext
 		out.recomputeNonZeros();
 		out.examSparsity();
 
-		if (DMLScript.STATISTICS) {
+		if (ConfigurationManager.isStatistics()) {
 			Statistics.accSparkCollectTime(System.nanoTime() - t0);
 			Statistics.incSparkCollectCount(1);
 		}
@@ -953,7 +964,7 @@ public class SparkExecutionContext extends ExecutionContext
 	public static PartitionedBlock<MatrixBlock> toPartitionedMatrixBlock(JavaPairRDD<MatrixIndexes,MatrixBlock> rdd, int rlen, int clen, int brlen, int bclen, long nnz)
 	{
 
-		long t0 = DMLScript.STATISTICS ? System.nanoTime() : 0;
+		long t0 = ConfigurationManager.isStatistics() ? System.nanoTime() : 0;
 
 		PartitionedBlock<MatrixBlock> out = new PartitionedBlock<>(rlen, clen, brlen, bclen);
 		List<Tuple2<MatrixIndexes,MatrixBlock>> list = rdd.collect();
@@ -967,7 +978,7 @@ public class SparkExecutionContext extends ExecutionContext
 			out.setBlock((int)ix.getRowIndex(), (int)ix.getColumnIndex(), block);
 		}
 
-		if (DMLScript.STATISTICS) {
+		if (ConfigurationManager.isStatistics()) {
 			Statistics.accSparkCollectTime(System.nanoTime() - t0);
 			Statistics.incSparkCollectCount(1);
 		}
@@ -982,7 +993,7 @@ public class SparkExecutionContext extends ExecutionContext
 	}
 
 	public static FrameBlock toFrameBlock(JavaPairRDD<Long,FrameBlock> rdd, ValueType[] schema, int rlen, int clen) {
-		long t0 = DMLScript.STATISTICS ? System.nanoTime() : 0;
+		long t0 = ConfigurationManager.isStatistics() ? System.nanoTime() : 0;
 
 		if(schema == null)
 			schema = UtilFunctions.nCopies(clen, ValueType.STRING);
@@ -1008,7 +1019,7 @@ public class SparkExecutionContext extends ExecutionContext
 			}
 		}
 
-		if (DMLScript.STATISTICS) {
+		if (ConfigurationManager.isStatistics()) {
 			Statistics.accSparkCollectTime(System.nanoTime() - t0);
 			Statistics.incSparkCollectCount(1);
 		}
@@ -1095,6 +1106,9 @@ public class SparkExecutionContext extends ExecutionContext
 		//NOTE: this method overwrites the default behavior of cleanupMatrixObject
 		//and hence is transparently used by rmvar instructions and other users. The
 		//core difference is the lineage-based cleanup of RDD and broadcast variables.
+
+		if (ConfigurationManager.isJMLCMemStatistics())
+			Statistics.removeCPMemObject(System.identityHashCode(mo));
 
 		if( !mo.isCleanupEnabled() )
 			return;
@@ -1300,7 +1314,7 @@ public class SparkExecutionContext extends ExecutionContext
 		if( pool < 0 ) {
 			pool = _poolBuff.length;
 			_poolBuff = Arrays.copyOf(_poolBuff,
-				(int)Math.min(2L*pool, Integer.MAX_VALUE));
+					(int)Math.min(2L*pool, Integer.MAX_VALUE));
 		}
 		//mark pool name for in use
 		_poolBuff[pool] = true;

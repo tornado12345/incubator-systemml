@@ -42,7 +42,7 @@ public class Unary extends Lop
 		LESS_THAN, LESS_THAN_OR_EQUALS, GREATER_THAN, GREATER_THAN_OR_EQUALS, EQUALS, NOT_EQUALS,
 		AND, OR, XOR, BW_AND, BW_OR, BW_XOR, BW_SHIFTL, BW_SHIFTR,
 		ROUND, CEIL, FLOOR, MR_IQM, INVERSE, CHOLESKY,
-		CUMSUM, CUMPROD, CUMMIN, CUMMAX,
+		CUMSUM, CUMPROD, CUMMIN, CUMMAX, CUMSUMPROD,
 		SPROP, SIGMOID, SUBTRACT_NZ, LOG_NZ,
 		CAST_AS_MATRIX, CAST_AS_FRAME,
 		NOTSUPPORTED
@@ -53,7 +53,7 @@ public class Unary extends Lop
 	
 	//cp-specific parameters
 	private int _numThreads = 1;
-
+	private boolean _inplace = false;
 
 	/**
 	 * Constructor to perform a unary operation with 2 inputs
@@ -114,10 +114,11 @@ public class Unary extends Lop
 	 * @param et execution type
 	 * @param numThreads number of threads
 	 */
-	public Unary(Lop input1, OperationTypes op, DataType dt, ValueType vt, ExecType et, int numThreads) {
+	public Unary(Lop input1, OperationTypes op, DataType dt, ValueType vt, ExecType et, int numThreads, boolean inplace) {
 		super(Lop.Type.UNARY, dt, vt);
 		init(input1, op, dt, vt, et);
 		_numThreads = numThreads;
+		_inplace = inplace;
 	}
 
 	private void init(Lop input1, OperationTypes op, DataType dt, ValueType vt, ExecType et) {
@@ -288,7 +289,10 @@ public class Unary extends Lop
 		
 		case CUMMAX:
 			return "ucummax";
-			
+		
+		case CUMSUMPROD:
+			return "ucumk+*";
+		
 		case INVERSE:
 			return "inverse";
 		
@@ -330,6 +334,7 @@ public class Unary extends Lop
 			|| op==OperationTypes.CUMPROD
 			|| op==OperationTypes.CUMMIN
 			|| op==OperationTypes.CUMMAX
+			|| op==OperationTypes.CUMSUMPROD
 			|| op==OperationTypes.EXP
 			|| op==OperationTypes.LOG
 			|| op==OperationTypes.SIGMOID;
@@ -357,6 +362,8 @@ public class Unary extends Lop
 		if( getExecType() == ExecType.CP && isMultiThreadedOp(operation) ) {
 			sb.append( OPERAND_DELIMITOR );
 			sb.append( _numThreads );
+			sb.append( OPERAND_DELIMITOR );
+			sb.append( _inplace );
 		}
 		
 		return sb.toString();

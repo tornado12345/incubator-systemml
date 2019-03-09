@@ -21,7 +21,7 @@ limitations under the License.
 
 **Documentation:** [SystemML Documentation](http://systemml.apache.org/documentation)<br/>
 **Mailing List:** [Dev Mailing List](mailto:dev@systemml.apache.org)<br/>
-**Build Status:** [![Build Status](https://sparktc.ibmcloud.com/jenkins/job/SystemML-DailyTest/badge/icon)](https://sparktc.ibmcloud.com/jenkins/job/SystemML-DailyTest)<br/>
+**Build Status:** [![Build Status](https://travis-ci.org/apache/systemml.svg?branch=master)](https://travis-ci.org/apache/systemml)<br/>
 **Issue Tracker:** [JIRA](https://issues.apache.org/jira/browse/SYSTEMML)<br/>
 **Download:** [Download SystemML](http://systemml.apache.org/download.html)<br/>
 
@@ -35,7 +35,7 @@ SystemML's distinguishing characteristics are:
   2. **Multiple execution modes**, including Spark MLContext API, Spark Batch, Hadoop Batch, Standalone, and JMLC.
   3. **Automatic optimization** based on data and cluster characteristics to ensure both efficiency and scalability.
 
-The latest version of SystemML supports: Java 8+, Scala 2.11+, Python 2.7/3.5+, Hadoop 2.6+, and Spark 2.1+.
+The latest version of SystemML supports: Java 8+, Scala 2.11+, Python 2.7/3.5+, Hadoop 2.7.7+, and Spark 2.1+.
 
 
 ## Algorithm Customizability
@@ -95,26 +95,25 @@ Before you get started on SystemML, make sure that your environment is set up an
 
   2. **Install Java (need Java 8).**
   ```
-  brew tap caskroom/cask
-  brew install Caskroom/cask/java
+  brew tap caskroom/versions
+  brew cask install java8
   ```
 
-  3. **Install Spark 2.1.**
+  3. **Install Spark (Newest).**
   ```
-  brew tap homebrew/versions
-  brew install apache-spark21
+  brew install apache-spark
   ```
 
   4. **Download SystemML.**
 
-  Go to the [SystemML Downloads page](http://systemml.apache.org/download.html), download `systemml-1.0.0-bin.zip` (should be 2nd), and unzip it to a location of your choice.
+  Go to the [SystemML Downloads page](http://systemml.apache.org/download.html), download `systemml-1.2.0-bin.zip` (should be 2nd), and unzip it to a location of your choice.
 
   *The next step is optional, but it will make your life a lot easier.*
 
   5. **[OPTIONAL] Set `SYSTEMML_HOME` in your bash profile.**
   Add the following to `~/.bash_profile`, replacing `path/to/` with the location of the download in step 4.
   ```
-  export SYSTEMML_HOME=path/to/systemml-1.0.0
+  export SYSTEMML_HOME=path/to/systemml-1.2.0
   ```
   *Make sure to open a new tab in terminal so that you make sure the changes have been made.*
 

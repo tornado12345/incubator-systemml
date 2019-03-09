@@ -59,7 +59,6 @@ public class DenseBlockLDRB extends DenseBlock
 		reset(rlen, clen, blen, v);
 	}
 	
-	@SuppressWarnings("resource")
 	private void reset(int rlen, int clen, int blen, double v) {
 		long llen = (long) rlen * clen;
 		int numPart = (int)Math.ceil((double)rlen / blen);
@@ -159,12 +158,13 @@ public class DenseBlockLDRB extends DenseBlock
 		final int biu = index(ru-1);
 		for(int bi=bil; bi<=biu; bi++) {
 			int lpos = (bi==bil) ? pos(rl) : 0;
-			int len = (bi==biu) ? pos(ru-1)-lpos+clen : blockSize(bi)*clen;
+			int len = ((bi==biu) ? pos(ru-1)+clen :
+				blockSize(bi)*clen) - lpos;
 			if( rowBlock )
 				nnz += UtilFunctions.computeNnz(data[bi], lpos, len);
 			else
 				for(int i=lpos; i<lpos+len; i+=clen)
-					nnz += UtilFunctions.computeNnz(data[i], i+cl, cu-cl);
+					nnz += UtilFunctions.computeNnz(data[bi], i+cl, cu-cl);
 		}
 		return nnz;
 	}

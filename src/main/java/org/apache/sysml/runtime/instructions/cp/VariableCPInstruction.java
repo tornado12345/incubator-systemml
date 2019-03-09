@@ -27,7 +27,6 @@ import org.apache.commons.lang.StringUtils;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.LocalFileSystem;
 import org.apache.hadoop.fs.Path;
-import org.apache.sysml.api.DMLScript;
 import org.apache.sysml.conf.CompilerConfig.ConfigType;
 import org.apache.sysml.conf.ConfigurationManager;
 import org.apache.sysml.lops.Lop;
@@ -40,18 +39,18 @@ import org.apache.sysml.runtime.controlprogram.caching.FrameObject;
 import org.apache.sysml.runtime.controlprogram.caching.MatrixObject;
 import org.apache.sysml.runtime.controlprogram.caching.MatrixObject.UpdateType;
 import org.apache.sysml.runtime.controlprogram.context.ExecutionContext;
-import org.apache.sysml.runtime.controlprogram.parfor.ProgramConverter;
+import org.apache.sysml.runtime.util.ProgramConverter;
 import org.apache.sysml.runtime.controlprogram.parfor.util.IDSequence;
 import org.apache.sysml.runtime.instructions.Instruction;
 import org.apache.sysml.runtime.instructions.InstructionUtils;
+import org.apache.sysml.runtime.io.FileFormatPropertiesCSV;
+import org.apache.sysml.runtime.io.FileFormatProperties;
 import org.apache.sysml.runtime.io.IOUtilFunctions;
 import org.apache.sysml.runtime.io.WriterMatrixMarket;
 import org.apache.sysml.runtime.io.WriterTextCSV;
 import org.apache.sysml.runtime.matrix.MatrixCharacteristics;
 import org.apache.sysml.runtime.matrix.MetaDataFormat;
 import org.apache.sysml.runtime.matrix.MetaData;
-import org.apache.sysml.runtime.matrix.data.CSVFileFormatProperties;
-import org.apache.sysml.runtime.matrix.data.FileFormatProperties;
 import org.apache.sysml.runtime.matrix.data.FrameBlock;
 import org.apache.sysml.runtime.matrix.data.InputInfo;
 import org.apache.sysml.runtime.matrix.data.MatrixBlock;
@@ -102,6 +101,9 @@ public class VariableCPInstruction extends CPInstruction {
 	
 	private static final IDSequence _uniqueVarID = new IDSequence(true);
 	private static final int CREATEVAR_FILE_NAME_VAR_POS=3;
+	private static ThreadLocal<StringBuilder> _varNameBuilders = new ThreadLocal<StringBuilder>() {
+		@Override protected StringBuilder initialValue() { return new StringBuilder(64); }
+	};
 	
 	private final VariableOperationCode opcode;
 	private final List<CPOperand> inputs;
@@ -365,7 +367,7 @@ public class VariableCPInstruction extends CPInstruction {
 					boolean hasHeader = Boolean.parseBoolean(parts[12]);
 					String delim = parts[13];
 					boolean sparse = Boolean.parseBoolean(parts[14]);
-					fmtProperties = new CSVFileFormatProperties(hasHeader, delim, sparse) ;
+					fmtProperties = new FileFormatPropertiesCSV(hasHeader, delim, sparse) ;
 				}
 				else {
 					boolean hasHeader = Boolean.parseBoolean(parts[12]);
@@ -375,7 +377,7 @@ public class VariableCPInstruction extends CPInstruction {
 					String naStrings = null;
 					if ( parts.length == 17+extSchema )
 						naStrings = parts[16];
-					fmtProperties = new CSVFileFormatProperties(hasHeader, delim, fill, fillValue, naStrings) ;
+					fmtProperties = new FileFormatPropertiesCSV(hasHeader, delim, fill, fillValue, naStrings) ;
 				}
 				return new VariableCPInstruction(VariableOperationCode.CreateVariable, in1, in2, in3, iimd, updateType, fmtProperties, schema, opcode, str);
 			}
@@ -435,7 +437,7 @@ public class VariableCPInstruction extends CPInstruction {
 				boolean hasHeader = Boolean.parseBoolean(parts[4]);
 				String delim = parts[5];
 				boolean sparse = Boolean.parseBoolean(parts[6]);
-				fprops = new CSVFileFormatProperties(hasHeader, delim, sparse);
+				fprops = new FileFormatPropertiesCSV(hasHeader, delim, sparse);
 				in4 = new CPOperand(parts[7]); // description
 			} else {
 				fprops = new FileFormatProperties();
@@ -476,8 +478,9 @@ public class VariableCPInstruction extends CPInstruction {
 				String fname = getInput2().getName();
 				// check if unique filename needs to be generated
 				if( Boolean.parseBoolean(getInput3().getName()) ) {
-					fname = new StringBuilder(fname.length()+16).append(fname)
-						.append('_').append(_uniqueVarID.getNextID()).toString();
+					StringBuilder sb = _varNameBuilders.get();
+					fname = sb.append(fname).append('_').append(_uniqueVarID.getNextID()).toString();
+					sb.setLength(0); //reset for next use
 				}
 				MatrixObject mobj = new MatrixObject(getInput1().getValueType(), fname );
 				//clone meta data because it is updated on copy-on-write, otherwise there
@@ -485,8 +488,10 @@ public class VariableCPInstruction extends CPInstruction {
 				mobj.setMetaData((MetaData)metadata.clone());
 				mobj.setFileFormatProperties(_formatProperties);
 				mobj.setUpdateType(_updateType);
+				mobj.enableCleanup(!getInput1().getName()
+					.startsWith(org.apache.sysml.lops.Data.PREAD_PREFIX));
 				ec.setVariable(getInput1().getName(), mobj);
-				if(DMLScript.STATISTICS && _updateType.isInPlace())
+				if(ConfigurationManager.isStatistics() && _updateType.isInPlace())
 					Statistics.incrementTotalUIPVar();
 			}
 			else if( getInput1().getDataType() == DataType.FRAME ) {
@@ -496,6 +501,8 @@ public class VariableCPInstruction extends CPInstruction {
 				fobj.setFileFormatProperties(_formatProperties);
 				if( _schema != null )
 					fobj.setSchema(_schema); //after metadata
+				fobj.enableCleanup(!getInput1().getName()
+					.startsWith(org.apache.sysml.lops.Data.PREAD_PREFIX));
 				ec.setVariable(getInput1().getName(), fobj);
 			}
 			else if ( getInput1().getDataType() == DataType.SCALAR ){
@@ -553,7 +560,7 @@ public class VariableCPInstruction extends CPInstruction {
 			break;
 			
 		case CastAsScalarVariable: //castAsScalarVariable
-			if( getInput1().getDataType()==DataType.FRAME ) {
+			if( getInput1().getDataType().isFrame() ) {
 				FrameBlock fBlock = ec.getFrameInput(getInput1().getName());
 				if( fBlock.getNumRows()!=1 || fBlock.getNumColumns()!=1 )
 					throw new DMLRuntimeException("Dimension mismatch - unable to cast frame '"+getInput1().getName()+"' of dimension ("+fBlock.getNumRows()+" x "+fBlock.getNumColumns()+") to scalar.");
@@ -562,7 +569,7 @@ public class VariableCPInstruction extends CPInstruction {
 				ec.setScalarOutput(output.getName(), 
 						ScalarObjectFactory.createScalarObject(fBlock.getSchema()[0], value));
 			}
-			else { //assume DataType.MATRIX otherwise
+			else if( getInput1().getDataType().isMatrix() ) {
 				MatrixBlock mBlock = ec.getMatrixInput(getInput1().getName(), getExtendedOpcode());
 				if( mBlock.getNumRows()!=1 || mBlock.getNumColumns()!=1 )
 					throw new DMLRuntimeException("Dimension mismatch - unable to cast matrix '"+getInput1().getName()+"' of dimension ("+mBlock.getNumRows()+" x "+mBlock.getNumColumns()+") to scalar.");
@@ -570,20 +577,55 @@ public class VariableCPInstruction extends CPInstruction {
 				ec.releaseMatrixInput(getInput1().getName(), getExtendedOpcode());
 				ec.setScalarOutput(output.getName(), new DoubleObject(value));
 			}
+			else if( getInput1().getDataType().isList() ) {
+				//TODO handling of cleanup status, potentially new object
+				ListObject list = (ListObject)ec.getVariable(getInput1().getName());
+				ec.setVariable(output.getName(), list.slice(0));
+			}
+			else {
+				throw new DMLRuntimeException("Unsupported data type "
+					+ "in as.scalar(): "+getInput1().getDataType().name());
+			}
 			break;
 		case CastAsMatrixVariable:{
-			MatrixBlock out = null;
-			if( getInput1().getDataType()==DataType.FRAME ) {
+			if( getInput1().getDataType().isFrame() ) {
 				FrameBlock fin = ec.getFrameInput(getInput1().getName());
-				out = DataConverter.convertToMatrixBlock(fin);
+				MatrixBlock out = DataConverter.convertToMatrixBlock(fin);
 				ec.releaseFrameInput(getInput1().getName());
+				ec.setMatrixOutput(output.getName(), out, getExtendedOpcode());
 			}
-			else { //assume DataType.SCALAR otherwise
-				ScalarObject scalarInput = ec.getScalarInput(getInput1().getName(), getInput1().getValueType(), getInput1().isLiteral());
-				out = new MatrixBlock(1,1,false);
-				out.quickSetValue(0, 0, scalarInput.getDoubleValue());		
+			else if( getInput1().getDataType().isScalar() ) {
+				ScalarObject scalarInput = ec.getScalarInput(getInput1());
+				MatrixBlock out = new MatrixBlock(scalarInput.getDoubleValue());
+				ec.setMatrixOutput(output.getName(), out, getExtendedOpcode());
 			}
-			ec.setMatrixOutput(output.getName(), out, getExtendedOpcode());
+			else if( getInput1().getDataType().isList() ) {
+				//TODO handling of cleanup status, potentially new object
+				ListObject list = (ListObject)ec.getVariable(getInput1().getName());
+				if( list.getLength() > 1 ) {
+					if( !list.checkAllDataTypes(DataType.SCALAR) )
+						throw new DMLRuntimeException("as.matrix over multi-entry list only allows scalars.");
+					MatrixBlock out = new MatrixBlock(list.getLength(), 1, false);
+					for( int i=0; i<list.getLength(); i++ )
+						out.quickSetValue(i, 0, ((ScalarObject)list.slice(i)).getDoubleValue());
+					ec.setMatrixOutput(output.getName(), out, getExtendedOpcode());
+				}
+				else {
+					//pass through matrix input or create 1x1 matrix for scalar
+					Data tmp = list.slice(0);
+					if( tmp instanceof ScalarObject && tmp.getValueType()!=ValueType.STRING ) {
+						MatrixBlock out = new MatrixBlock(((ScalarObject)tmp).getDoubleValue());
+						ec.setMatrixOutput(output.getName(), out, getExtendedOpcode());
+					} 
+					else {
+						ec.setVariable(output.getName(), tmp);
+					}
+				}
+			}
+			else {
+				throw new DMLRuntimeException("Unsupported data type "
+					+ "in as.matrix(): "+getInput1().getDataType().name());
+			}
 			break;
 		}
 		case CastAsFrameVariable:{
@@ -592,7 +634,7 @@ public class VariableCPInstruction extends CPInstruction {
 				ScalarObject scalarInput = ec.getScalarInput(getInput1());
 				out = new FrameBlock(1, getInput1().getValueType());
 				out.ensureAllocatedColumns(1);
-				out.set(0, 0, scalarInput.getStringValue());	
+				out.set(0, 0, scalarInput.getStringValue());
 			}
 			else { //DataType.FRAME
 				MatrixBlock min = ec.getMatrixInput(getInput1().getName(), getExtendedOpcode());
@@ -603,13 +645,13 @@ public class VariableCPInstruction extends CPInstruction {
 			break;
 		}
 		case CastAsDoubleVariable:{ 
-			ScalarObject scalarInput = ec.getScalarInput(getInput1());
-			ec.setScalarOutput(output.getName(), new DoubleObject(scalarInput.getDoubleValue()));
+			ScalarObject in = ec.getScalarInput(getInput1());
+			ec.setScalarOutput(output.getName(), ScalarObjectFactory.castToDouble(in));
 			break;
 		}
-		case CastAsIntegerVariable:{ 
-			ScalarObject scalarInput = ec.getScalarInput(getInput1());
-			ec.setScalarOutput(output.getName(), new IntObject(scalarInput.getLongValue()));
+		case CastAsIntegerVariable:{
+			ScalarObject in = ec.getScalarInput(getInput1());
+			ec.setScalarOutput(output.getName(), ScalarObjectFactory.castToLong(in));
 			break;
 		}
 		case CastAsBooleanVariable:{ 
@@ -686,8 +728,8 @@ public class VariableCPInstruction extends CPInstruction {
 			// example: mvvar tempA A
 			
 			// get source variable 
-			Data srcData = ec.getVariable(getInput1().getName());		
-				
+			Data srcData = ec.getVariable(getInput1().getName());
+			
 			if ( srcData == null ) {
 				throw new DMLRuntimeException("Unexpected error: could not find a data object "
 					+ "for variable name:" + getInput1().getName() + ", while processing instruction ");
@@ -698,9 +740,8 @@ public class VariableCPInstruction extends CPInstruction {
 				Data tgt = ec.removeVariable(getInput2().getName());
 					
 				//cleanup matrix data on fs/hdfs (if necessary)
-				if ( tgt != null && tgt instanceof CacheableData ) {
-					ec.cleanupCacheableData((CacheableData<?>) tgt);
-				}
+				if( tgt != null )
+					ec.cleanupDataObject(tgt);
 			}
 			
 			// do the actual move
@@ -748,9 +789,8 @@ public class VariableCPInstruction extends CPInstruction {
 		Data input2_data = ec.removeVariable(getInput2().getName());
 		
 		//cleanup matrix data on fs/hdfs (if necessary)
-		if ( input2_data != null && input2_data instanceof CacheableData ) {
-			ec.cleanupCacheableData((CacheableData<?>) input2_data);
-		}
+		if( input2_data != null )
+			ec.cleanupDataObject(input2_data);
 		
 		// do the actual copy!
 		ec.setVariable(getInput2().getName(), dd);
@@ -804,9 +844,8 @@ public class VariableCPInstruction extends CPInstruction {
 		// remove variable from symbol table
 		Data dat = ec.removeVariable(varname);
 		//cleanup matrix data on fs/hdfs (if necessary)
-		if ( dat != null && dat instanceof CacheableData ) {
-			ec.cleanupCacheableData((CacheableData<?>) dat);
-		}
+		if( dat != null )
+			ec.cleanupDataObject(dat);
 	}
 	
 	/**
@@ -829,7 +868,7 @@ public class VariableCPInstruction extends CPInstruction {
 				OutputInfo oi = ((MetaDataFormat)mo.getMetaData()).getOutputInfo();
 				MatrixCharacteristics mc = ((MetaDataFormat)mo.getMetaData()).getMatrixCharacteristics();
 				if(oi == OutputInfo.CSVOutputInfo) {
-					WriterTextCSV writer = new WriterTextCSV((CSVFileFormatProperties)_formatProperties);
+					WriterTextCSV writer = new WriterTextCSV((FileFormatPropertiesCSV)_formatProperties);
 					writer.addHeaderToCSV(mo.getFileName(), fname, mc.getRows(), mc.getCols());
 				}
 				else if ( oi == OutputInfo.BinaryBlockOutputInfo || oi == OutputInfo.TextCellOutputInfo ) {
@@ -888,8 +927,7 @@ public class VariableCPInstruction extends CPInstruction {
 	 */
 	private void writeScalarToHDFS(ExecutionContext ec, String fname) {
 		try {
-			ScalarObject scalar = ec.getScalarInput(getInput1().getName(), 
-				getInput1().getValueType(), getInput1().isLiteral());
+			ScalarObject scalar = ec.getScalarInput(getInput1());
 			MapReduceTool.writeObjectToHDFS(scalar.getValue(), fname);
 			MapReduceTool.writeScalarMetaDataFile(fname +".mtd", getInput1().getValueType());
 

@@ -29,7 +29,6 @@ import org.apache.hadoop.mapred.JobConf;
 import org.apache.hadoop.mapred.Mapper;
 import org.apache.hadoop.mapred.OutputCollector;
 import org.apache.hadoop.mapred.Reporter;
-import org.apache.sysml.api.DMLScript;
 import org.apache.sysml.conf.ConfigurationManager;
 import org.apache.sysml.runtime.controlprogram.LocalVariableMap;
 import org.apache.sysml.runtime.controlprogram.ParForProgramBlock;
@@ -42,6 +41,7 @@ import org.apache.sysml.runtime.instructions.cp.Data;
 import org.apache.sysml.runtime.matrix.mapred.MRConfigurationNames;
 import org.apache.sysml.runtime.matrix.mapred.MRJobConfiguration;
 import org.apache.sysml.runtime.util.LocalFileUtils;
+import org.apache.sysml.runtime.util.ProgramConverter;
 import org.apache.sysml.utils.Statistics;
 
 /**
@@ -107,8 +107,8 @@ public class RemoteParWorkerMapper extends ParWorker  //MapReduceBase not requir
 		
 		//print heaver hitter per task
 		JobConf job = ConfigurationManager.getCachedJobConf();
-		if( DMLScript.STATISTICS && !InfrastructureAnalyzer.isLocalMode(job) )
-			LOG.info("\nSystemML Statistics:\nHeavy hitter instructions (name, time, count):\n" + Statistics.getHeavyHitters(DMLScript.STATISTICS_COUNT));
+		if( ConfigurationManager.isStatistics() && !InfrastructureAnalyzer.isLocalMode(job) )
+			LOG.info("\nSystemML Statistics:\nHeavy hitter instructions (name, time, count):\n" + Statistics.getHeavyHitters(ConfigurationManager.getDMLOptions().getStatisticsMaxHeavyHitters()));
 	}
 
 	@Override
@@ -209,7 +209,7 @@ public class RemoteParWorkerMapper extends ParWorker  //MapReduceBase not requir
 		}
 		
 		//always reset stats because counters per map task (for case of JVM reuse)
-		if( DMLScript.STATISTICS && !InfrastructureAnalyzer.isLocalMode(job) )
+		if( ConfigurationManager.isStatistics() && !InfrastructureAnalyzer.isLocalMode(job) )
 			Statistics.reset();
 	}
 

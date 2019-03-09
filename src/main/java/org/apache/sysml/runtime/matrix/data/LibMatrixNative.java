@@ -26,7 +26,6 @@ import java.util.stream.IntStream;
 
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
-import org.apache.sysml.api.DMLScript;
 import org.apache.sysml.conf.ConfigurationManager;
 import org.apache.sysml.conf.DMLConfig;
 import org.apache.sysml.hops.OptimizerUtils;
@@ -87,7 +86,7 @@ public class LibMatrixNative
 		{
 			ret.sparse = false;
 			ret.allocateDenseBlock();
-			long start = DMLScript.STATISTICS ? System.nanoTime() : 0;
+			long start = ConfigurationManager.isStatistics() ? System.nanoTime() : 0;
 			boolean rccode = false;
 			if( isSinglePrecision() ) {
 				FloatBuffer fin1 = toFloatBuffer(m1.getDenseBlockValues(), inBuff, true);
@@ -102,7 +101,7 @@ public class LibMatrixNative
 					ret.getDenseBlockValues(), m1.getNumRows(), m1.getNumColumns(), m2.getNumColumns(), k);
 			}
 			if (rccode) {
-				if(DMLScript.STATISTICS) {
+				if(ConfigurationManager.isStatistics()) {
 					Statistics.nativeLibMatrixMultTime += System.nanoTime() - start;
 					Statistics.numNativeLibMatrixMultCalls.increment();
 				}
@@ -153,12 +152,12 @@ public class LibMatrixNative
 	 * @param outputBlock output of convolution
 	 * @param params convolution parameters
 	 */
-	public static void conv2d(MatrixBlock input, MatrixBlock filter, MatrixBlock outputBlock, ConvolutionParameters params) {
+	public static void conv2d(MatrixBlock input, MatrixBlock filter, MatrixBlock outputBlock, DnnParameters params) {
 		LibMatrixDNN.checkInputsConv2d(input, filter, outputBlock, params);
 		params.numThreads = params.numThreads <= 0 ? NativeHelper.getMaxNumThreads() : params.numThreads;
 		if(NativeHelper.isNativeLibraryLoaded() && !input.isInSparseFormat() && !filter.isInSparseFormat()) {
 			setNumThreads(params);
-			long start = DMLScript.STATISTICS ? System.nanoTime() : 0;
+			long start = ConfigurationManager.isStatistics() ? System.nanoTime() : 0;
 			int nnz = 0;
 			if(params.bias == null) {
 				nnz = NativeHelper.conv2dDense(input.getDenseBlockValues(), filter.getDenseBlockValues(),
@@ -195,7 +194,7 @@ public class LibMatrixNative
 			}
 			//post processing and error handling
 			if(nnz != -1) {
-				if(DMLScript.STATISTICS) {
+				if(ConfigurationManager.isStatistics()) {
 					Statistics.nativeConv2dTime += System.nanoTime() - start;
 					Statistics.numNativeConv2dCalls.increment();
 				}
@@ -215,7 +214,7 @@ public class LibMatrixNative
 		LibMatrixDNN.conv2d(input, filter, outputBlock, params);
 	}
 	
-	private static void setNumThreads(ConvolutionParameters params) {
+	private static void setNumThreads(DnnParameters params) {
 		params.numThreads = OptimizerUtils.getConstrainedNumThreads(params.numThreads);
 		if (!(params.isOutputThreadSafe() && params.numThreads > 1))
 			params.numThreads = 1;
@@ -229,18 +228,18 @@ public class LibMatrixNative
 	 * @param outputBlock  output errors
 	 * @param params convolution parameters
 	 */
-	public static void conv2dBackwardFilter(MatrixBlock input, MatrixBlock dout, MatrixBlock outputBlock, ConvolutionParameters params) {
+	public static void conv2dBackwardFilter(MatrixBlock input, MatrixBlock dout, MatrixBlock outputBlock, DnnParameters params) {
 		LibMatrixDNN.checkInputsConv2dBackwardFilter(input, dout, outputBlock, params);
 		params.numThreads = params.numThreads <= 0 ? NativeHelper.getMaxNumThreads() : params.numThreads;
 		if(NativeHelper.isNativeLibraryLoaded() && !dout.isInSparseFormat() && !input.isInSparseFormat()) {
 			setNumThreads(params);
-			long start = DMLScript.STATISTICS ? System.nanoTime() : 0;
+			long start = ConfigurationManager.isStatistics() ? System.nanoTime() : 0;
 			int nnz = NativeHelper.conv2dBackwardFilterDense(input.getDenseBlockValues(), dout.getDenseBlockValues(),
 					outputBlock.getDenseBlockValues(), params.N, params.C, params.H, params.W, 
 					params.K, params.R, params.S, params.stride_h, params.stride_w, params.pad_h, params.pad_w, 
 					params.P, params.Q, params.numThreads);
 			if(nnz != -1) {
-				if(DMLScript.STATISTICS) {
+				if(ConfigurationManager.isStatistics()) {
 					Statistics.nativeConv2dBwdFilterTime += System.nanoTime() - start;
 					Statistics.numNativeConv2dBwdFilterCalls.increment();
 				}
@@ -265,18 +264,18 @@ public class LibMatrixNative
 	 * @param outputBlock  output errors
 	 * @param params convolution parameters
 	 */
-	public static void conv2dBackwardData(MatrixBlock filter, MatrixBlock dout, MatrixBlock outputBlock, ConvolutionParameters params) {
+	public static void conv2dBackwardData(MatrixBlock filter, MatrixBlock dout, MatrixBlock outputBlock, DnnParameters params) {
 		LibMatrixDNN.checkInputsConv2dBackwardData(filter, dout, outputBlock, params);
 		params.numThreads = params.numThreads <= 0 ? NativeHelper.getMaxNumThreads() : params.numThreads;
 		if(NativeHelper.isNativeLibraryLoaded() && !dout.isInSparseFormat() && !filter.isInSparseFormat()) {
 			setNumThreads(params);
-			long start = DMLScript.STATISTICS ? System.nanoTime() : 0;
+			long start = ConfigurationManager.isStatistics() ? System.nanoTime() : 0;
 			int nnz = NativeHelper.conv2dBackwardDataDense(filter.getDenseBlockValues(), dout.getDenseBlockValues(),
 					outputBlock.getDenseBlockValues(), params.N, params.C, params.H, params.W, 
 					params.K, params.R, params.S, params.stride_h, params.stride_w, params.pad_h, params.pad_w, 
 					params.P, params.Q, params.numThreads);
 			if(nnz != -1) {
-				if(DMLScript.STATISTICS) {
+				if(ConfigurationManager.isStatistics()) {
 					Statistics.nativeConv2dBwdDataTime += System.nanoTime() - start;
 					Statistics.numNativeConv2dBwdDataCalls.increment();
 				}
@@ -315,7 +314,7 @@ public class LibMatrixNative
 		return ret2;
 	}
 	
-	private static void fromFloatBuffer(FloatBuffer buff, double[] output) {
+	public static void fromFloatBuffer(FloatBuffer buff, double[] output) {
 		Arrays.parallelSetAll(output, i -> (double)buff.get(i) );
 	}
 }

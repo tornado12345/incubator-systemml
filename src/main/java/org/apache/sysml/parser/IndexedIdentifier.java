@@ -107,8 +107,7 @@ public class IndexedIdentifier extends DataIdentifier
 			// valid lower row bound value
 			isConst_rowLowerBound = true;
 		}
-		
-		else if (_rowLowerBound instanceof ConstIdentifier) {
+		else if (_rowLowerBound instanceof ConstIdentifier && !getDataType().isList() ) {
 			raiseValidateError("assign lower-bound row index for Indexed Identifier " + this.toString() + " the non-numeric value " + _rowLowerBound.toString(), conditional);
 		}
 	
@@ -117,7 +116,7 @@ public class IndexedIdentifier extends DataIdentifier
 			String identifierName = ((DataIdentifier)_rowLowerBound).getName();
 			
 			// CASE: rowLowerBound is a constant DataIdentifier
-			if (currConstVars.containsKey(identifierName)){
+			if (currConstVars.containsKey(identifierName) && !conditional){
 				ConstIdentifier constValue = currConstVars.get(identifierName);
 				
 				if (!(constValue instanceof IntIdentifier || constValue instanceof DoubleIdentifier ))
@@ -192,7 +191,7 @@ public class IndexedIdentifier extends DataIdentifier
 			}
 			isConst_rowUpperBound = true;
 		}	
-		else if (_rowUpperBound instanceof ConstIdentifier){
+		else if (_rowUpperBound instanceof ConstIdentifier && !getDataType().isList()){
 			raiseValidateError("assign upper-bound row index for " + this.toString() + " the non-numeric value " + _rowUpperBound.toString(), conditional);
 		}
 		
@@ -200,7 +199,7 @@ public class IndexedIdentifier extends DataIdentifier
 		else if (_rowUpperBound != null && _rowUpperBound instanceof DataIdentifier && !(_rowUpperBound instanceof IndexedIdentifier)) {
 			String identifierName = ((DataIdentifier)_rowUpperBound).getName();
 			
-			if (currConstVars.containsKey(identifierName)){
+			if (currConstVars.containsKey(identifierName) && !conditional){
 				ConstIdentifier constValue = currConstVars.get(identifierName);
 				
 				if (!(constValue instanceof IntIdentifier || constValue instanceof DoubleIdentifier ))
@@ -268,14 +267,14 @@ public class IndexedIdentifier extends DataIdentifier
 			isConst_colLowerBound = true;
 		}
 			
-		else if (_colLowerBound instanceof ConstIdentifier) {
+		else if (_colLowerBound instanceof ConstIdentifier && !getDataType().isList()) {
 			raiseValidateError("assign lower-bound column index for Indexed Identifier " + this.toString() + " the non-numeric value " + _colLowerBound.toString(), conditional);
 		}
 		
 		// perform constant propogation for column lower bound
 		else if (_colLowerBound != null && _colLowerBound instanceof DataIdentifier && !(_colLowerBound instanceof IndexedIdentifier)) {
 			String identifierName = ((DataIdentifier)_colLowerBound).getName();
-			if (currConstVars.containsKey(identifierName)){
+			if (currConstVars.containsKey(identifierName) && !conditional){
 				ConstIdentifier constValue = currConstVars.get(identifierName);
 				
 				if (!(constValue instanceof IntIdentifier || constValue instanceof DoubleIdentifier ))
@@ -352,7 +351,7 @@ public class IndexedIdentifier extends DataIdentifier
 		    	
 			isConst_colUpperBound = true;
 		}	
-		else if (_colUpperBound instanceof ConstIdentifier){	
+		else if (_colUpperBound instanceof ConstIdentifier && !getDataType().isList()){	
 			raiseValidateError("assign upper-bound column index for " + this.toString() + " the non-numeric value " + _colUpperBound.toString(), conditional);
 		}
 		
@@ -362,7 +361,7 @@ public class IndexedIdentifier extends DataIdentifier
 			String identifierName = ((DataIdentifier)_colUpperBound).getName();
 			
 			
-			if (currConstVars.containsKey(identifierName)){
+			if (currConstVars.containsKey(identifierName) && !conditional){
 				ConstIdentifier constValue = currConstVars.get(identifierName);
 				
 				if (!(constValue instanceof IntIdentifier || constValue instanceof DoubleIdentifier ))

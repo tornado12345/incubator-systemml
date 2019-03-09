@@ -33,6 +33,7 @@ import org.apache.sysml.hops.FunctionOp;
 import org.apache.sysml.hops.Hop;
 import org.apache.sysml.hops.HopsException;
 import org.apache.sysml.hops.Hop.DataOpTypes;
+import org.apache.sysml.hops.Hop.OpOp1;
 import org.apache.sysml.hops.Hop.OpOpN;
 import org.apache.sysml.hops.rewrite.HopRewriteUtils;
 import org.apache.sysml.parser.DMLProgram;
@@ -64,8 +65,13 @@ public class FunctionCallGraph
 	
 	//subset of direct or indirect recursive functions
 	private final HashSet<String> _fRecursive;
+
+	//subset of side-effect-free functions
+	private final HashSet<String> _fSideEffectFree;
 	
-	private final boolean _containsEval;
+	// a boolean value to indicate if exists the second order function (e.g. eval, paramserv)
+	// and the UDFs that are marked secondorder="true"
+	private final boolean _containsSecondOrder;
 	
 	/**
 	 * Constructs the function call graph for all functions
@@ -78,7 +84,8 @@ public class FunctionCallGraph
 		_fCalls = new HashMap<>();
 		_fCallsSB = new HashMap<>();
 		_fRecursive = new HashSet<>();
-		_containsEval = constructFunctionCallGraph(prog);
+		_fSideEffectFree = new HashSet<>();
+		_containsSecondOrder = constructFunctionCallGraph(prog);
 	}
 	
 	/**
@@ -92,7 +99,8 @@ public class FunctionCallGraph
 		_fCalls = new HashMap<>();
 		_fCallsSB = new HashMap<>();
 		_fRecursive = new HashSet<>();
-		_containsEval = constructFunctionCallGraph(sb);
+		_fSideEffectFree = new HashSet<>();
+		_containsSecondOrder = constructFunctionCallGraph(sb);
 	}
 
 	/**
@@ -163,6 +171,21 @@ public class FunctionCallGraph
 	}
 	
 	/**
+	 * Removes a single function call identified by target function name,
+	 * and source function op and statement block.
+	 * 
+	 * @param fkey function key of called function
+	 * @param fop source function call operator 
+	 * @param sb source statement block
+	 */
+	public void removeFunctionCall(String fkey, FunctionOp fop, StatementBlock sb) {
+		if( _fCalls.containsKey(fkey) )
+			_fCalls.get(fkey).remove(fop);
+		if( _fCallsSB.containsKey(fkey) )
+			_fCallsSB.get(fkey).remove(sb);
+	}
+	
+	/**
 	 * Indicates if the given function is either directly or indirectly recursive.
 	 * An example of an indirect recursive function is foo2 in the following call
 	 * chain: foo1 -&gt; foo2 -&gt; foo1.
@@ -187,6 +210,33 @@ public class FunctionCallGraph
 	public boolean isRecursiveFunction(String fkey) {
 		String lfkey = (fkey == null) ? MAIN_FUNCTION_KEY : fkey;
 		return _fRecursive.contains(lfkey);
+	}
+	
+	/**
+	 * Indicates if the given function is side effect free, i.e., has no
+	 * prints, no persistent write, and includes no or only calls to
+	 * side-effect-free functions.
+	 * 
+	 * @param fnamespace function namespace
+	 * @param fname function name
+	 * @return true if the given function is side-effect-free, false otherwise
+	 */
+	public boolean isSideEffectFreeFunction(String fnamespace, String fname) {
+		return isSideEffectFreeFunction(
+			DMLProgram.constructFunctionKey(fnamespace, fname));
+	}
+	
+	/**
+	 * Indicates if the given function is side effect free, i.e., has no
+	 * prints, no persistent write, and includes no or only calls to
+	 * side-effect-free functions.
+	 * 
+	 * @param fkey function key of calling function, null indicates the main program
+	 * @return true if the given function is side-effect-free, false otherwise
+	 */
+	public boolean isSideEffectFreeFunction(String fkey) {
+		String lfkey = (fkey == null) ? MAIN_FUNCTION_KEY : fkey;
+		return _fSideEffectFree.contains(lfkey);
 	}
 	
 	/**
@@ -240,13 +290,13 @@ public class FunctionCallGraph
 	
 	/**
 	 * Indicates if the function call graph, i.e., functions that are transitively
-	 * reachable from the main program, contains a second-order eval call, which
-	 * prohibits the removal of unused functions.
-	 * 
-	 * @return true if the function call graph contains an eval call.
+	 * reachable from the main program, contains a second-order builtin function call 
+	 * (e.g., eval, paramserv), which prohibits the removal of unused functions.
+	 *
+	 * @return true if the function call graph contains a second-order builtin function call.
 	 */
-	public boolean containsEvalCall() {
-		return _containsEval;
+	public boolean containsSecondOrderCall() {
+		return _containsSecondOrder;
 	}
 	
 	private boolean constructFunctionCallGraph(DMLProgram prog) {
@@ -255,11 +305,18 @@ public class FunctionCallGraph
 		
 		boolean ret = false;
 		try {
+			//construct the main function call graph
 			Stack<String> fstack = new Stack<>();
 			HashSet<String> lfset = new HashSet<>();
 			_fGraph.put(MAIN_FUNCTION_KEY, new HashSet<String>());
 			for( StatementBlock sblk : prog.getStatementBlocks() )
 				ret |= rConstructFunctionCallGraph(MAIN_FUNCTION_KEY, sblk, fstack, lfset);
+			
+			//analyze all non-recursive functions if free of side effects
+			_fSideEffectFree.addAll(_fCalls.keySet().stream()
+				.filter(s -> !s.startsWith(DMLProgram.INTERNAL_NAMESPACE))
+				.filter(s -> isSideEffectFree(prog.getFunctionStatementBlock(s)))
+				.collect(Collectors.toList()));
 		}
 		catch(HopsException ex) {
 			throw new RuntimeException(ex);
@@ -311,8 +368,9 @@ public class FunctionCallGraph
 			ArrayList<Hop> hopsDAG = sb.getHops();
 			if( hopsDAG == null || hopsDAG.isEmpty() ) 
 				return false; //nothing to do
-			
+
 			//function ops can only occur as root nodes of the dag
+			ret = HopRewriteUtils.containsSecondOrderBuiltin(hopsDAG);
 			for( Hop h : hopsDAG ) {
 				if( h instanceof FunctionOp ) {
 					FunctionOp fop = (FunctionOp) h;
@@ -365,16 +423,55 @@ public class FunctionCallGraph
 						ret = true;
 					}
 				}
-				else if( HopRewriteUtils.isData(h, DataOpTypes.TRANSIENTWRITE)
-					&& HopRewriteUtils.isNary(h.getInput().get(0), OpOpN.EVAL) ) {
-					//NOTE: after RewriteSplitDagDataDependentOperators, eval operators
-					//will always appear as childs to root nodes which allows for an
-					//efficient existence check without DAG traversal.
-					ret = true;
-				}
 			}
 		}
 		
+		return ret;
+	}
+	
+	private static boolean isSideEffectFree(FunctionStatementBlock fsb) {
+		//check for side-effect-free external functions (explicit annotation)
+		if( fsb.getStatement(0) instanceof ExternalFunctionStatement ) {
+			return !((ExternalFunctionStatement)fsb.getStatement(0)).hasSideEffects();
+		}
+		//check regular dml-bodied function for prints, pwrite, and other functions
+		FunctionStatement fstmt = (FunctionStatement) fsb.getStatement(0);
+		for( StatementBlock csb : fstmt.getBody() )
+			if( rHasSideEffects(csb) )
+				return false;
+		return true;
+	}
+	
+	private static boolean rHasSideEffects(StatementBlock sb) {
+		boolean ret = false;
+		if( sb instanceof ForStatementBlock ) {
+			ForStatement fstmt = (ForStatement) sb.getStatement(0);
+			for( StatementBlock csb : fstmt.getBody() )
+				ret |= rHasSideEffects(csb);
+		}
+		else if( sb instanceof WhileStatementBlock ) {
+			WhileStatement wstmt = (WhileStatement) sb.getStatement(0);
+			for( StatementBlock csb : wstmt.getBody() )
+				ret |= rHasSideEffects(csb);
+		}
+		else if( sb instanceof IfStatementBlock ) {
+			IfStatement istmt = (IfStatement) sb.getStatement(0);
+			for( StatementBlock csb : istmt.getIfBody() )
+				ret |= rHasSideEffects(csb);
+			if( istmt.getElseBody() != null )
+				for( StatementBlock csb : istmt.getElseBody() )
+					ret |= rHasSideEffects(csb);
+		}
+		else if( sb.getHops() != null ) {
+			//check for print, printf, pwrite, function calls, all of
+			//which can only appear as root nodes in the DAG
+			for( Hop root : sb.getHops() ) {
+				ret |= HopRewriteUtils.isUnary(root, OpOp1.PRINT)
+					|| HopRewriteUtils.isNary(root, OpOpN.PRINTF)
+					|| HopRewriteUtils.isData(root, DataOpTypes.PERSISTENTWRITE)
+					|| root instanceof FunctionOp;
+			}
+		}
 		return ret;
 	}
 }

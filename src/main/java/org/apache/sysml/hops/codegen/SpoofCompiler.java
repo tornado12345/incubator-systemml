@@ -102,14 +102,15 @@ public class SpoofCompiler
 	private static final Log LOG = LogFactory.getLog(SpoofCompiler.class.getName());
 	
 	//internal configuration flags
-	public static boolean LDEBUG                      = false;
-	public static CompilerType JAVA_COMPILER          = CompilerType.JANINO; 
-	public static PlanSelector PLAN_SEL_POLICY        = PlanSelector.FUSE_COST_BASED_V2; 
-	public static IntegrationType INTEGRATION         = IntegrationType.RUNTIME;
-	public static final boolean RECOMPILE_CODEGEN     = true;
-	public static final boolean PRUNE_REDUNDANT_PLANS = true;
-	public static PlanCachePolicy PLAN_CACHE_POLICY   = PlanCachePolicy.CSLH;
-	public static final int PLAN_CACHE_SIZE           = 1024; //max 1K classes 
+	public static final boolean LDEBUG                 = false;
+	public static CompilerType JAVA_COMPILER           = CompilerType.JANINO; 
+	public static PlanSelector PLAN_SEL_POLICY         = PlanSelector.FUSE_COST_BASED_V2; 
+	public static final IntegrationType INTEGRATION    = IntegrationType.RUNTIME;
+	public static final boolean RECOMPILE_CODEGEN      = true;
+	public static final boolean PRUNE_REDUNDANT_PLANS  = true;
+	public static PlanCachePolicy PLAN_CACHE_POLICY    = PlanCachePolicy.CSLH;
+	public static final int PLAN_CACHE_SIZE            = 1024; //max 1K classes
+	public static final RegisterAlloc REG_ALLOC_POLICY = RegisterAlloc.EXACT_STATIC_BUFF;
 	
 	public enum CompilerType {
 		AUTO,
@@ -146,6 +147,12 @@ public class SpoofCompiler
 		public static PlanCachePolicy get(boolean planCache, boolean compileLiterals) {
 			return !planCache ? NONE : compileLiterals ? CONSTANT : CSLH;
 		}
+	}
+	
+	public enum RegisterAlloc {
+		HEURISTIC,           //max vector intermediates, special handling pipelines (always safe)
+		EXACT_DYNAMIC_BUFF,  //min number of live vector intermediates, assuming dynamic pooling
+		EXACT_STATIC_BUFF,   //min number of live vector intermediates, assuming static array ring buffer
 	}
 	
 	static {
@@ -333,7 +340,7 @@ public class SpoofCompiler
 		if( roots == null || roots.isEmpty() )
 			return roots;
 	
-		long t0 = DMLScript.STATISTICS ? System.nanoTime() : 0;
+		long t0 = ConfigurationManager.isStatistics() ? System.nanoTime() : 0;
 		ArrayList<Hop> ret = roots;
 		
 		try
@@ -399,14 +406,14 @@ public class SpoofCompiler
 					if( PLAN_CACHE_POLICY!=PlanCachePolicy.NONE )
 						planCache.putPlan(tmp.getValue(), cla);
 				}
-				else if( DMLScript.STATISTICS ) {
+				else if( ConfigurationManager.isStatistics() ) {
 					Statistics.incrementCodegenOpCacheHits();
 				}
 				
 				//make class available and maintain hits
 				if(cla != null)
 					clas.put(cplan.getKey(), new Pair<Hop[],Class<?>>(tmp.getKey(),cla));
-				if( DMLScript.STATISTICS )
+				if( ConfigurationManager.isStatistics() )
 					Statistics.incrementCodegenOpCacheTotal();
 			}
 			
@@ -431,7 +438,7 @@ public class SpoofCompiler
 			throw new DMLRuntimeException(ex);
 		}
 		
-		if( DMLScript.STATISTICS ) {
+		if( ConfigurationManager.isStatistics() ) {
 			Statistics.incrementCodegenDAGCompile();
 			Statistics.incrementCodegenCompileTime(System.nanoTime()-t0);
 		}
@@ -552,7 +559,7 @@ public class SpoofCompiler
 			cplans.put(hop.getHopID(), TemplateUtils
 					.createTemplate(memo.getBest(hop.getHopID()).type)
 					.constructCplan(hop, memo, compileLiterals));
-			if (DMLScript.STATISTICS)
+			if (ConfigurationManager.isStatistics())
 				Statistics.incrementCodegenCPlanCompile(1);
 		}
 		
@@ -665,8 +672,10 @@ public class SpoofCompiler
 			CNodeTpl tpl = e.getValue().getValue();
 			Hop[] inHops = e.getValue().getKey();
 			
-			//remove invalid plans with null inputs 
-			if( Arrays.stream(inHops).anyMatch(h -> (h==null)) )
+			//remove invalid plans with null, empty, or all scalar inputs 
+			if( inHops == null || inHops.length == 0
+				|| Arrays.stream(inHops).anyMatch(h -> (h==null))
+				|| Arrays.stream(inHops).allMatch(h -> h.isScalar()))
 				continue;
 			
 			//perform simplifications and cse rewrites
@@ -717,7 +726,7 @@ public class SpoofCompiler
 				}
 				else if( OptimizerUtils.isSparkExecutionMode() ) {
 					Hop hop = memo.getHopRefs().get(e.getKey());
-					boolean isSpark = DMLScript.rtplatform == RUNTIME_PLATFORM.SPARK
+					boolean isSpark = ConfigurationManager.getExecutionMode() == RUNTIME_PLATFORM.SPARK
 						|| OptimizerUtils.getTotalMemEstimate(inHops, hop, true)
 							> OptimizerUtils.getLocalMemBudget();
 					boolean invalidNcol = hop.getDataType().isMatrix() && (HopRewriteUtils.isTransposeOperation(hop) ?
@@ -741,7 +750,7 @@ public class SpoofCompiler
 					|| ((CNodeRow)tpl).getRowType()==RowType.ROW_AGG )
 					&& TemplateUtils.hasSingleOperation(tpl))
 				|| TemplateUtils.hasNoOperation(tpl) ) 
-			{	
+			{
 				cplans2.remove(e.getKey());
 				if( LOG.isTraceEnabled() )
 					LOG.trace("Removed cplan with single operation.");

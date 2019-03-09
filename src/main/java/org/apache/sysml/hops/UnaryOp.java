@@ -21,9 +21,10 @@ package org.apache.sysml.hops;
 
 import java.util.ArrayList;
 
-import org.apache.sysml.api.DMLScript;
-import org.apache.sysml.hops.Hop.MultiThreadedHop;
+import org.apache.sysml.conf.ConfigurationManager;
+import org.apache.sysml.hops.rewrite.HopRewriteUtils;
 import org.apache.sysml.lops.Aggregate;
+import org.apache.sysml.lops.Checkpoint;
 import org.apache.sysml.lops.Aggregate.OperationTypes;
 import org.apache.sysml.lops.CombineUnary;
 import org.apache.sysml.lops.CumulativeOffsetBinary;
@@ -42,18 +43,20 @@ import org.apache.sysml.lops.UnaryCP;
 import org.apache.sysml.parser.Expression.DataType;
 import org.apache.sysml.parser.Expression.ValueType;
 import org.apache.sysml.runtime.matrix.MatrixCharacteristics;
+import org.apache.sysml.runtime.matrix.data.MatrixBlock;
+import org.apache.sysml.runtime.util.UtilFunctions;
 
 
 /* Unary (cell operations): e.g, b_ij = round(a_ij)
  * 		Semantic: given a value, perform the operation (independent of other values)
  */
 
-public class UnaryOp extends Hop implements MultiThreadedHop
+public class UnaryOp extends MultiThreadedHop
 {
+	private static final boolean ALLOW_CUMAGG_BROADCAST = true;
+	private static final boolean ALLOW_CUMAGG_CACHING = false;
+	
 	private OpOp1 _op = null;
-	
-	private int _maxNumThreads = -1; //-1 for unlimited
-	
 	
 	private UnaryOp() {
 		//default constructor for clone
@@ -88,18 +91,8 @@ public class UnaryOp extends Hop implements MultiThreadedHop
 	}
 
 	@Override
-	public void setMaxNumThreads( int k ) {
-		_maxNumThreads = k;
-	}
-	
-	@Override
-	public int getMaxNumThreads() {
-		return _maxNumThreads;
-	}
-	
-	@Override
 	public boolean isGPUEnabled() {
-		if(!DMLScript.USE_ACCELERATOR)
+		if(!ConfigurationManager.isGPU())
 			return false;
 		boolean isScalar = (    getDataType() == DataType.SCALAR //value type casts or matrix to scalar
 				|| (_op == OpOp1.CAST_AS_MATRIX && getInput().get(0).getDataType()==DataType.SCALAR)
@@ -180,7 +173,7 @@ public class UnaryOp extends Hop implements MultiThreadedHop
 					int k = isCumulativeUnaryOperation() || isExpensiveUnaryOperation() ?
 						OptimizerUtils.getConstrainedNumThreads( _maxNumThreads ) : 1;
 					Unary unary1 = new Unary(input.constructLops(),
-						HopsOpOp1LopsU.get(_op), getDataType(), getValueType(), et, k);
+						HopsOpOp1LopsU.get(_op), getDataType(), getValueType(), et, k, false);
 					setOutputDimensions(unary1);
 					setLineNumbers(unary1);
 					setLops(unary1);
@@ -414,15 +407,15 @@ public class UnaryOp extends Hop implements MultiThreadedHop
 			agg.getOutputParameters().setDimensions(rlenAgg, clen, brlen, bclen, -1);
 			agg.setupCorrectionLocation(CorrectionLocationType.NONE); // aggregation uses kahanSum but the inputs do not have correction values
 			setLineNumbers(agg);
-			TEMP = agg;	
+			TEMP = agg;
 			level++;
 			force = false; //in case of unknowns, generate one level
 		}
 		
 		//in-memory cum sum (of partial aggregates)
 		if( TEMP.getOutputParameters().getNumRows()!=1 ) {
-			int k = OptimizerUtils.getConstrainedNumThreads( _maxNumThreads );					
-			Unary unary1 = new Unary( TEMP, HopsOpOp1LopsU.get(_op), DataType.MATRIX, ValueType.DOUBLE, ExecType.CP, k);
+			int k = OptimizerUtils.getConstrainedNumThreads( _maxNumThreads );
+			Unary unary1 = new Unary( TEMP, HopsOpOp1LopsU.get(_op), DataType.MATRIX, ValueType.DOUBLE, ExecType.CP, k, true);
 			unary1.getOutputParameters().setDimensions(TEMP.getOutputParameters().getNumRows(), clen, brlen, bclen, -1);
 			setLineNumbers(unary1);
 			TEMP = unary1;
@@ -453,6 +446,7 @@ public class UnaryOp extends Hop implements MultiThreadedHop
 		return TEMP;
 	}
 
+	@SuppressWarnings("unused")
 	private Lop constructLopsSparkCumulativeUnary() 
 	{
 		Hop input = getInput().get(0);
@@ -462,17 +456,30 @@ public class UnaryOp extends Hop implements MultiThreadedHop
 		long bclen = input.getColsInBlock();
 		boolean force = !dimsKnown() || _etypeForced == ExecType.SPARK;
 		OperationTypes aggtype = getCumulativeAggType();
-		
 		Lop X = input.constructLops();
+		
+		//special case single row block (no offsets needed)
+		if( rlen > 0 && clen > 0 && rlen <= brlen ) {
+			Lop offset = HopRewriteUtils.createDataGenOpByVal(new LiteralOp(1),
+				new LiteralOp(clen), getCumulativeInitValue()).constructLops();
+			return constructCumOffBinary(X, offset, aggtype, rlen, clen, brlen, bclen);
+		}
+		
 		Lop TEMP = X;
 		ArrayList<Lop> DATA = new ArrayList<>();
 		int level = 0;
 		
 		//recursive preaggregation until aggregates fit into CP memory budget
 		while( ((2*OptimizerUtils.estimateSize(TEMP.getOutputParameters().getNumRows(), clen) + OptimizerUtils.estimateSize(1, clen)) 
-				 > OptimizerUtils.getLocalMemBudget()
-			   && TEMP.getOutputParameters().getNumRows()>1) || force )
+			> OptimizerUtils.getLocalMemBudget() && TEMP.getOutputParameters().getNumRows()>1) || force )
 		{
+			//caching within multi-level cascades
+			if( ALLOW_CUMAGG_CACHING && level > 0 ) {
+				Lop oldTEMP = TEMP;
+				TEMP = new Checkpoint(oldTEMP, getDataType(), getValueType(), Checkpoint.getDefaultStorageLevelString());
+				TEMP.getOutputParameters().setDimensions(oldTEMP.getOutputParameters());
+				setLineNumbers(TEMP);
+			}
 			DATA.add(TEMP);
 	
 			//preaggregation per block (for spark, the CumulativePartialAggregate subsumes both
@@ -482,15 +489,15 @@ public class UnaryOp extends Hop implements MultiThreadedHop
 			preagg.getOutputParameters().setDimensions(rlenAgg, clen, brlen, bclen, -1);
 			setLineNumbers(preagg);
 			
-			TEMP = preagg;	
+			TEMP = preagg;
 			level++;
 			force = false; //in case of unknowns, generate one level
 		}
 		
 		//in-memory cum sum (of partial aggregates)
 		if( TEMP.getOutputParameters().getNumRows()!=1 ){
-			int k = OptimizerUtils.getConstrainedNumThreads( _maxNumThreads );					
-			Unary unary1 = new Unary( TEMP, HopsOpOp1LopsU.get(_op), DataType.MATRIX, ValueType.DOUBLE, ExecType.CP, k);
+			int k = OptimizerUtils.getConstrainedNumThreads( _maxNumThreads );
+			Unary unary1 = new Unary( TEMP, HopsOpOp1LopsU.get(_op), DataType.MATRIX, ValueType.DOUBLE, ExecType.CP, k, true);
 			unary1.getOutputParameters().setDimensions(TEMP.getOutputParameters().getNumRows(), clen, brlen, bclen, -1);
 			setLineNumbers(unary1);
 			TEMP = unary1;
@@ -498,32 +505,42 @@ public class UnaryOp extends Hop implements MultiThreadedHop
 		
 		//split, group and mr cumsum
 		while( level-- > 0  ) {
-			//(for spark, the CumulativeOffsetBinary subsumes both the split aggregate and 
-			//the subsequent offset binary apply of split aggregates against the original data)
-			double initValue = getCumulativeInitValue();
-			CumulativeOffsetBinary binary = new CumulativeOffsetBinary(DATA.get(level), TEMP, 
-					DataType.MATRIX, ValueType.DOUBLE, initValue, aggtype, ExecType.SPARK);
-			binary.getOutputParameters().setDimensions(rlen, clen, brlen, bclen, -1);
-			setLineNumbers(binary);
-			TEMP = binary;
+			TEMP = constructCumOffBinary(DATA.get(level),
+				TEMP, aggtype, rlen, clen, brlen, bclen);
 		}
 		
 		return TEMP;
 	}
+	
+	private Lop constructCumOffBinary(Lop data, Lop offset, OperationTypes aggtype, long rlen, long clen, long brlen, long bclen) {
+		//(for spark, the CumulativeOffsetBinary subsumes both the split aggregate and 
+		//the subsequent offset binary apply of split aggregates against the original data)
+		double initValue = getCumulativeInitValue();
+		boolean broadcast = ALLOW_CUMAGG_BROADCAST
+			&& OptimizerUtils.checkSparkBroadcastMemoryBudget(OptimizerUtils.estimateSize(
+			offset.getOutputParameters().getNumRows(), offset.getOutputParameters().getNumCols()));
+		
+		CumulativeOffsetBinary binary = new CumulativeOffsetBinary(data, offset, 
+				DataType.MATRIX, ValueType.DOUBLE, initValue, broadcast, aggtype, ExecType.SPARK);
+		binary.getOutputParameters().setDimensions(rlen, clen, brlen, bclen, -1);
+		setLineNumbers(binary);
+		return binary;
+	}
 
-	private OperationTypes getCumulativeAggType()
-	{
+	private OperationTypes getCumulativeAggType() {
 		switch( _op ) {
-			case CUMSUM: 	return OperationTypes.KahanSum;
-			case CUMPROD: 	return OperationTypes.Product;
-			case CUMMIN: 	return OperationTypes.Min;
-			case CUMMAX: 	return OperationTypes.Max;
-			default: 		return null;
+			case CUMSUM:     return OperationTypes.KahanSum;
+			case CUMPROD:    return OperationTypes.Product;
+			case CUMSUMPROD: return OperationTypes.SumProduct;
+			case CUMMIN:     return OperationTypes.Min;
+			case CUMMAX:     return OperationTypes.Max;
+			default:         return null;
 		}
 	}
 
 	private double getCumulativeInitValue() {
 		switch( _op ) {
+			case CUMSUMPROD: 
 			case CUMSUM:  return 0;
 			case CUMPROD: return 1;
 			case CUMMIN:  return Double.POSITIVE_INFINITY;
@@ -560,14 +577,19 @@ public class UnaryOp extends Hop implements MultiThreadedHop
 	}
 	
 	@Override
-	protected double computeIntermediateMemEstimate( long dim1, long dim2, long nnz )
+	protected double computeIntermediateMemEstimate(long dim1, long dim2, long nnz)
 	{
 		double ret = 0;
 		
-		if ( _op == OpOp1.IQM || _op == OpOp1.MEDIAN) {
+		if( _op == OpOp1.IQM || _op == OpOp1.MEDIAN ) {
 			// buffer (=2*input_size) and output (=input_size) for SORT operation
 			// getMemEstimate works for both cases of known dims and worst-case stats
 			ret = getInput().get(0).getMemEstimate() * 3; 
+		}
+		else if( isCumulativeUnaryOperation() ) {
+			//account for potential final dense-sparse transformation (worst-case sparse representation)
+			ret += MatrixBlock.estimateSizeSparseInMemory(dim1, dim2,
+				MatrixBlock.SPARSITY_TURN_POINT - UtilFunctions.DOUBLE_EPS);
 		}
 
 		if (isGPUEnabled()) {
@@ -594,6 +616,8 @@ public class UnaryOp extends Hop implements MultiThreadedHop
 			{
 				ret = new long[]{mc.getRows(), mc.getCols(), mc.getNonZeros()};
 			}
+			else if( _op==OpOp1.CUMSUMPROD )
+				ret = new long[]{mc.getRows(), 1, -1};
 			else 
 				ret = new long[]{mc.getRows(), mc.getCols(), -1};
 		}
@@ -617,7 +641,8 @@ public class UnaryOp extends Hop implements MultiThreadedHop
 		return (_op == OpOp1.CUMSUM 
 			|| _op == OpOp1.CUMPROD
 			|| _op == OpOp1.CUMMIN
-			|| _op == OpOp1.CUMMAX);
+			|| _op == OpOp1.CUMMAX
+			|| _op == OpOp1.CUMSUMPROD);
 	}
 
 	public boolean isCastUnaryOperation() {
@@ -685,8 +710,9 @@ public class UnaryOp extends Hop implements MultiThreadedHop
 		setRequiresRecompileIfNecessary();
 		
 		//ensure cp exec type for single-node operations
-		if( _op == OpOp1.PRINT || _op == OpOp1.ASSERT || _op == OpOp1.STOP 
-			|| _op == OpOp1.INVERSE || _op == OpOp1.EIGEN || _op == OpOp1.CHOLESKY || _op == OpOp1.SVD)
+		if( _op == OpOp1.PRINT || _op == OpOp1.ASSERT || _op == OpOp1.STOP
+			|| _op == OpOp1.INVERSE || _op == OpOp1.EIGEN || _op == OpOp1.CHOLESKY || _op == OpOp1.SVD
+			|| getInput().get(0).getDataType() == DataType.LIST )
 		{
 			_etype = ExecType.CP;
 		}
@@ -697,22 +723,31 @@ public class UnaryOp extends Hop implements MultiThreadedHop
 	@Override
 	public void refreshSizeInformation()
 	{
-		if ( getDataType() == DataType.SCALAR ) 
-		{
+		Hop input = getInput().get(0);
+		if ( getDataType() == DataType.SCALAR )  {
 			//do nothing always known
 		}
+		else if( (_op == OpOp1.CAST_AS_MATRIX || _op == OpOp1.CAST_AS_FRAME
+			|| _op == OpOp1.CAST_AS_SCALAR) && input.getDataType()==DataType.LIST ){
+			//handle two cases of list of scalars or list of single matrix
+			setDim1( input.getLength() > 1 ? input.getLength() : -1 );
+			setDim2( input.getLength() > 1 ? 1 : -1 );
+		}
 		else if( (_op == OpOp1.CAST_AS_MATRIX || _op == OpOp1.CAST_AS_FRAME)
-			&& getInput().get(0).getDataType()==DataType.SCALAR )
+			&& input.getDataType()==DataType.SCALAR )
 		{
 			//prevent propagating 0 from scalar (which would be interpreted as unknown)
 			setDim1( 1 );
 			setDim2( 1 );
 		}
+		else if ( _op==OpOp1.CUMSUMPROD ) {
+			setDim1(input.getDim1());
+			setDim2(1);
+		}
 		else //general case
 		{
 			// If output is a Matrix then this operation is of type (B = op(A))
 			// Dimensions of B are same as that of A, and sparsity may/maynot change
-			Hop input = getInput().get(0);
 			setDim1( input.getDim1() );
 			setDim2( input.getDim2() );
 			// cosh(0)=cos(0)=1, acos(0)=1.5707963267948966
@@ -729,7 +764,7 @@ public class UnaryOp extends Hop implements MultiThreadedHop
 	@Override
 	public Object clone() throws CloneNotSupportedException 
 	{
-		UnaryOp ret = new UnaryOp();	
+		UnaryOp ret = new UnaryOp();
 		
 		//copy generic attributes
 		ret.clone(this, false);
@@ -757,7 +792,7 @@ public class UnaryOp extends Hop implements MultiThreadedHop
 		if( _op == OpOp1.PRINT )
 			return false;
 		
-		UnaryOp that2 = (UnaryOp)that;		
+		UnaryOp that2 = (UnaryOp)that;
 		return (   _op == that2._op
 				&& getInput().get(0) == that2.getInput().get(0));
 	}

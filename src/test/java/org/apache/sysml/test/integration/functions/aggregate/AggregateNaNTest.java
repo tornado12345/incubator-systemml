@@ -19,10 +19,13 @@
 
 package org.apache.sysml.test.integration.functions.aggregate;
 
-import org.junit.Assert;
 import org.junit.Test;
 
+import java.util.Arrays;
+
+import org.apache.sysml.runtime.instructions.InstructionUtils;
 import org.apache.sysml.runtime.matrix.data.MatrixBlock;
+import org.apache.sysml.runtime.matrix.data.MatrixIndexes;
 import org.apache.sysml.runtime.util.DataConverter;
 import org.apache.sysml.test.integration.AutomatedTestBase;
 import org.apache.sysml.test.integration.TestConfiguration;
@@ -84,7 +87,30 @@ public class AggregateNaNTest extends AutomatedTestBase
 		runNaNAggregateTest(3, true);
 	}
 	
+	@Test
+	public void testRowIndexMaxDenseNaN() {
+		runNaNRowIndexMxxTest("uarimax", false);
+	}
+	
+	@Test
+	public void testRowIndexMaxSparseNaN() {
+		runNaNRowIndexMxxTest("uarimax", true);
+	}
+	
+	@Test
+	public void testRowIndexMinDenseNaN() {
+		runNaNRowIndexMxxTest("uarimin", false);
+	}
+	
+	@Test
+	public void testRowIndexMinSparseNaN() {
+		runNaNRowIndexMxxTest("uarimin", true);
+	}
+	
 	private void runNaNAggregateTest(int type, boolean sparse) {
+		if(shouldSkipTest())
+			return;
+		
 		//generate input
 		double sparsity = sparse ? sparsity1 : sparsity2;
 		double[][] A = getRandomMatrix(rows, cols, -0.05, 1, sparsity, 7); 
@@ -99,6 +125,23 @@ public class AggregateNaNTest extends AutomatedTestBase
 			case 3: ret = mb.max();
 		}
 		
-		Assert.assertTrue(Double.isNaN(ret));
+		assertTrue(Double.isNaN(ret));
+	}
+	
+	private void runNaNRowIndexMxxTest(String type, boolean sparse) {
+		if(shouldSkipTest())
+			return;
+		
+		//generate input
+		double sparsity = sparse ? sparsity1 : sparsity2;
+		double[][] A = getRandomMatrix(rows, cols, -0.05, 1, sparsity, 7);
+		Arrays.fill(A[7], Double.NaN);
+		MatrixBlock mb = DataConverter.convertToMatrixBlock(A);
+		
+		double ret = mb.aggregateUnaryOperations(
+		InstructionUtils.parseBasicAggregateUnaryOperator(type),
+		new MatrixBlock(), -1, -1, new MatrixIndexes(1, 1), true).getValue(7, 0);
+
+		assertTrue(ret == 1);
 	}
 }

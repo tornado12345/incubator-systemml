@@ -20,8 +20,9 @@
 package org.apache.sysml.runtime.controlprogram;
 
 import java.util.ArrayList;
+import java.util.List;
+import java.util.stream.Collectors;
 
-import org.apache.sysml.api.DMLScript;
 import org.apache.sysml.conf.ConfigurationManager;
 import org.apache.sysml.hops.recompile.Recompiler;
 import org.apache.sysml.hops.recompile.Recompiler.ResetType;
@@ -43,20 +44,26 @@ public class FunctionProgramBlock extends ProgramBlock
 	
 	private boolean _recompileOnce = false;
 	
-	public FunctionProgramBlock( Program prog, ArrayList<DataIdentifier> inputParams, ArrayList<DataIdentifier> outputParams) 
-	{
+	public FunctionProgramBlock( Program prog, ArrayList<DataIdentifier> inputParams, ArrayList<DataIdentifier> outputParams) {
 		super(prog);
 		_childBlocks = new ArrayList<>();
 		_inputParams = new ArrayList<>();
-		for (DataIdentifier id : inputParams){
+		for (DataIdentifier id : inputParams)
 			_inputParams.add(new DataIdentifier(id));
-			
-		}
 		_outputParams = new ArrayList<>();
-		for (DataIdentifier id : outputParams){
+		for (DataIdentifier id : outputParams)
 			_outputParams.add(new DataIdentifier(id));
-		}
 	}
+	
+	public DataIdentifier getInputParam(String name) {
+		return _inputParams.stream()
+			.filter(d -> d.getName().equals(name))
+			.findFirst().orElse(null);
+	}
+	
+	public List<String> getInputParamNames() {
+		return _inputParams.stream().map(d -> d.getName()).collect(Collectors.toList());
+	} 
 	
 	public ArrayList<DataIdentifier> getInputParams(){
 		return _inputParams;
@@ -70,8 +77,7 @@ public class FunctionProgramBlock extends ProgramBlock
 		_childBlocks.add(childBlock);
 	}
 	
-	public void setChildBlocks( ArrayList<ProgramBlock> pbs)
-	{
+	public void setChildBlocks( ArrayList<ProgramBlock> pbs) {
 		_childBlocks = pbs;
 	}
 	
@@ -88,7 +94,7 @@ public class FunctionProgramBlock extends ProgramBlock
 				&& isRecompileOnce() 
 				&& ParForProgramBlock.RESET_RECOMPILATION_FLAGs )
 			{
-				long t0 = DMLScript.STATISTICS ? System.nanoTime() : 0;
+				long t0 = ConfigurationManager.isStatistics() ? System.nanoTime() : 0;
 				
 				//note: it is important to reset the recompilation flags here
 				// (1) it is safe to reset recompilation flags because a 'recompile_once'
@@ -98,7 +104,7 @@ public class FunctionProgramBlock extends ProgramBlock
 				ResetType reset = ConfigurationManager.isCodegenEnabled() ? ResetType.RESET_KNOWN_DIMS : ResetType.RESET;
 				Recompiler.recompileProgramBlockHierarchy(_childBlocks, tmp, _tid, reset);
 				
-				if( DMLScript.STATISTICS ){
+				if( ConfigurationManager.isStatistics() ){
 					long t1 = System.nanoTime();
 					Statistics.incrementFunRecompileTime(t1-t0);
 					Statistics.incrementFunRecompiles();
@@ -110,7 +116,7 @@ public class FunctionProgramBlock extends ProgramBlock
 		}
 		
 		// for each program block
-		try {						
+		try {
 			for (int i=0 ; i < this._childBlocks.size() ; i++) {
 				ec.updateDebugState(i);
 				_childBlocks.get(i).execute(ec);

@@ -24,7 +24,7 @@ import org.apache.sysml.api.DMLScript;
 import org.apache.sysml.api.DMLScript.RUNTIME_PLATFORM;
 import org.apache.sysml.lops.LopProperties.ExecType;
 import org.apache.sysml.runtime.matrix.data.MatrixValue.CellIndex;
-import org.apache.sysml.runtime.util.ConvolutionUtils;
+import org.apache.sysml.runtime.util.DnnUtils;
 import org.apache.sysml.test.integration.AutomatedTestBase;
 import org.apache.sysml.test.integration.TestConfiguration;
 import org.apache.sysml.test.utils.TestUtils;
@@ -132,22 +132,15 @@ public class Conv2DBackwardDataTest extends AutomatedTestBase
 	public void runConv2DTest( ExecType et, int imgSize, int numImg, int numChannels, int numFilters, 
 			int filterSize, int stride, int pad, boolean sparse1, boolean sparse2) 
 	{
-		RUNTIME_PLATFORM oldRTP = rtplatform;
-			
 		boolean sparkConfigOld = DMLScript.USE_LOCAL_SPARK_CONFIG;
+		RUNTIME_PLATFORM oldRTP = setRuntimePlatform(et);
+		if(shouldSkipTest())
+			return;
 		
 		try
 		{
-	    TestConfiguration config = getTestConfiguration(TEST_NAME);
-	    if(et == ExecType.SPARK) {
-	    	rtplatform = RUNTIME_PLATFORM.SPARK;
-	    }
-	    else {
-	    	rtplatform = (et==ExecType.MR)? RUNTIME_PLATFORM.HADOOP : RUNTIME_PLATFORM.SINGLE_NODE;
-	    }
-			if( rtplatform == RUNTIME_PLATFORM.SPARK )
-				DMLScript.USE_LOCAL_SPARK_CONFIG = true;
-			
+			TestConfiguration config = getTestConfiguration(TEST_NAME);
+	    	
 			loadTestConfiguration(config);
 	        
 			/* This is for running the junit test the new way, i.e., construct the arguments directly */
@@ -157,7 +150,7 @@ public class Conv2DBackwardDataTest extends AutomatedTestBase
 			String sparseVal1 = (""+sparse1).toUpperCase();
 			String sparseVal2 = (""+sparse2).toUpperCase();
 			
-			long P = ConvolutionUtils.getP(imgSize, filterSize, stride, pad);
+			long P = DnnUtils.getP(imgSize, filterSize, stride, pad);
 			programArgs = new String[]{"-explain", "-args",  "" + imgSize, "" + numImg, 
 					"" + numChannels, "" + numFilters, 
 					"" + filterSize, "" + stride, "" + pad,

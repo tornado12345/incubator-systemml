@@ -37,19 +37,22 @@ import org.apache.commons.lang3.ArrayUtils;
 import org.apache.commons.lang3.tuple.Pair;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
-import org.apache.sysml.api.DMLScript;
 import org.apache.sysml.api.DMLScript.RUNTIME_PLATFORM;
+import org.apache.sysml.conf.ConfigurationManager;
 import org.apache.sysml.hops.AggBinaryOp;
 import org.apache.sysml.hops.AggUnaryOp;
 import org.apache.sysml.hops.BinaryOp;
+import org.apache.sysml.hops.DnnOp;
 import org.apache.sysml.hops.Hop;
 import org.apache.sysml.hops.Hop.AggOp;
+import org.apache.sysml.hops.Hop.DataGenMethod;
 import org.apache.sysml.hops.Hop.DataOpTypes;
 import org.apache.sysml.hops.Hop.Direction;
 import org.apache.sysml.hops.Hop.OpOp2;
 import org.apache.sysml.hops.Hop.OpOpN;
 import org.apache.sysml.hops.IndexingOp;
 import org.apache.sysml.hops.LiteralOp;
+import org.apache.sysml.hops.NaryOp;
 import org.apache.sysml.hops.OptimizerUtils;
 import org.apache.sysml.hops.ParameterizedBuiltinOp;
 import org.apache.sysml.hops.ReorgOp;
@@ -149,7 +152,7 @@ public class PlanSelectionFuseCostBasedV2 extends PlanSelection
 			memo.setDistinct(e.getKey(), e.getValue());
 		
 		//maintain statistics
-		if( DMLScript.STATISTICS ) {
+		if( ConfigurationManager.isStatistics() ) {
 			if( sumMatPoints >= 63 )
 				LOG.warn("Long overflow on maintaining codegen statistics "
 					+ "for a DAG with "+sumMatPoints+" interesting points.");
@@ -318,7 +321,7 @@ public class PlanSelectionFuseCostBasedV2 extends PlanSelection
 				LOG.trace("Enum: Skip "+pskip+" plans (by structure).");
 		}
 		
-		if( DMLScript.STATISTICS ) {
+		if( ConfigurationManager.isStatistics() ) {
 			Statistics.incrementCodegenEnumAllP((rgraph!=null||!STRUCTURAL_PRUNING)?len:0);
 			Statistics.incrementCodegenEnumEval(numEvalPlans);
 			Statistics.incrementCodegenEnumEvalP(numEvalPartPlans);
@@ -718,7 +721,8 @@ public class PlanSelectionFuseCostBasedV2 extends PlanSelection
 			|| (hop instanceof AggBinaryOp && (inRow || !hop.dimsKnown()
 				|| (hop.getDim1()!=1 && hop.getDim2()!=1)))
 			|| (HopRewriteUtils.isTransposeOperation(hop)
-				&& (hop.getDim1()!=1 && hop.getDim2()!=1))
+				&& (hop.getDim1()!=1 && hop.getDim2()!=1)
+				&& !HopRewriteUtils.isDataGenOp(hop.getInput().get(0),DataGenMethod.SEQ))
 			|| (hop instanceof AggUnaryOp && inRow);
 	}
 	
@@ -735,7 +739,7 @@ public class PlanSelectionFuseCostBasedV2 extends PlanSelection
 				if( !memo.contains(hopID, TemplateType.ROW) )
 					continue;
 				Hop hop = memo.getHopRefs().get(hopID);
-				boolean isSpark = DMLScript.rtplatform == RUNTIME_PLATFORM.SPARK
+				boolean isSpark = ConfigurationManager.getExecutionMode() == RUNTIME_PLATFORM.SPARK
 					|| OptimizerUtils.getTotalMemEstimate(hop.getInput().toArray(new Hop[0]), hop, true)
 						> OptimizerUtils.getLocalMemBudget();
 				boolean validNcol = hop.getDataType().isScalar() || (HopRewriteUtils.isTransposeOperation(hop) ? 
@@ -947,7 +951,8 @@ public class PlanSelectionFuseCostBasedV2 extends PlanSelection
 		}
 		
 		//add compute costs of current operator to costs vector
-		costVect.computeCosts += computeCosts.get(currentHopId);
+		if( computeCosts.containsKey(currentHopId) )
+			costVect.computeCosts += computeCosts.get(currentHopId);
 		
 		//process children recursively
 		for( int i=0; i< current.getInput().size(); i++ ) {
@@ -1043,6 +1048,7 @@ public class PlanSelectionFuseCostBasedV2 extends PlanSelection
 				case CUMMIN:
 				case CUMMAX:
 				case CUMPROD: costs = 1; break;
+				case CUMSUMPROD: costs = 2; break;
 				default:
 					LOG.warn("Cost model not "
 						+ "implemented yet for: "+((UnaryOp)current).getOp());
@@ -1116,6 +1122,10 @@ public class PlanSelectionFuseCostBasedV2 extends PlanSelection
 						+ "implemented yet for: "+((TernaryOp)current).getOp());
 			}
 		}
+		else if( current instanceof NaryOp ) {
+			costs = HopRewriteUtils.isNary(current, OpOpN.MIN, OpOpN.MAX) ?
+				current.getInput().size() : 1;
+		}
 		else if( current instanceof ParameterizedBuiltinOp ) {
 			costs = 1;
 		}
@@ -1124,6 +1134,16 @@ public class PlanSelectionFuseCostBasedV2 extends PlanSelection
 		}
 		else if( current instanceof ReorgOp ) {
 			costs = 1;
+		}
+		else if( current instanceof DnnOp ) {
+			switch( ((DnnOp)current).getOp() ) {
+				case BIASADD:
+				case BIASMULT:
+					costs = 2;
+				default:
+					LOG.warn("Cost model not "
+						+ "implemented yet for: "+((DnnOp)current).getOp());
+			}
 		}
 		else if( current instanceof AggBinaryOp ) {
 			//outer product template w/ matrix-matrix 
@@ -1177,7 +1197,7 @@ public class PlanSelectionFuseCostBasedV2 extends PlanSelection
 		synchronized( _planCache ) {
 			plan = _planCache.get(pKey);
 		}
-		if( DMLScript.STATISTICS ) {
+		if( ConfigurationManager.isStatistics() ) {
 			if( plan != null )
 				Statistics.incrementCodegenPlanCacheHits();
 			Statistics.incrementCodegenPlanCacheTotal();

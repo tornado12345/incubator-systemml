@@ -45,16 +45,17 @@ import org.apache.sysml.runtime.instructions.gpu.context.GPUContext;
 import org.apache.sysml.runtime.instructions.gpu.context.GPUObject;
 import org.apache.sysml.runtime.instructions.spark.data.BroadcastObject;
 import org.apache.sysml.runtime.instructions.spark.data.RDDObject;
+import org.apache.sysml.runtime.io.FileFormatProperties;
 import org.apache.sysml.runtime.io.IOUtilFunctions;
 import org.apache.sysml.runtime.matrix.MatrixCharacteristics;
 import org.apache.sysml.runtime.matrix.MetaDataFormat;
 import org.apache.sysml.runtime.matrix.MetaDataNumItemsByEachReducer;
 import org.apache.sysml.runtime.matrix.MetaData;
-import org.apache.sysml.runtime.matrix.data.FileFormatProperties;
 import org.apache.sysml.runtime.matrix.data.InputInfo;
 import org.apache.sysml.runtime.matrix.data.OutputInfo;
 import org.apache.sysml.runtime.util.LocalFileUtils;
 import org.apache.sysml.runtime.util.MapReduceTool;
+import org.apache.sysml.utils.Statistics;
 
 
 /**
@@ -77,7 +78,7 @@ public abstract class CacheableData<T extends CacheBlock> extends Data
 	// global constant configuration parameters
 	public static final long    CACHING_THRESHOLD = (long)Math.max(4*1024, //obj not s.t. caching
 		1e-5 * InfrastructureAnalyzer.getLocalMaxMemory());       //if below threshold [in bytes]
-	public static final double  CACHING_BUFFER_SIZE = 0.15; 
+	public static double CACHING_BUFFER_SIZE = 0.15; 
 	public static final RPolicy CACHING_BUFFER_POLICY = RPolicy.FIFO; 
 	public static final boolean CACHING_BUFFER_PAGECACHE = false; 
 	public static final boolean CACHING_WRITE_CACHE_ON_READ = false;	
@@ -207,7 +208,7 @@ public abstract class CacheableData<T extends CacheBlock> extends Data
 		_uniqueID = isCachingActive() ? _seq.getNextID() : -1;
 		_cacheStatus = CacheStatus.EMPTY;
 		_numReadThreads = 0;
-		_gpuObjects = new HashMap<>();
+		_gpuObjects = ConfigurationManager.isGPU() ? new HashMap<>() : null;
 	}
 	
 	/**
@@ -306,7 +307,14 @@ public abstract class CacheableData<T extends CacheBlock> extends Data
 	}
 	
 	public MatrixCharacteristics getMatrixCharacteristics() {
-		return _metaData.getMatrixCharacteristics();
+		MatrixCharacteristics mc = _metaData.getMatrixCharacteristics();
+		if(mc.getRowsPerBlock() == -1) {
+			mc.setRowsPerBlock(OptimizerUtils.DEFAULT_BLOCKSIZE);
+		}
+		if(mc.getColsPerBlock() == -1) {
+			mc.setColsPerBlock(OptimizerUtils.DEFAULT_BLOCKSIZE);
+		}
+		return mc;
 	}
 
 	public abstract void refreshMetaData();
@@ -343,10 +351,14 @@ public abstract class CacheableData<T extends CacheBlock> extends Data
 	}
 
 	public synchronized GPUObject getGPUObject(GPUContext gCtx) {
+		if( _gpuObjects == null )
+			return null;
 		return _gpuObjects.get(gCtx);
 	}
 
 	public synchronized void setGPUObject(GPUContext gCtx, GPUObject gObj) {
+		if( _gpuObjects == null )
+			_gpuObjects = new HashMap<>();
 		GPUObject old = _gpuObjects.put(gCtx, gObj);
 		if (old != null)
 				throw new DMLRuntimeException("GPU : Inconsistent internal state - this CacheableData already has a GPUObject assigned to the current GPUContext (" + gCtx + ")");
@@ -359,6 +371,12 @@ public abstract class CacheableData<T extends CacheBlock> extends Data
 	// ***                                       ***
 	// *********************************************
 
+	public T acquireReadAndRelease() {
+		T tmp = acquireRead();
+		release();
+		return tmp;
+	}
+	
 	/**
 	 * Acquires a shared "read-only" lock, produces the reference to the cache block,
 	 * restores the cache block to main memory, reads from HDFS if needed.
@@ -372,7 +390,7 @@ public abstract class CacheableData<T extends CacheBlock> extends Data
 	 * @return cacheable data
 	 */
 	public T acquireRead() {
-		long t0 = DMLScript.STATISTICS ? System.nanoTime() : 0;
+		long t0 = ConfigurationManager.isStatistics() ? System.nanoTime() : 0;
 		
 		//core internal acquire (synchronized per object)
 		T ret = acquireReadIntern();
@@ -382,7 +400,7 @@ public abstract class CacheableData<T extends CacheBlock> extends Data
 		if( !isBelowCachingThreshold() )
 			updateStatusPinned(true);
 		
-		if( DMLScript.STATISTICS ){
+		if( ConfigurationManager.isStatistics() ){
 			long t1 = System.nanoTime();
 			CacheStatistics.incrementAcquireRTime(t1-t0);
 		}
@@ -399,7 +417,7 @@ public abstract class CacheableData<T extends CacheBlock> extends Data
 			getCache();
 		
 		//call acquireHostRead if gpuHandle is set as well as is allocated
-		if( DMLScript.USE_ACCELERATOR ) {
+		if( ConfigurationManager.isGPU() && _gpuObjects != null ) {
 			boolean copiedFromGPU = false;
 			for (Map.Entry<GPUContext, GPUObject> kv : _gpuObjects.entrySet()) {
 				GPUObject gObj = kv.getValue();
@@ -417,7 +435,7 @@ public abstract class CacheableData<T extends CacheBlock> extends Data
 		//(probe data for cache_nowrite / jvm_reuse)
 		if( _data==null && isEmpty(true) ) {
 			try {
-				if( DMLScript.STATISTICS )
+				if( ConfigurationManager.isStatistics() )
 					CacheStatistics.incrementHDFSHits();
 				
 				if( getRDDHandle()==null || getRDDHandle().allowsShortCircuitRead() ) {
@@ -448,7 +466,7 @@ public abstract class CacheableData<T extends CacheBlock> extends Data
 			}
 			_isAcquireFromEmpty = true;
 		}
-		else if( _data!=null && DMLScript.STATISTICS ) {
+		else if( _data!=null && ConfigurationManager.isStatistics() ) {
 			CacheStatistics.incrementMemHits();
 		}
 		
@@ -469,7 +487,7 @@ public abstract class CacheableData<T extends CacheBlock> extends Data
 	 * @return cacheable data
 	 */
 	public T acquireModify(T newData) {
-		long t0 = DMLScript.STATISTICS ? System.nanoTime() : 0;
+		long t0 = ConfigurationManager.isStatistics() ? System.nanoTime() : 0;
 		
 		//core internal acquire (synchronized per object)
 		T ret = acquireModifyIntern(newData);
@@ -479,9 +497,11 @@ public abstract class CacheableData<T extends CacheBlock> extends Data
 		if( !isBelowCachingThreshold() )
 			updateStatusPinned(true);
 		
-		if( DMLScript.STATISTICS ){
+		if( ConfigurationManager.isStatistics() ){
 			long t1 = System.nanoTime();
 			CacheStatistics.incrementAcquireMTime(t1-t0);
+			if (ConfigurationManager.isJMLCMemStatistics())
+				Statistics.addCPMemObject(System.identityHashCode(this), getDataSize());
 		}
 		
 		return ret;
@@ -518,7 +538,7 @@ public abstract class CacheableData<T extends CacheBlock> extends Data
 	 * 
 	 */
 	public void release() {
-		long t0 = DMLScript.STATISTICS ? System.nanoTime() : 0;
+		long t0 = ConfigurationManager.isStatistics() ? System.nanoTime() : 0;
 		
 		//update thread-local status (before unpin but outside
 		//the critical section of accessing a shared object)
@@ -528,7 +548,7 @@ public abstract class CacheableData<T extends CacheBlock> extends Data
 		//core internal release (synchronized per object)
 		releaseIntern();
 		
-		if( DMLScript.STATISTICS ){
+		if( ConfigurationManager.isStatistics() ){
 			long t1 = System.nanoTime();
 			CacheStatistics.incrementReleaseTime(t1-t0);
 		}
@@ -593,8 +613,8 @@ public abstract class CacheableData<T extends CacheBlock> extends Data
 		// clear existing WB / FS representation (but prevent unnecessary probes)
 		if( !(isEmpty(true)||(_data!=null && isBelowCachingThreshold()) 
 			  ||(_data!=null && !isCachingActive()) )) //additional condition for JMLC
-			freeEvictedBlob();	
-		
+			freeEvictedBlob();
+
 		// clear the in-memory data
 		_data = null;
 		clearCache();
@@ -604,14 +624,19 @@ public abstract class CacheableData<T extends CacheBlock> extends Data
 			_rddHandle.setBackReference(null);
 		if( _bcHandle != null )
 			_bcHandle.setBackReference(null);
-		if( _gpuObjects != null )
-			for (GPUObject gObj : _gpuObjects.values())
-				if (gObj != null)
-					gObj.clearData();
-
+		clearGPUData();
+		
 		// change object state EMPTY
 		setDirty(false);
 		setEmpty();
+	}
+	
+	public void clearGPUData() {
+		if( _gpuObjects != null ) {
+			for (GPUObject gObj : _gpuObjects.values())
+				if (gObj != null)
+					gObj.clearData(null, gObj.getGPUContext().EAGER_CUDA_FREE);
+		}
 	}
 
 	public synchronized void exportData() {
@@ -663,7 +688,7 @@ public abstract class CacheableData<T extends CacheBlock> extends Data
 	public synchronized void exportData (String fName, String outputFormat, int replication, FileFormatProperties formatProperties, String opcode) {
 		if( LOG.isTraceEnabled() )
 			LOG.trace("Export data "+hashCode()+" "+fName);
-		long t0 = DMLScript.STATISTICS ? System.nanoTime() : 0;
+		long t0 = ConfigurationManager.isStatistics() ? System.nanoTime() : 0;
 		
 		//prevent concurrent modifications
 		if ( !isAvailableToRead() )
@@ -671,16 +696,17 @@ public abstract class CacheableData<T extends CacheBlock> extends Data
 
 		LOG.trace("Exporting " + this.getDebugName() + " to " + fName + " in format " + outputFormat);
 		
-		//TODO remove
-		boolean copiedFromGPU = false;
-		for (Map.Entry<GPUContext, GPUObject> kv : _gpuObjects.entrySet()) {
-			GPUObject gObj = kv.getValue();
-			if (gObj != null && copiedFromGPU && gObj.isDirty()) {
-				throw new DMLRuntimeException("Internal Error : Inconsistent internal state, A copy of this CacheableData was dirty on more than 1 GPU");
-			} else if (gObj != null){
-				copiedFromGPU = gObj.acquireHostRead(null);
-				if( _data == null )
-					getCache();
+		if( ConfigurationManager.isGPU() && _gpuObjects != null ) {
+			boolean copiedFromGPU = false;
+			for (Map.Entry<GPUContext, GPUObject> kv : _gpuObjects.entrySet()) {
+				GPUObject gObj = kv.getValue();
+				if (gObj != null && copiedFromGPU && gObj.isDirty()) {
+					throw new DMLRuntimeException("Internal Error : Inconsistent internal state, A copy of this CacheableData was dirty on more than 1 GPU");
+				} else if (gObj != null){
+					copiedFromGPU = gObj.acquireHostRead(null);
+					if( _data == null )
+						getCache();
+				}
 			}
 		}
 		
@@ -776,7 +802,7 @@ public abstract class CacheableData<T extends CacheBlock> extends Data
 			LOG.trace(this.getDebugName() + ": Skip export to hdfs since data already exists.");
 		}
 		  
-		if( DMLScript.STATISTICS ){
+		if( ConfigurationManager.isStatistics() ){
 			long t1 = System.nanoTime();
 			CacheStatistics.incrementExportTime(t1-t0);
 		}
@@ -836,17 +862,17 @@ public abstract class CacheableData<T extends CacheBlock> extends Data
 	 * evicted data blob, without reading it.
 	 * Must be defined by a subclass, never called by users.
 	 */
-	protected void freeEvictedBlob() {
+	public final void freeEvictedBlob() {
 		String cacheFilePathAndName = getCacheFilePathAndName();
 		long begin = LOG.isTraceEnabled() ? System.currentTimeMillis() : 0;
 		if( LOG.isTraceEnabled() )
 			LOG.trace("CACHE: Freeing evicted matrix...  " + hashCode() + "  HDFS path: " + 
-						(_hdfsFileName == null ? "null" : _hdfsFileName) + " Eviction path: " + cacheFilePathAndName);
+				(_hdfsFileName == null ? "null" : _hdfsFileName) + " Eviction path: " + cacheFilePathAndName);
 		
 		LazyWriteBuffer.deleteBlock(cacheFilePathAndName);
 		
 		if( LOG.isTraceEnabled() )
-			LOG.trace("Freeing evicted matrix - COMPLETED ... " + (System.currentTimeMillis()-begin) + " msec.");		
+			LOG.trace("Freeing evicted matrix - COMPLETED ... " + (System.currentTimeMillis()-begin) + " msec.");
 	}
 
 	protected boolean isBelowCachingThreshold() {
@@ -908,7 +934,7 @@ public abstract class CacheableData<T extends CacheBlock> extends Data
 			
 			// when outputFormat is binaryblock, make sure that matrixCharacteristics has correct blocking dimensions
 			// note: this is only required if singlenode (due to binarycell default) 
-			if ( oinfo == OutputInfo.BinaryBlockOutputInfo && DMLScript.rtplatform == RUNTIME_PLATFORM.SINGLE_NODE &&
+			if ( oinfo == OutputInfo.BinaryBlockOutputInfo && ConfigurationManager.getExecutionMode() == RUNTIME_PLATFORM.SINGLE_NODE &&
 				(mc.getRowsPerBlock() != ConfigurationManager.getBlocksize() || mc.getColsPerBlock() != ConfigurationManager.getBlocksize()) ) 
 			{
 				mc = new MatrixCharacteristics(mc.getRows(), mc.getCols(), ConfigurationManager.getBlocksize(), ConfigurationManager.getBlocksize(), mc.getNonZeros());

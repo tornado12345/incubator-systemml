@@ -139,6 +139,16 @@ public class SparseBlockMCSR extends SparseBlock
 	}
 	
 	@Override
+	public void compact(int r) {
+		if( isAllocated(r) && _rows[r] instanceof SparseRowVector
+			&& _rows[r].size() > SparseBlock.INIT_CAPACITY
+			&& _rows[r].size() * SparseBlock.RESIZE_FACTOR1 
+				< ((SparseRowVector)_rows[r]).capacity() ) {
+			((SparseRowVector)_rows[r]).compact();
+		}
+	}
+	
+	@Override
 	public int numRows() {
 		return _rows.length;
 	}
@@ -178,8 +188,8 @@ public class SparseBlockMCSR extends SparseBlock
 			double[] avals = values(i);
 			for (int k = apos + 1; k < apos + alen; k++) {
 				if (aix[k-1] >= aix[k])
-					throw new RuntimeException("Wrong sparse row ordering, at row: "
-						+ k + "with " + aix[k-1] + ">=" + aix[k]);
+					throw new RuntimeException("Wrong sparse row ordering, at row="+i+", pos="+k
+						+ " with column indexes " + aix[k-1] + ">=" + aix[k]);
 				if (avals[k] == 0)
 					throw new RuntimeException("The values are expected to be non zeros "
 						+ "but zero at row: "+ i + ", col pos: " + k);
@@ -293,6 +303,15 @@ public class SparseBlockMCSR extends SparseBlock
 		else 
 			_rows[r] = (deep && row != null) ?
 				new SparseRowVector(row) : row;
+	}
+	
+	@Override
+	public boolean add(int r, int c, double v) {
+		if( !isAllocated(r) )
+			_rows[r] = new SparseRowScalar();
+		else if( _rows[r] instanceof SparseRowScalar && !_rows[r].isEmpty())
+			_rows[r] = new SparseRowVector(_rows[r]);
+		return _rows[r].add(c, v);
 	}
 	
 	@Override

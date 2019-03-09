@@ -39,7 +39,7 @@ import org.apache.sysml.runtime.instructions.cp.CPInstruction;
 import org.apache.sysml.runtime.instructions.cp.CPInstruction.CPType;
 import org.apache.sysml.runtime.instructions.cp.CentralMomentCPInstruction;
 import org.apache.sysml.runtime.instructions.cp.CompressionCPInstruction;
-import org.apache.sysml.runtime.instructions.cp.ConvolutionCPInstruction;
+import org.apache.sysml.runtime.instructions.cp.DnnCPInstruction;
 import org.apache.sysml.runtime.instructions.cp.CovarianceCPInstruction;
 import org.apache.sysml.runtime.instructions.cp.DataGenCPInstruction;
 import org.apache.sysml.runtime.instructions.cp.DataPartitionCPInstruction;
@@ -146,9 +146,11 @@ public class CPInstructionParser extends InstructionParser
 		String2CPInstructionType.put( "log"  , CPType.Builtin);
 		String2CPInstructionType.put( "log_nz"  , CPType.Builtin);
 
+		String2CPInstructionType.put( "solve"  , CPType.Binary);
 		String2CPInstructionType.put( "max"  , CPType.Binary);
 		String2CPInstructionType.put( "min"  , CPType.Binary);
-		String2CPInstructionType.put( "solve"  , CPType.Binary);
+		String2CPInstructionType.put( "nmax"  , CPType.BuiltinNary);
+		String2CPInstructionType.put( "nmin"  , CPType.BuiltinNary);
 		
 		String2CPInstructionType.put( "exp"   , CPType.Unary);
 		String2CPInstructionType.put( "abs"   , CPType.Unary);
@@ -171,6 +173,7 @@ public class CPInstructionParser extends InstructionParser
 		String2CPInstructionType.put( "floor" , CPType.Unary);
 		String2CPInstructionType.put( "ucumk+", CPType.Unary);
 		String2CPInstructionType.put( "ucum*" , CPType.Unary);
+		String2CPInstructionType.put( "ucumk+*" , CPType.Unary);
 		String2CPInstructionType.put( "ucummin", CPType.Unary);
 		String2CPInstructionType.put( "ucummax", CPType.Unary);
 		String2CPInstructionType.put( "stop"  , CPType.Unary);
@@ -179,12 +182,15 @@ public class CPInstructionParser extends InstructionParser
 		String2CPInstructionType.put( "sprop", CPType.Unary);
 		String2CPInstructionType.put( "sigmoid", CPType.Unary);
 		
-		String2CPInstructionType.put( "printf" , CPType.BuiltinNary);
-		String2CPInstructionType.put( "cbind" , CPType.BuiltinNary);
-		String2CPInstructionType.put( "rbind" , CPType.BuiltinNary);
-		String2CPInstructionType.put( "eval" , CPType.BuiltinNary);
-
+		String2CPInstructionType.put( "printf", CPType.BuiltinNary);
+		String2CPInstructionType.put( "cbind",  CPType.BuiltinNary);
+		String2CPInstructionType.put( "rbind",  CPType.BuiltinNary);
+		String2CPInstructionType.put( "eval",   CPType.BuiltinNary);
+		String2CPInstructionType.put( "list",   CPType.BuiltinNary);
+		
 		// Parameterized Builtin Functions
+		String2CPInstructionType.put("paramserv", 		CPType.ParameterizedBuiltin);
+		String2CPInstructionType.put( "nvlist",  CPType.ParameterizedBuiltin);
 		String2CPInstructionType.put( "cdf",            CPType.ParameterizedBuiltin);
 		String2CPInstructionType.put( "invcdf",         CPType.ParameterizedBuiltin);
 		String2CPInstructionType.put( "groupedagg",     CPType.ParameterizedBuiltin);
@@ -230,20 +236,23 @@ public class CPInstructionParser extends InstructionParser
 		String2CPInstructionType.put( "rsort"      , CPType.Reorg);
 
 		// Opcodes related to convolutions
-		String2CPInstructionType.put( "relu_backward"      , CPType.Convolution);
-		String2CPInstructionType.put( "relu_maxpooling"      , CPType.Convolution);
-		String2CPInstructionType.put( "relu_maxpooling_backward"      , CPType.Convolution);
-		String2CPInstructionType.put( "maxpooling"      , CPType.Convolution);
-		String2CPInstructionType.put( "maxpooling_backward"      , CPType.Convolution);
-		String2CPInstructionType.put( "avgpooling"      , CPType.Convolution);
-		String2CPInstructionType.put( "avgpooling_backward"      , CPType.Convolution);
-		String2CPInstructionType.put( "conv2d"      , CPType.Convolution);
-		String2CPInstructionType.put( "conv2d_bias_add"      , CPType.Convolution);
-		String2CPInstructionType.put( "conv2d_backward_filter"      , CPType.Convolution);
-		String2CPInstructionType.put( "conv2d_backward_data"      , CPType.Convolution);
-		String2CPInstructionType.put( "bias_add"      , CPType.Convolution);
-		String2CPInstructionType.put( "bias_multiply"      , CPType.Convolution);
-		String2CPInstructionType.put( "channel_sums"      , CPType.Convolution);
+		String2CPInstructionType.put( "relu_backward"      , CPType.Dnn);
+		String2CPInstructionType.put( "relu_maxpooling"      , CPType.Dnn);
+		String2CPInstructionType.put( "relu_maxpooling_backward"      , CPType.Dnn);
+		String2CPInstructionType.put( "maxpooling"      , CPType.Dnn);
+		String2CPInstructionType.put( "maxpooling_backward"      , CPType.Dnn);
+		String2CPInstructionType.put( "avgpooling"      , CPType.Dnn);
+		String2CPInstructionType.put( "avgpooling_backward"      , CPType.Dnn);
+		String2CPInstructionType.put( "conv2d"      , CPType.Dnn);
+		String2CPInstructionType.put( "conv2d_bias_add"      , CPType.Dnn);
+		String2CPInstructionType.put( "conv2d_backward_filter"      , CPType.Dnn);
+		String2CPInstructionType.put( "conv2d_backward_data"      , CPType.Dnn);
+		String2CPInstructionType.put( "lstm",                 	CPType.Dnn);
+		String2CPInstructionType.put( "lstm_backward",          CPType.Dnn);
+		String2CPInstructionType.put( "bias_add"      , CPType.Dnn);
+		String2CPInstructionType.put( "bias_multiply"      , CPType.Dnn);
+		String2CPInstructionType.put( "batch_norm2d",           CPType.Dnn);
+		String2CPInstructionType.put( "batch_norm2d_backward",  CPType.Dnn);
 		
 		// Quaternary instruction opcodes
 		String2CPInstructionType.put( "wsloss"  , CPType.Quaternary);
@@ -337,8 +346,8 @@ public class CPInstructionParser extends InstructionParser
 			case Reorg:
 				return ReorgCPInstruction.parseInstruction(str);
 				
-			case Convolution:
-				 return ConvolutionCPInstruction.parseInstruction(str);
+			case Dnn:
+				 return DnnCPInstruction.parseInstruction(str);
 				
 			case UaggOuterChain:
 				return UaggOuterChainCPInstruction.parseInstruction(str);
@@ -360,8 +369,8 @@ public class CPInstructionParser extends InstructionParser
 				
 			case External:
 				return FunctionCallCPInstruction.parseInstruction(str);
-			
-			case ParameterizedBuiltin: 
+
+			case ParameterizedBuiltin:
 				return ParameterizedBuiltinCPInstruction.parseInstruction(str);
 			
 			case MultiReturnParameterizedBuiltin:
@@ -386,13 +395,15 @@ public class CPInstructionParser extends InstructionParser
 			case Builtin: 
 				String []parts = InstructionUtils.getInstructionPartsWithValueType(str);
 				if ( parts[0].equals("log") || parts[0].equals("log_nz") ) {
-					if ( parts.length == 3 || (parts.length == 4 &&
+					if ( parts.length == 3 || (parts.length == 5 &&
 						UtilFunctions.isIntegerNumber(parts[3])) ) {
 						// B=log(A), y=log(x)
 						return UnaryCPInstruction.parseInstruction(str);
 					} else if ( parts.length == 4 ) {
 						// B=log(A,10), y=log(x,10)
 						return BinaryCPInstruction.parseInstruction(str);
+					} else {
+						throw new DMLRuntimeException("Error parsing the instruction: " + str);
 					}
 				}
 				else {

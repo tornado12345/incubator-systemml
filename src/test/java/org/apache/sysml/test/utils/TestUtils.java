@@ -125,7 +125,7 @@ public class TestUtils
 	 * @param epsilon
 	 */
 	public static void compareDMLMatrixWithJavaMatrixRowsOutOfOrder(String expectedFile, String actualDir, double epsilon)
-	{
+	{	
 		try {
 			HashMap<CellIndex, Double> expectedValues = new HashMap<CellIndex, Double>();
 			
@@ -364,7 +364,7 @@ public class TestUtils
 	 * @return
 	 */
 	public static HashMap<CellIndex, Double> readDMLMatrixFromHDFS(String filePath) 
-	{
+	{	
 		HashMap<CellIndex, Double> expectedValues = new HashMap<CellIndex, Double>();
 		
 		try 
@@ -404,7 +404,7 @@ public class TestUtils
 	 * @return
 	 */
 	public static HashMap<CellIndex, Double> readRMatrixFromFS(String filePath) 
-	{
+	{	
 		HashMap<CellIndex, Double> expectedValues = new HashMap<CellIndex, Double>();
 		BufferedReader reader = null;
 		
@@ -437,8 +437,11 @@ public class TestUtils
 					if ( matrixType == 2 )
 						expectedValues.put(new CellIndex(j, i), v);
 				}
-				else
+				else { //pattern
 					expectedValues.put(new CellIndex(i, j), 1.0);
+					if ( matrixType == 2 )
+						expectedValues.put(new CellIndex(j, i), 1.0);
+				}
 			}
 		} 
 		catch (IOException e) {
@@ -482,8 +485,7 @@ public class TestUtils
 		return Double.NaN;
 	}
 
-	public static boolean readDMLBoolean(String filePath) {
-		try {
+	public static boolean readDMLBoolean(String filePath) {try {
 			Boolean b = null;
 			Path outDirectory = new Path(filePath);
 			FileSystem fs = IOUtilFunctions.getFileSystem(outDirectory, conf);
@@ -691,7 +693,7 @@ public class TestUtils
 	}
 	
 	public static void compareScalars(String expected, String actual) {
-			assertEquals(expected, actual);
+		assertEquals(expected, actual);
 	}
 
 	public static boolean compareMatrices(HashMap<CellIndex, Double> m1, HashMap<CellIndex, Double> m2,
@@ -851,6 +853,7 @@ public class TestUtils
 	 * @return
 	 */
 	public static HashMap<CellIndex, Double> convert2DDoubleArrayToHashMap(double[][] matrix) {
+		
 		HashMap<CellIndex, Double> hmMatrix = new HashMap<CellIndex, Double>();
 		for (int i = 0; i < matrix.length; i++) {
 			for (int j = 0; j < matrix[i].length; j++) {

@@ -22,7 +22,6 @@ package org.apache.sysml.test.integration.functions.binary.matrix;
 import java.util.HashMap;
 
 import org.junit.AfterClass;
-import org.junit.Assert;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
@@ -44,7 +43,6 @@ import org.apache.sysml.utils.Statistics;
  */
 public class UaggOuterChainTest extends AutomatedTestBase 
 {
-	
 	private final static String TEST_NAME1 = "UaggOuterChain";
 	private final static String TEST_DIR = "functions/binary/matrix/";
 	private final static String TEST_CLASS_DIR = TEST_DIR + UaggOuterChainTest.class.getSimpleName() + "/";
@@ -1235,17 +1233,10 @@ public class UaggOuterChainTest extends AutomatedTestBase
 	 */
 	private void runBinUaggTest( String testname, Type type, boolean singleBlock, boolean sparse, SumType sumType, boolean bEmptyBlock, ExecType instType)
 	{
-		//rtplatform for MR
-		RUNTIME_PLATFORM platformOld = rtplatform;
-		switch( instType ){
-			case MR: rtplatform = RUNTIME_PLATFORM.HADOOP; break;
-			case SPARK: rtplatform = RUNTIME_PLATFORM.SPARK; break;
-			default: rtplatform = RUNTIME_PLATFORM.HYBRID; break;
-		}
-	
 		boolean sparkConfigOld = DMLScript.USE_LOCAL_SPARK_CONFIG;
-		if( rtplatform == RUNTIME_PLATFORM.SPARK )
-			DMLScript.USE_LOCAL_SPARK_CONFIG = true;
+		RUNTIME_PLATFORM platformOld = setRuntimePlatform(instType);
+		if(shouldSkipTest())
+			return;
 
 		try
 		{
@@ -1318,7 +1309,7 @@ public class UaggOuterChainTest extends AutomatedTestBase
 			
 			loadTestConfiguration(config, TEST_CACHE_DIR);
 			
-			String HOME = SCRIPT_DIR + TEST_DIR;			
+			String HOME = SCRIPT_DIR + TEST_DIR;
 			fullDMLScriptName = HOME + TEST_NAME + suffix + strSumTypeSuffix + ".dml";
 			programArgs = new String[]{"-stats", "-explain","-args", 
 				input("A"), input("B"), output("C")};
@@ -1359,10 +1350,10 @@ public class UaggOuterChainTest extends AutomatedTestBase
 			
 			//check statistics for right operator in cp and spark
 			if( instType == ExecType.CP ) {
-				Assert.assertTrue("Missing opcode sp_uaggouterchain", Statistics.getCPHeavyHitterOpCodes().contains(UAggOuterChain.OPCODE));
+				assertTrue("Missing opcode sp_uaggouterchain", Statistics.getCPHeavyHitterOpCodes().contains(UAggOuterChain.OPCODE));
 			}
 			else if( instType == ExecType.SPARK ) {
-				Assert.assertTrue("Missing opcode sp_uaggouterchain",
+				assertTrue("Missing opcode sp_uaggouterchain",
 						Statistics.getCPHeavyHitterOpCodes().contains(Instruction.SP_INST_PREFIX+UAggOuterChain.OPCODE));
 			}
 		}

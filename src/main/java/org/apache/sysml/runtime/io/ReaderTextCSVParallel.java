@@ -40,7 +40,6 @@ import org.apache.hadoop.mapred.TextInputFormat;
 import org.apache.sysml.conf.ConfigurationManager;
 import org.apache.sysml.hops.OptimizerUtils;
 import org.apache.sysml.runtime.DMLRuntimeException;
-import org.apache.sysml.runtime.matrix.data.CSVFileFormatProperties;
 import org.apache.sysml.runtime.matrix.data.DenseBlock;
 import org.apache.sysml.runtime.matrix.data.MatrixBlock;
 import org.apache.sysml.runtime.util.CommonThreadPool;
@@ -58,12 +57,12 @@ import org.apache.sysml.runtime.util.CommonThreadPool;
  */
 public class ReaderTextCSVParallel extends MatrixReader 
 {
-	private CSVFileFormatProperties _props = null;
+	private FileFormatPropertiesCSV _props = null;
 	private int _numThreads = 1;
 
 	private SplitOffsetInfos _offsets = null;
 
-	public ReaderTextCSVParallel(CSVFileFormatProperties props) {
+	public ReaderTextCSVParallel(FileFormatPropertiesCSV props) {
 		_numThreads = OptimizerUtils.getParallelTextReadParallelism();
 		_props = props;
 	}
@@ -90,8 +89,8 @@ public class ReaderTextCSVParallel extends MatrixReader
 
 		// allocate output matrix block
 		// First Read Pass (count rows/cols, determine offsets, allocate matrix block)
-		MatrixBlock ret = computeCSVSizeAndCreateOutputMatrixBlock(splits,
-				path, job, _props.hasHeader(), _props.getDelim(), estnnz);
+		MatrixBlock ret = computeCSVSizeAndCreateOutputMatrixBlock(splits, path, job,
+			_props.hasHeader(), _props.getDelim(), rlen, clen, estnnz);
 		rlen = ret.getNumRows();
 		clen = ret.getNumColumns();
 
@@ -161,9 +160,9 @@ public class ReaderTextCSVParallel extends MatrixReader
 		}
 	}
 
-	private MatrixBlock computeCSVSizeAndCreateOutputMatrixBlock(
-			InputSplit[] splits, Path path, JobConf job, boolean hasHeader,
-			String delim, long estnnz) throws IOException, DMLRuntimeException 
+	private MatrixBlock computeCSVSizeAndCreateOutputMatrixBlock(InputSplit[] splits, Path path,
+			JobConf job, boolean hasHeader, String delim, long rlen, long clen, long estnnz)
+		throws IOException, DMLRuntimeException 
 	{
 		int nrow = 0;
 		int ncol = 0;
@@ -212,6 +211,21 @@ public class ReaderTextCSVParallel extends MatrixReader
 		} 
 		catch (Exception e) {
 			throw new IOException("Threadpool Error " + e.getMessage(), e);
+		}
+		
+		//robustness for wrong dimensions which are already compiled into the plan
+		if( (rlen != -1 && nrow != rlen) || (clen != -1 && ncol != clen) ) {
+			String msg = "Read matrix dimensions differ from meta data: ["+nrow+"x"+ncol+"] vs. ["+rlen+"x"+clen+"].";
+			if( rlen < nrow || clen < ncol ) {
+				//a) specified matrix dimensions too small
+				throw new DMLRuntimeException(msg);
+			}
+			else {
+				//b) specified matrix dimensions too large -> padding and warning
+				LOG.warn(msg);
+				nrow = (int) rlen;
+				ncol = (int) clen;
+			}
 		}
 		
 		// allocate target matrix block based on given size; 

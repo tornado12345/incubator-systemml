@@ -26,7 +26,7 @@ import jcuda.Pointer;
 
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
-import org.apache.sysml.api.DMLScript;
+import org.apache.sysml.conf.ConfigurationManager;
 import org.apache.sysml.runtime.DMLRuntimeException;
 import org.apache.sysml.runtime.controlprogram.caching.MatrixObject;
 import org.apache.sysml.runtime.controlprogram.context.ExecutionContext;
@@ -45,9 +45,9 @@ public class LibMatrixCuMatMult extends LibMatrixCUDA {
 
 	private static final Log LOG = LogFactory.getLog(LibMatrixCuMatMult.class.getName());
 
-	private static class CuMatMultParameters {
+	public static class CuMatMultParameters {
 		/*
-		 * For the operation, C = op(A) %*% op(B), the below parameters are used
+		 * For the operation, C = alpha * op(A) %*% op(B) + beta*C, the below parameters are used
 		 * to invoke the corresponding kernels in CuBLAS and CuSPARSE.
 		 * 
 		 * All the below values have to be valid or else this class has to throw
@@ -68,7 +68,15 @@ public class LibMatrixCuMatMult extends LibMatrixCUDA {
 		public long rightNumCols; // number of cols of B
 		private boolean isLeftTransposed; // is op(A) = t(A)
 		private boolean isRightTransposed; // is op(B) = t(B)
+		private Pointer alpha = one();
+		private Pointer beta = zero();
 
+		public CuMatMultParameters(long leftNumRows1, long leftNumCols1, long rightNumRows1, long rightNumCols1,
+				boolean isLeftTransposed1, boolean isRightTransposed1, Pointer alpha1, Pointer beta1) {
+			this(leftNumRows1, leftNumCols1, rightNumRows1, rightNumCols1, isLeftTransposed1, isRightTransposed1);
+			alpha = alpha1;
+			beta = beta1;
+		}
 		public CuMatMultParameters(long leftNumRows1, long leftNumCols1, long rightNumRows1, long rightNumCols1,
 				boolean isLeftTransposed1, boolean isRightTransposed1) {
 			leftNumRows = leftNumRows1;
@@ -161,19 +169,19 @@ public class LibMatrixCuMatMult extends LibMatrixCUDA {
 			// and output
 			CSRPointer A = left.getGPUObject(gCtx).getJcudaSparseMatrixPtr();
 			CSRPointer B = right.getGPUObject(gCtx).getJcudaSparseMatrixPtr();
-			long t0 = DMLScript.FINEGRAINED_STATISTICS ? System.nanoTime() : 0;
+			long t0 = ConfigurationManager.isFinegrainedStatistics() ? System.nanoTime() : 0;
 			CSRPointer C = CSRPointer.allocateForMatrixMultiply(gCtx, getCusparseHandle(gCtx), A, transa, B, transb,
 					params.m, params.n, params.k);
-			if (DMLScript.FINEGRAINED_STATISTICS)
+			if (ConfigurationManager.isFinegrainedStatistics())
 				GPUStatistics.maintainCPMiscTimes(instName, GPUInstruction.MISC_TIMER_SPARSE_ALLOCATE_LIB,
 						System.nanoTime() - t0);
 
 			// Step 3: Invoke the kernel
-			long t1 = DMLScript.FINEGRAINED_STATISTICS ? System.nanoTime() : 0;
+			long t1 = ConfigurationManager.isFinegrainedStatistics() ? System.nanoTime() : 0;
 			cudaSupportFunctions.cusparsecsrgemm(getCusparseHandle(gCtx), transa, transb, params.m, params.n, params.k, A.descr,
 					(int) A.nnz, A.val, A.rowPtr, A.colInd, B.descr, (int) B.nnz, B.val, B.rowPtr, B.colInd, C.descr,
 					C.val, C.rowPtr, C.colInd);
-			if (DMLScript.FINEGRAINED_STATISTICS)
+			if (ConfigurationManager.isFinegrainedStatistics())
 				GPUStatistics.maintainCPMiscTimes(instName, GPUInstruction.MISC_TIMER_SPARSE_MATRIX_SPARSE_MATRIX_LIB,
 						System.nanoTime() - t1);
 			output.getGPUObject(gCtx).setSparseMatrixCudaPointer(C);
@@ -269,7 +277,7 @@ public class LibMatrixCuMatMult extends LibMatrixCUDA {
 		// t(C) = t(B) %*% t(A)
 		Pointer output = null;
 		if (outRLen != 1 && outCLen != 1) {
-			output = gCtx.allocate(outRLen * outCLen * sizeOfDataType);
+			output = gCtx.allocate(instName, outRLen * outCLen * sizeOfDataType);
 		} else {
 			// no transpose required for vector output
 			output = C;
@@ -279,14 +287,14 @@ public class LibMatrixCuMatMult extends LibMatrixCUDA {
 		denseSparseMatMult(getCusparseHandle(gCtx), instName, output, B, A, params);
 		if (outRLen != 1 && outCLen != 1) {
 			// Transpose: C = t(output)
-			long t0 = DMLScript.FINEGRAINED_STATISTICS ? System.nanoTime() : 0;
+			long t0 = ConfigurationManager.isFinegrainedStatistics() ? System.nanoTime() : 0;
 			cudaSupportFunctions.cublasgeam(gCtx.getCublasHandle(), cublasOperation.CUBLAS_OP_T, cublasOperation.CUBLAS_OP_T,
-					toInt(outCLen), toInt(outRLen), one(), output, toInt(outRLen), zero(), new Pointer(),
+					toInt(outCLen), toInt(outRLen), params.alpha, output, toInt(outRLen), params.beta, new Pointer(),
 					toInt(outRLen), C, toInt(outCLen));
-			if (!DMLScript.EAGER_CUDA_FREE)
+			if (!gCtx.EAGER_CUDA_FREE)
 				JCuda.cudaDeviceSynchronize();
-			gCtx.cudaFreeHelper(output, DMLScript.EAGER_CUDA_FREE);
-			if (DMLScript.FINEGRAINED_STATISTICS)
+			gCtx.cudaFreeHelper(instName, output, gCtx.EAGER_CUDA_FREE);
+			if (ConfigurationManager.isFinegrainedStatistics())
 				GPUStatistics.maintainCPMiscTimes(instName, GPUInstruction.MISC_TIMER_TRANSPOSE_LIB, System.nanoTime()
 						- t0);
 		}
@@ -310,9 +318,9 @@ public class LibMatrixCuMatMult extends LibMatrixCUDA {
 	 * @param param
 	 *            BLAS parameters
 	 */
-	private static void denseSparseMatMult(cusparseHandle handle, String instName, Pointer C, Pointer A, CSRPointer B,
+	static void denseSparseMatMult(cusparseHandle handle, String instName, Pointer C, Pointer A, CSRPointer B,
 			CuMatMultParameters param) {
-		long t0 = DMLScript.FINEGRAINED_STATISTICS ? System.nanoTime() : 0;
+		long t0 = ConfigurationManager.isFinegrainedStatistics() ? System.nanoTime() : 0;
 		String kernel = GPUInstruction.MISC_TIMER_SPARSE_MATRIX_DENSE_MATRIX_LIB;
 		// Ignoring sparse vector dense matrix multiplication and dot product
 		boolean isVector = (param.leftNumRows == 1 && !param.isLeftTransposed)
@@ -322,8 +330,8 @@ public class LibMatrixCuMatMult extends LibMatrixCUDA {
 			int m = toInt(param.rightNumRows);
 			int n = toInt(param.rightNumCols);
 			int transa = reverseCusparseOp(cusparseOp(param.isLeftTransposed));
-			cudaSupportFunctions.cusparsecsrmv(handle, transa, m, n, toInt(B.nnz), one(), B.descr, B.val, B.rowPtr, B.colInd, A,
-					zero(), C);
+			cudaSupportFunctions.cusparsecsrmv(handle, transa, m, n, toInt(B.nnz), param.alpha, B.descr, B.val, B.rowPtr, B.colInd, A,
+					param.beta, C);
 			kernel = GPUInstruction.MISC_TIMER_SPARSE_MATRIX_DENSE_VECTOR_LIB;
 		} else {
 			int m = toInt(param.rightNumRows);
@@ -333,10 +341,10 @@ public class LibMatrixCuMatMult extends LibMatrixCUDA {
 			int transa = reverseCusparseOp(cusparseOp(param.isLeftTransposed));
 			int transb = cusparseOp(param.isRightTransposed);
 			LOG.debug(" GPU Sparse-Dense Matrix Multiply (rhs transpose) ");
-			cudaSupportFunctions.cusparsecsrmm2(handle, transa, transb, m, param.n, k, toInt(B.nnz), one(), B.descr, B.val,
-					B.rowPtr, B.colInd, A, param.ldb, zero(), C, param.ldc);
+			cudaSupportFunctions.cusparsecsrmm2(handle, transa, transb, m, param.n, k, toInt(B.nnz), param.alpha, B.descr, B.val,
+					B.rowPtr, B.colInd, A, param.ldb, param.beta, C, param.ldc);
 		}
-		if (DMLScript.FINEGRAINED_STATISTICS)
+		if (ConfigurationManager.isFinegrainedStatistics())
 			GPUStatistics.maintainCPMiscTimes(instName, kernel, System.nanoTime() - t0);
 	}
 
@@ -359,9 +367,9 @@ public class LibMatrixCuMatMult extends LibMatrixCUDA {
 	 * @param param
 	 *            BLAS parameters
 	 */
-	private static void denseDenseMatMult(cublasHandle handle, String instName, Pointer C, Pointer A, Pointer B,
+	static void denseDenseMatMult(cublasHandle handle, String instName, Pointer C, Pointer A, Pointer B,
 			CuMatMultParameters param) {
-		long t0 = DMLScript.FINEGRAINED_STATISTICS ? System.nanoTime() : 0;
+		long t0 = ConfigurationManager.isFinegrainedStatistics() ? System.nanoTime() : 0;
 		String kernel = null;
 		param.rowToColumnMajor();
 		param.validate();
@@ -388,22 +396,22 @@ public class LibMatrixCuMatMult extends LibMatrixCUDA {
 			transb = reverseCublasOp(transb);
 			int rightNumRows = (transb == CUSPARSE_OPERATION_TRANSPOSE) ? param.k : param.n;
 			int rightNumCols = (transb == CUSPARSE_OPERATION_TRANSPOSE) ? param.n : param.k;
-			cudaSupportFunctions.cublasgemv(handle, transb, rightNumRows, rightNumCols, one(), B, param.ldb, A, 1, zero(), C, 1);
+			cudaSupportFunctions.cublasgemv(handle, transb, rightNumRows, rightNumCols, param.alpha, B, param.ldb, A, 1, param.beta, C, 1);
 			kernel = GPUInstruction.MISC_TIMER_DENSE_VECTOR_DENSE_MATRIX_LIB;
 		} else if (param.n == 1) {
 			// Matrix-vector multiply
 			LOG.debug(" GPU Dense Matrix-Vector Multiply");
 			int leftNumRows = (transa == CUSPARSE_OPERATION_NON_TRANSPOSE) ? param.m : param.k;
 			int leftNumCols = (transa == CUSPARSE_OPERATION_NON_TRANSPOSE) ? param.k : param.m;
-			cudaSupportFunctions.cublasgemv(handle, transa, leftNumRows, leftNumCols, one(), A, param.lda, B, 1, zero(), C, 1);
+			cudaSupportFunctions.cublasgemv(handle, transa, leftNumRows, leftNumCols, param.alpha, A, param.lda, B, 1, param.beta, C, 1);
 			kernel = GPUInstruction.MISC_TIMER_DENSE_MATRIX_DENSE_VECTOR_LIB;
 		} else {
 			LOG.debug(" GPU Dense-Dense Matrix Multiply ");
-			cudaSupportFunctions.cublasgemm(handle, transa, transb, param.m, param.n, param.k, one(), A, param.lda, B, param.ldb,
-					zero(), C, param.ldc);
+			cudaSupportFunctions.cublasgemm(handle, transa, transb, param.m, param.n, param.k, param.alpha, A, param.lda, B, param.ldb,
+					param.beta, C, param.ldc);
 			kernel = GPUInstruction.MISC_TIMER_DENSE_MATRIX_DENSE_MATRIX_LIB;
 		}
-		if (DMLScript.FINEGRAINED_STATISTICS)
+		if (ConfigurationManager.isFinegrainedStatistics())
 			GPUStatistics.maintainCPMiscTimes(instName, kernel, System.nanoTime() - t0);
 	}
 

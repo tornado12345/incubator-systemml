@@ -32,6 +32,7 @@ import org.apache.commons.math3.linear.Array2DRowRealMatrix;
 import org.apache.sysml.parser.Expression.ValueType;
 import org.apache.sysml.runtime.DMLRuntimeException;
 import org.apache.sysml.runtime.instructions.cp.BooleanObject;
+import org.apache.sysml.runtime.io.FileFormatProperties;
 import org.apache.sysml.runtime.io.MatrixReader;
 import org.apache.sysml.runtime.io.MatrixReaderFactory;
 import org.apache.sysml.runtime.io.MatrixWriter;
@@ -41,7 +42,6 @@ import org.apache.sysml.runtime.matrix.MatrixCharacteristics;
 import org.apache.sysml.runtime.matrix.data.CTableMap;
 import org.apache.sysml.runtime.matrix.data.DenseBlock;
 import org.apache.sysml.runtime.matrix.data.DenseBlockFactory;
-import org.apache.sysml.runtime.matrix.data.FileFormatProperties;
 import org.apache.sysml.runtime.matrix.data.FrameBlock;
 import org.apache.sysml.runtime.matrix.data.IJV;
 import org.apache.sysml.runtime.matrix.data.InputInfo;
@@ -344,8 +344,15 @@ public class DataConverter
 		return convertToDoubleVector(mb, true);
 	}
 	
-	public static double[] convertToDoubleVector( MatrixBlock mb, boolean deep )
+	public static double[] convertToDoubleVector( MatrixBlock mb, boolean deep ) {
+		return convertToDoubleVector(mb, deep, false);
+	}
+	
+	public static double[] convertToDoubleVector( MatrixBlock mb, boolean deep, boolean allowNull )
 	{
+		if( mb.isEmpty() && allowNull )
+			return null;
+		
 		int rows = mb.getNumRows();
 		int cols = mb.getNumColumns();
 		double[] ret = (!mb.isInSparseFormat() && mb.isAllocated() && !deep) ? 

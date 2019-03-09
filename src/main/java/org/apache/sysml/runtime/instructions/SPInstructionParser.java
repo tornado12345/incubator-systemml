@@ -51,7 +51,7 @@ import org.apache.sysml.runtime.instructions.spark.CastSPInstruction;
 import org.apache.sysml.runtime.instructions.spark.CentralMomentSPInstruction;
 import org.apache.sysml.runtime.instructions.spark.CheckpointSPInstruction;
 import org.apache.sysml.runtime.instructions.spark.CompressionSPInstruction;
-import org.apache.sysml.runtime.instructions.spark.ConvolutionSPInstruction;
+import org.apache.sysml.runtime.instructions.spark.DnnSPInstruction;
 import org.apache.sysml.runtime.instructions.spark.CovarianceSPInstruction;
 import org.apache.sysml.runtime.instructions.spark.CpmmSPInstruction;
 import org.apache.sysml.runtime.instructions.spark.CumulativeAggregateSPInstruction;
@@ -73,6 +73,7 @@ import org.apache.sysml.runtime.instructions.spark.ReorgSPInstruction;
 import org.apache.sysml.runtime.instructions.spark.RmmSPInstruction;
 import org.apache.sysml.runtime.instructions.spark.SPInstruction;
 import org.apache.sysml.runtime.instructions.spark.SPInstruction.SPType;
+import org.apache.sysml.runtime.util.UtilFunctions;
 import org.apache.sysml.runtime.instructions.spark.SpoofSPInstruction;
 import org.apache.sysml.runtime.instructions.spark.CtableSPInstruction;
 import org.apache.sysml.runtime.instructions.spark.Tsmm2SPInstruction;
@@ -138,10 +139,10 @@ public class SPInstructionParser extends InstructionParser
 		String2SPInstructionType.put( "tack+*"     , SPType.AggregateTernary);
 
 		// Neural network operators
-		String2SPInstructionType.put( "conv2d",                 SPType.Convolution);
-		String2SPInstructionType.put( "conv2d_bias_add", SPType.Convolution);
-		String2SPInstructionType.put( "maxpooling",             SPType.Convolution);
-		String2SPInstructionType.put( "relu_maxpooling",          SPType.Convolution);
+		String2SPInstructionType.put( "conv2d",                 SPType.Dnn);
+		String2SPInstructionType.put( "conv2d_bias_add", SPType.Dnn);
+		String2SPInstructionType.put( "maxpooling",             SPType.Dnn);
+		String2SPInstructionType.put( "relu_maxpooling",          SPType.Dnn);
 		
 		String2SPInstructionType.put( RightIndex.OPCODE, SPType.MatrixIndexing);
 		String2SPInstructionType.put( LeftIndex.OPCODE, SPType.MatrixIndexing);
@@ -262,8 +263,12 @@ public class SPInstructionParser extends InstructionParser
 		String2SPInstructionType.put( "rappend", SPType.RAppend);
 		String2SPInstructionType.put( "gappend", SPType.GAppend);
 		String2SPInstructionType.put( "galignedappend", SPType.GAlignedAppend);
+		
 		String2SPInstructionType.put( "cbind", SPType.BuiltinNary);
 		String2SPInstructionType.put( "rbind", SPType.BuiltinNary);
+		String2SPInstructionType.put( "nmin",  SPType.BuiltinNary);
+		String2SPInstructionType.put( "nmax",  SPType.BuiltinNary);
+		
 		
 		String2SPInstructionType.put( DataGen.RAND_OPCODE  , SPType.Rand);
 		String2SPInstructionType.put( DataGen.SEQ_OPCODE   , SPType.Rand);
@@ -293,10 +298,12 @@ public class SPInstructionParser extends InstructionParser
 		//cumsum/cumprod/cummin/cummax
 		String2SPInstructionType.put( "ucumack+"  , SPType.CumsumAggregate);
 		String2SPInstructionType.put( "ucumac*"   , SPType.CumsumAggregate);
+		String2SPInstructionType.put( "ucumac+*"  , SPType.CumsumAggregate);
 		String2SPInstructionType.put( "ucumacmin" , SPType.CumsumAggregate);
 		String2SPInstructionType.put( "ucumacmax" , SPType.CumsumAggregate);
 		String2SPInstructionType.put( "bcumoffk+" , SPType.CumsumOffset);
 		String2SPInstructionType.put( "bcumoff*"  , SPType.CumsumOffset);
+		String2SPInstructionType.put( "bcumoff+*" , SPType.CumsumOffset);
 		String2SPInstructionType.put( "bcumoffmin", SPType.CumsumOffset);
 		String2SPInstructionType.put( "bcumoffmax", SPType.CumsumOffset);
 
@@ -348,7 +355,7 @@ public class SPInstructionParser extends InstructionParser
 			case TSMM:
 				return TsmmSPInstruction.parseInstruction(str);
 			case TSMM2:
-				return Tsmm2SPInstruction.parseInstruction(str);	
+				return Tsmm2SPInstruction.parseInstruction(str);
 			case PMM:
 				return PmmSPInstruction.parseInstruction(str);
 			case ZIPMM:
@@ -366,8 +373,8 @@ public class SPInstructionParser extends InstructionParser
 			case AggregateTernary:
 				return AggregateTernarySPInstruction.parseInstruction(str);
 				
-			case Convolution:
-				 return ConvolutionSPInstruction.parseInstruction(str);
+			case Dnn:
+				 return DnnSPInstruction.parseInstruction(str);
 
 			case MatrixIndexing:
 				return IndexingSPInstruction.parseInstruction(str);
@@ -399,12 +406,15 @@ public class SPInstructionParser extends InstructionParser
 			case Builtin: 
 				parts = InstructionUtils.getInstructionPartsWithValueType(str);
 				if ( parts[0].equals("log") || parts[0].equals("log_nz") ) {
-					if ( parts.length == 3 ) {
+					if ( parts.length == 3 || (parts.length == 5 &&
+							UtilFunctions.isIntegerNumber(parts[3])) ) {
 						// B=log(A), y=log(x)
 						return UnaryMatrixSPInstruction.parseInstruction(str);
 					} else if ( parts.length == 4 ) {
 						// B=log(A,10), y=log(x,10)
 						return BinarySPInstruction.parseInstruction(str);
+					} else {
+						throw new DMLRuntimeException("Error parsing the instruction: " + str);
 					}
 				}
 				else {

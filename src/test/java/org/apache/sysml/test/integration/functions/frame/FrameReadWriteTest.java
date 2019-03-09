@@ -24,11 +24,11 @@ import java.io.IOException;
 import org.apache.sysml.conf.CompilerConfig;
 import org.apache.sysml.conf.ConfigurationManager;
 import org.apache.sysml.parser.Expression.ValueType;
+import org.apache.sysml.runtime.io.FileFormatPropertiesCSV;
 import org.apache.sysml.runtime.io.FrameReader;
 import org.apache.sysml.runtime.io.FrameReaderFactory;
 import org.apache.sysml.runtime.io.FrameWriter;
 import org.apache.sysml.runtime.io.FrameWriterFactory;
-import org.apache.sysml.runtime.matrix.data.CSVFileFormatProperties;
 import org.apache.sysml.runtime.matrix.data.FrameBlock;
 import org.apache.sysml.runtime.matrix.data.OutputInfo;
 import org.apache.sysml.runtime.util.MapReduceTool;
@@ -36,7 +36,6 @@ import org.apache.sysml.runtime.util.UtilFunctions;
 import org.apache.sysml.test.integration.AutomatedTestBase;
 import org.apache.sysml.test.integration.TestConfiguration;
 import org.apache.sysml.test.utils.TestUtils;
-import org.junit.Assert;
 import org.junit.Test;
 
 public class FrameReadWriteTest extends AutomatedTestBase
@@ -156,6 +155,9 @@ public class FrameReadWriteTest extends AutomatedTestBase
 	 */
 	private void runFrameReadWriteTest( OutputInfo oinfo, ValueType[] schema1, ValueType[] schema2, boolean parallel)
 	{
+		if(shouldSkipTest())
+			return;
+		
 		boolean oldParText = CompilerConfig.FLAG_PARREADWRITE_TEXT;
 		boolean oldParBin = CompilerConfig.FLAG_PARREADWRITE_BINARY;
 		
@@ -179,7 +181,7 @@ public class FrameReadWriteTest extends AutomatedTestBase
 			initFrameData(frame2, B, schema2);
 			
 			//Write frame data to disk
-			CSVFileFormatProperties fprop = new CSVFileFormatProperties();			
+			FileFormatPropertiesCSV fprop = new FileFormatPropertiesCSV();			
 			fprop.setDelim(DELIMITER);
 			fprop.setHeader(HEADER);
 			
@@ -213,12 +215,12 @@ public class FrameReadWriteTest extends AutomatedTestBase
 		for ( int i=0; i<frame1.getNumRows(); i++ )
 			for( int j=0; j<lschema.length; j++ )	{
 				if( UtilFunctions.compareTo(lschema[j], frame1.get(i, j), frame2.get(i, j)) != 0)
-					Assert.fail("Target value for cell ("+ i + "," + j + ") is " + frame1.get(i,  j) + 
+					fail("Target value for cell ("+ i + "," + j + ") is " + frame1.get(i,  j) + 
 							", is not same as original value " + frame2.get(i, j));
 			}
 	}
 	
-	void writeAndVerifyData(OutputInfo oinfo, FrameBlock frame1, FrameBlock frame2, CSVFileFormatProperties fprop)
+	void writeAndVerifyData(OutputInfo oinfo, FrameBlock frame1, FrameBlock frame2, FileFormatPropertiesCSV fprop)
 		throws IOException
 	{
 		String fname1 = SCRIPT_DIR + TEST_DIR + "/frameData1";

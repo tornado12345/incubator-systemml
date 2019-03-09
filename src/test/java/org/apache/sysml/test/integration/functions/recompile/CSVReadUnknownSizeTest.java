@@ -21,11 +21,10 @@ package org.apache.sysml.test.integration.functions.recompile;
 
 import java.util.HashMap;
 import org.junit.Test;
-
 import org.apache.sysml.hops.OptimizerUtils;
 import org.apache.sysml.parser.Expression.ValueType;
+import org.apache.sysml.runtime.io.FileFormatPropertiesCSV;
 import org.apache.sysml.runtime.matrix.MatrixCharacteristics;
-import org.apache.sysml.runtime.matrix.data.CSVFileFormatProperties;
 import org.apache.sysml.runtime.matrix.data.MatrixBlock;
 import org.apache.sysml.runtime.matrix.data.OutputInfo;
 import org.apache.sysml.runtime.matrix.data.MatrixValue.CellIndex;
@@ -93,6 +92,9 @@ public class CSVReadUnknownSizeTest extends AutomatedTestBase {
 	 */
 	private void runCSVReadUnknownSizeTest( boolean splitDags, boolean rewrites )
 	{	
+		if(shouldSkipTest())
+			return;
+		
 		boolean oldFlagSplit = OptimizerUtils.ALLOW_SPLIT_HOP_DAGS;
 		boolean oldFlagRewrites = OptimizerUtils.ALLOW_ALGEBRAIC_SIMPLIFICATION;
 		
@@ -114,7 +116,7 @@ public class CSVReadUnknownSizeTest extends AutomatedTestBase {
 			double[][] X = getRandomMatrix(rows, cols, -1, 1, 1.0d, 7);
 			MatrixBlock mb = DataConverter.convertToMatrixBlock(X);
 			MatrixCharacteristics mc = new MatrixCharacteristics(rows, cols, 1000, 1000);
-			CSVFileFormatProperties fprop = new CSVFileFormatProperties();			
+			FileFormatPropertiesCSV fprop = new FileFormatPropertiesCSV();			
 			DataConverter.writeMatrixToHDFS(mb, input("X"), OutputInfo.CSVOutputInfo, mc, -1, fprop);
 			mc.set(-1, -1, -1, -1);
 			MapReduceTool.writeMetaDataFile(input("X.mtd"), ValueType.DOUBLE, mc, OutputInfo.CSVOutputInfo, fprop);

@@ -99,6 +99,7 @@ public class LibMatrixAgg
 		CUM_MIN,
 		CUM_MAX,
 		CUM_PROD,
+		CUM_SUM_PROD,
 		MIN,
 		MAX,
 		MEAN,
@@ -282,6 +283,10 @@ public class LibMatrixAgg
 	}
 
 	public static MatrixBlock cumaggregateUnaryMatrix(MatrixBlock in, MatrixBlock out, UnaryOperator uop) {
+		return cumaggregateUnaryMatrix(in, out, uop, null);
+	}
+	
+	public static MatrixBlock cumaggregateUnaryMatrix(MatrixBlock in, MatrixBlock out, UnaryOperator uop, double[] agg) {
 		//prepare meta data 
 		AggType aggtype = getAggType(uop);
 		final int m = in.rlen;
@@ -289,20 +294,27 @@ public class LibMatrixAgg
 		final int n2 = out.clen;
 		
 		//filter empty input blocks (incl special handling for sparse-unsafe operations)
-		if( in.isEmptyBlock(false) ){
+		if( in.isEmpty() && (agg == null || aggtype == AggType.CUM_SUM_PROD) ) {
 			return aggregateUnaryMatrixEmpty(in, out, aggtype, null);
 		}
 		
 		//allocate output arrays (if required)
-		out.reset(m2, n2, false); //always dense
-		out.allocateDenseBlock();
+		if( !uop.isInplace() || in.isInSparseFormat() || in.isEmpty() ) {
+			out.reset(m2, n2, false); //always dense
+			out.allocateDenseBlock();
+			if( in.isEmpty() )
+				in.allocateBlock();
+		}
+		else {
+			out = in;
+		}
 		
 		//Timing time = new Timing(true);
 		
 		if( !in.sparse )
-			cumaggregateUnaryMatrixDense(in, out, aggtype, uop.fn, null, 0, m);
+			cumaggregateUnaryMatrixDense(in, out, aggtype, uop.fn, agg, 0, m);
 		else
-			cumaggregateUnaryMatrixSparse(in, out, aggtype, uop.fn, null, 0, m);
+			cumaggregateUnaryMatrixSparse(in, out, aggtype, uop.fn, agg, 0, m);
 		
 		//cleanup output and change representation (if necessary)
 		out.recomputeNonZeros();
@@ -330,15 +342,20 @@ public class LibMatrixAgg
 		final int mk = aggtype==AggType.CUM_KAHAN_SUM?2:1;
 		
 		//filter empty input blocks (incl special handling for sparse-unsafe operations)
-		if( in.isEmptyBlock(false) ){
+		if( in.isEmpty() ){
 			return aggregateUnaryMatrixEmpty(in, out, aggtype, null);
-		}	
+		}
 
 		//Timing time = new Timing(true);
 		
 		//allocate output arrays (if required)
-		out.reset(m2, n2, false); //always dense
-		out.allocateDenseBlock();
+		if( !uop.isInplace() || in.isInSparseFormat() || in.isEmpty() ) {
+			out.reset(m2, n2, false); //always dense
+			out.allocateDenseBlock();
+		}
+		else {
+			out = in;
+		}
 		
 		//core multi-threaded unary aggregate computation
 		//(currently: always parallelization over number of rows)
@@ -625,23 +642,19 @@ public class LibMatrixAgg
 		return AggType.INVALID;
 	}
 
-	private static AggType getAggType( UnaryOperator op )
-	{
+	private static AggType getAggType( UnaryOperator op ) {
 		ValueFunction vfn = op.fn;
-
-		//cumsum/cumprod/cummin/cummax
 		if( vfn instanceof Builtin ) {
 			BuiltinCode bfunc = ((Builtin) vfn).bFunc;
-			switch( bfunc )
-			{
-				case CUMSUM: 	return AggType.CUM_KAHAN_SUM;
-				case CUMPROD:	return AggType.CUM_PROD;
-				case CUMMIN:	return AggType.CUM_MIN;
-				case CUMMAX: 	return AggType.CUM_MAX;
-				default: 		return AggType.INVALID;
+			switch( bfunc ) {
+				case CUMSUM:     return AggType.CUM_KAHAN_SUM;
+				case CUMPROD:    return AggType.CUM_PROD;
+				case CUMMIN:     return AggType.CUM_MIN;
+				case CUMMAX:     return AggType.CUM_MAX;
+				case CUMSUMPROD: return AggType.CUM_SUM_PROD;
+				default:         return AggType.INVALID;
 			}
 		}
-		
 		return AggType.INVALID;
 	}
 
@@ -1318,7 +1331,7 @@ public class LibMatrixAgg
 			case MAX_INDEX: {
 				double init = Double.NEGATIVE_INFINITY;
 				if( ixFn instanceof ReduceCol ) //ROWINDEXMAX
-					d_uarimxx(a, c, n, init, (Builtin)vFn, rl, ru);
+					d_uarimax(a, c, n, init, (Builtin)vFn, rl, ru);
 				break;
 			}
 			case MIN_INDEX: {
@@ -1424,7 +1437,7 @@ public class LibMatrixAgg
 			case MAX_INDEX: {
 				double init = Double.NEGATIVE_INFINITY;
 				if( ixFn instanceof ReduceCol ) //ROWINDEXMAX
-					s_uarimxx(a, c, n, init, (Builtin)vFn, rl, ru);
+					s_uarimax(a, c, n, init, (Builtin)vFn, rl, ru);
 				break;
 			}
 			case MIN_INDEX: {
@@ -1481,6 +1494,12 @@ public class LibMatrixAgg
 				KahanObject kbuff = new KahanObject(0, 0);
 				KahanPlus kplus = KahanPlus.getKahanPlusFnObject();
 				d_ucumkp(da, agg, dc, n, kbuff, kplus, rl, ru);
+				break;
+			}
+			case CUM_SUM_PROD: { //CUMSUMPROD
+				if( n != 2 )
+					throw new DMLRuntimeException("Cumsumprod expects two-column input (n="+n+").");
+				d_ucumkpp(da, agg, dc, rl, ru);
 				break;
 			}
 			case CUM_PROD: { //CUMPROD
@@ -1762,6 +1781,29 @@ public class LibMatrixAgg
 	}
 	
 	/**
+	 * CUMSUMPROD, opcode: ucumk+*, dense input.
+	 * 
+	 * @param a ?
+	 * @param agg ?
+	 * @param c ?
+	 * @param n ?
+	 * @param kbuff ?
+	 * @param kplus ?
+	 * @param rl row lower index
+	 * @param ru row upper index
+	 */
+	private static void d_ucumkpp( DenseBlock a, double[] agg, DenseBlock c, int rl, int ru ) {
+		//init current row sum/correction arrays w/ neutral 0
+		double sum = (agg != null) ? agg[0] : 0;
+		//scan once and compute prefix sums
+		double[] avals = a.valuesAt(0);
+		double[] cvals = c.valuesAt(0);
+		for( int i=rl, ix=rl*2; i<ru; i++, ix+=2 ) {
+			sum = cvals[i] = avals[ix] + avals[ix+1] * sum;
+		}
+	}
+	
+	/**
 	 * CUMPROD, opcode: ucum*, dense input.
 	 * 
 	 * @param a ?
@@ -1899,7 +1941,9 @@ public class LibMatrixAgg
 	 * @param rl row lower index
 	 * @param ru row upper index
 	 */
-	private static void d_uarimxx( DenseBlock a, DenseBlock c, int n, double init, Builtin builtin, int rl, int ru ) {
+	private static void d_uarimax( DenseBlock a, DenseBlock c, int n, double init, Builtin builtin, int rl, int ru ) {
+		if( n <= 0 )
+			throw new DMLRuntimeException("rowIndexMax undefined for ncol="+n);
 		for( int i=rl; i<ru; i++ ) {
 			int maxindex = indexmax(a.values(i), a.pos(i), init, n, builtin);
 			c.set(i, 0, (double)maxindex + 1);
@@ -1919,6 +1963,8 @@ public class LibMatrixAgg
 	 * @param ru row upper index
 	 */
 	private static void d_uarimin( DenseBlock a, DenseBlock c, int n, double init, Builtin builtin, int rl, int ru ) {
+		if( n <= 0 )
+			throw new DMLRuntimeException("rowIndexMin undefined for ncol="+n);
 		for( int i=rl; i<ru; i++ ) {
 			int minindex = indexmin(a.values(i), a.pos(i), init, n, builtin);
 			c.set(i, 0, (double)minindex + 1);
@@ -2533,7 +2579,9 @@ public class LibMatrixAgg
 	 * @param rl row lower index
 	 * @param ru row upper index
 	 */
-	private static void s_uarimxx( SparseBlock a, DenseBlock c, int n, double init, Builtin builtin, int rl, int ru ) {
+	private static void s_uarimax( SparseBlock a, DenseBlock c, int n, double init, Builtin builtin, int rl, int ru ) {
+		if( n <= 0 )
+			throw new DMLRuntimeException("rowIndexMax is undefined for ncol="+n);
 		for( int i=rl; i<ru; i++ ) {
 			if( !a.isEmpty(i) ) {
 				int apos = a.pos(i);
@@ -2574,6 +2622,8 @@ public class LibMatrixAgg
 	 * @param ru row upper index
 	 */
 	private static void s_uarimin( SparseBlock a, DenseBlock c, int n, double init, Builtin builtin, int rl, int ru ) {
+		if( n <= 0 )
+			throw new DMLRuntimeException("rowIndexMin is undefined for ncol="+n);
 		for( int i=rl; i<ru; i++ ) {
 			if( !a.isEmpty(i) ) {
 				int apos = a.pos(i);
@@ -2910,7 +2960,7 @@ public class LibMatrixAgg
 			corr[pos1+i] = kbuff._correction;
 		}
 	}
-
+	
 	private static void sumAgg(double[] a, DenseBlock c, int[] aix, int ai, final int len, final int n, KahanObject kbuff, KahanFunction kplus) {
 		//note: output might span multiple physical blocks
 		double[] sum = c.values(0);
@@ -2925,7 +2975,7 @@ public class LibMatrixAgg
 			corr[pos1+ix] = kbuff._correction;
 		}
 	}
-
+	
 	private static double product( double[] a, int ai, final int len ) {
 		double val = 1;
 		if( NAN_AWARENESS ) {
@@ -3085,7 +3135,8 @@ public class LibMatrixAgg
 			maxindex = (a[i]>=maxval) ? i-ai : maxindex;
 			maxval = (a[i]>=maxval) ? a[i] : maxval;
 		}
-		return maxindex;
+		//note: robustness for all-NaN rows
+		return Math.max(maxindex, 0);
 	}
 
 	private static int indexmin( double[] a, int ai, final double init, final int len, Builtin aggop ) {
@@ -3095,7 +3146,8 @@ public class LibMatrixAgg
 			minindex = (a[i]<=minval) ? i-ai : minindex;
 			minval = (a[i]<=minval) ? a[i] : minval;
 		}
-		return minindex;
+		//note: robustness for all-NaN rows
+		return Math.max(minindex, 0);
 	}
 
 	public static void countAgg( double[] a, int[] c, int[] aix, int ai, final int len ) {
@@ -3113,6 +3165,24 @@ public class LibMatrixAgg
 			c[ aix[ i+5 ] ] ++;
 			c[ aix[ i+6 ] ] ++;
 			c[ aix[ i+7 ] ] ++;
+		}
+	}
+	
+	public static void countAgg( double[] a, int[] c, int ai, final int len ) {
+		final int bn = len%8;
+		//compute rest, not aligned to 8-block
+		for( int i=0; i<bn; i++ )
+			c[i] += a[ai+i]!=0 ? 1 : 0;
+		//unrolled 8-block (for better instruction level parallelism)
+		for( int i=bn; i<len; i+=8 ) {
+			c[i+0] += a[ai+i+0]!=0 ? 1 : 0;
+			c[i+1] += a[ai+i+1]!=0 ? 1 : 0;
+			c[i+2] += a[ai+i+2]!=0 ? 1 : 0;
+			c[i+3] += a[ai+i+3]!=0 ? 1 : 0;
+			c[i+4] += a[ai+i+4]!=0 ? 1 : 0;
+			c[i+5] += a[ai+i+5]!=0 ? 1 : 0;
+			c[i+6] += a[ai+i+6]!=0 ? 1 : 0;
+			c[i+7] += a[ai+i+7]!=0 ? 1 : 0;
 		}
 	}
 	

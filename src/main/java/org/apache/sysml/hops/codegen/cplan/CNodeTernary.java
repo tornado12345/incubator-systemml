@@ -19,6 +19,8 @@
 
 package org.apache.sysml.hops.codegen.cplan;
 
+import java.util.Arrays;
+
 import org.apache.sysml.parser.Expression.DataType;
 import org.apache.sysml.runtime.util.UtilFunctions;
 
@@ -27,15 +29,12 @@ public class CNodeTernary extends CNode
 {
 	public enum TernaryType {
 		PLUS_MULT, MINUS_MULT,
+		BIASADD, BIASMULT,
 		REPLACE, REPLACE_NAN, IFELSE,
 		LOOKUP_RC1, LOOKUP_RVECT1;
 		
-		
 		public static boolean contains(String value) {
-			for( TernaryType tt : values()  )
-				if( tt.name().equals(value) )
-					return true;
-			return false;
+			return Arrays.stream(values()).anyMatch(tt -> tt.name().equals(value));
 		}
 		
 		public String getTemplate(boolean sparse) {
@@ -45,7 +44,13 @@ public class CNodeTernary extends CNode
 				
 				case MINUS_MULT:
 					return "    double %TMP% = %IN1% - %IN2% * %IN3%;\n";
-					
+				
+				case BIASADD:
+					return "    double %TMP% = %IN1% + getValue(%IN2%, cix/%IN3%);\n";
+				
+				case BIASMULT:
+					return "    double %TMP% = %IN1% * getValue(%IN2%, cix/%IN3%);\n";
+				
 				case REPLACE:
 					return "    double %TMP% = (%IN1% == %IN2% || (Double.isNaN(%IN1%) "
 							+ "&& Double.isNaN(%IN2%))) ? %IN3% : %IN1%;\n";
@@ -129,6 +134,8 @@ public class CNodeTernary extends CNode
 		switch(_type) {
 			case PLUS_MULT:     return "t(+*)";
 			case MINUS_MULT:    return "t(-*)";
+			case BIASADD:       return "t(bias+)";
+			case BIASMULT:      return "t(bias*)";
 			case REPLACE:
 			case REPLACE_NAN:   return "t(rplc)";
 			case IFELSE:        return "t(ifelse)";
@@ -143,6 +150,8 @@ public class CNodeTernary extends CNode
 		switch(_type) {
 			case PLUS_MULT: 
 			case MINUS_MULT:
+			case BIASADD:
+			case BIASMULT:
 			case REPLACE:
 			case REPLACE_NAN:
 			case IFELSE:
