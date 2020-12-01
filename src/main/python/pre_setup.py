@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 #-------------------------------------------------------------
 #
 # Licensed to the Apache Software Foundation (ASF) under one
@@ -22,21 +23,46 @@
 import os
 import shutil
 import fnmatch
-python_dir = 'systemml'
-java_dir='systemml-java'
-java_dir_full_path = os.path.join(python_dir, java_dir)
+from zipfile import ZipFile
+
+this_path = os.path.dirname(os.path.realpath(__file__))
+python_dir = 'systemds'
+java_dir = 'systemds-java'
+java_dir_full_path = os.path.join(this_path, python_dir, java_dir)
 if os.path.exists(java_dir_full_path):
     shutil.rmtree(java_dir_full_path, True)
-os.mkdir(java_dir_full_path)
-root_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.getcwd())))
+root_dir = os.path.dirname(os.path.dirname(os.path.dirname(this_path)))
+
+# temporary directory for unzipping of bin zip
+TMP_DIR = os.path.join(this_path, 'tmp')
+if os.path.exists(TMP_DIR):
+    shutil.rmtree(TMP_DIR, True)
+os.mkdir(TMP_DIR)
+
+SYSTEMDS_BIN = 'systemds-*-SNAPSHOT-bin.zip'
 for file in os.listdir(os.path.join(root_dir, 'target')):
-    if (fnmatch.fnmatch(file, 'systemml-*-SNAPSHOT.jar') or fnmatch.fnmatch(file, 'systemml-*.jar')
-            and not (fnmatch.fnmatch(file, 'systemml-*javadoc.jar')
-                  or fnmatch.fnmatch(file, 'systemml-*sources.jar')
-                  or fnmatch.fnmatch(file, 'systemml-*standalone.jar')
-                  or fnmatch.fnmatch(file, 'systemml-*lite.jar'))):
-        shutil.copyfile(os.path.join(root_dir, 'target', file),
-                        os.path.join(java_dir_full_path, file))
-    if fnmatch.fnmatch(file, 'systemml-*-SNAPSHOT-extra.jar') or fnmatch.fnmatch(file, 'systemml-*-extra.jar'):
-        shutil.copyfile(os.path.join(root_dir, 'target', file),
-                        os.path.join(java_dir_full_path, file))
+    if fnmatch.fnmatch(file, SYSTEMDS_BIN):
+        new_path = os.path.join(TMP_DIR, file)
+        shutil.copyfile(os.path.join(root_dir, 'target', file), new_path)
+        extract_dir = os.path.join(TMP_DIR)
+        with ZipFile(new_path, 'r') as zip:
+            for f in zip.namelist():
+                split_path = os.path.split(os.path.dirname(f))
+                if split_path[1] == 'lib':
+                    zip.extract(f, TMP_DIR)
+        unzipped_dir_name = file.rsplit('.', 1)[0]
+        shutil.copytree(os.path.join(TMP_DIR, unzipped_dir_name), java_dir_full_path)
+        if os.path.exists(TMP_DIR):
+            shutil.rmtree(TMP_DIR, True)
+
+root_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.getcwd())))
+shutil.copyfile(os.path.join(root_dir, 'LICENSE'), 'LICENSE')
+shutil.copyfile(os.path.join(root_dir, 'NOTICE'), 'NOTICE')
+
+# delete old build and dist path
+build_path = os.path.join(this_path, 'build')
+if os.path.exists(build_path):
+    shutil.rmtree(build_path, True)
+dist_path = os.path.join(this_path, 'dist')
+if os.path.exists(dist_path):
+    shutil.rmtree(dist_path, True)

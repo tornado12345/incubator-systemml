@@ -7,9 +7,9 @@
 # to you under the Apache License, Version 2.0 (the
 # "License"); you may not use this file except in compliance
 # with the License.  You may obtain a copy of the License at
-# 
+#
 #   http://www.apache.org/licenses/LICENSE-2.0
-# 
+#
 # Unless required by applicable law or agreed to in writing,
 # software distributed under the License is distributed on an
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
@@ -41,7 +41,7 @@
 # $Yt = location to store generated test category labels
 #
 # Example:
-# hadoop jar SystemML.jar -f genRandData4LogReg_LTstats.dml -nvargs
+# hadoop jar SystemDS.jar -f genRandData4LogReg_LTstats.dml -nvargs
 #     N=1000000 Nt=1000 nf=20 nc=3 Xmin=0.0 Xmax=1.0 spars=1.0 avgLTmin=3.0 avgLTmax=5.0 stdLT=1.25
 #     iceptmin=1.0 iceptmax=1.0 B=./B123 X=./X123 Y=./Y123 Xt=./Xt123 Yt=./Yt123
 

@@ -24,57 +24,36 @@
 		<artifactId>apache</artifactId>
 		<version>18</version>
 	</parent>
-	<groupId>org.apache.systemml</groupId>
-	<version>1.3.0-SNAPSHOT</version>
-	<artifactId>systemml</artifactId>
+	<groupId>org.apache.systemds</groupId>
+	<version>2.1.0-SNAPSHOT</version>
+	<artifactId>systemds</artifactId>
 	<packaging>jar</packaging>
-	<name>SystemML</name>
-	<description>Declarative Machine Learning</description>
-	<url>http://systemml.apache.org/</url>
+	<name>SystemDS</name>
+	<url>https://github.com/apache/systemds</url>
+	<description>Declarative End-to-End Data Science</description>
 	<licenses>
 		<license>
 			<name>Apache 2.0 License</name>
 			<url>http://www.apache.org/licenses/LICENSE-2.0.html</url>
 		</license>
 	</licenses>
-	<scm>
-		<connection>scm:git:git@github.com:apache/systemml</connection>
-		<developerConnection>scm:git:https://git-wip-us.apache.org/repos/asf/systemml</developerConnection>
-		<url>https://git-wip-us.apache.org/repos/asf?p=systemml.git</url>
-		<tag>HEAD</tag>
-	</scm>
-	<issueManagement>
-		<system>JIRA</system>
-		<url>https://issues.apache.org/jira/browse/SYSTEMML</url>
-	</issueManagement>
-	<mailingLists>
-		<mailingList>
-			<name>Dev Mailing List</name>
-			<post>dev@systemml.apache.org</post>
-			<subscribe>dev-subscribe@systemml.apache.org</subscribe>
-			<unsubscribe>dev-unsubscribe@systemml.apache.org</unsubscribe>
-		</mailingList>
-		<mailingList>
-			<name>Commits Mailing List</name>
-			<post>commits@systemml.apache.org</post>
-			<subscribe>commits-subscribe@systemml.apache.org</subscribe>
-			<unsubscribe>commits-unsubscribe@systemml.apache.org</unsubscribe>
-		</mailingList>
-	</mailingLists>
 
 	<properties>
-		<hadoop.version>2.7.7</hadoop.version>
+		<hadoop.version>2.6.0</hadoop.version>
 		<antlr.version>4.5.3</antlr.version>
 		<spark.version>2.1.0</spark.version>
 		<scala.version>2.11.8</scala.version>
 		<scala.binary.version>2.11</scala.binary.version>
-		<scala.test.version>2.2.6</scala.test.version>
 		<maven.build.timestamp.format>yyyy-MM-dd HH:mm:ss z</maven.build.timestamp.format>
 		<enableGPU>false</enableGPU>
 		<jcuda.scope>provided</jcuda.scope>
-		<jcuda.version>0.9.0d</jcuda.version>
-		<!-- OS-specific JVM arguments for running integration tests -->
-		<integrationTestExtraJVMArgs />
+		<jcuda.version>10.2.0</jcuda.version>
+		<!-->Testing settings<!-->
+		<maven.test.skip>true</maven.test.skip>
+		<jacoco.skip>true</jacoco.skip>
+		<automatedtestbase.outputbuffering>false</automatedtestbase.outputbuffering>
+		<argLine>-Xms4g -Xmx4g -Xmn400m</argLine>
+		<enableStats>false</enableStats>
 	</properties>
 
 	<repositories>
@@ -87,10 +66,13 @@
 		</repository>
 	</repositories>
 
-	<build>
+	<scm>
+		<developerConnection>scm:git:https://github.com/apache/systemds.git</developerConnection>
+	  <tag>HEAD</tag>
+  </scm>
 
-		<!-- Adds scripts to main jar, in-memory jar, sources jar, and standalone 
-			jar -->
+	<build>
+		<!-- Adds scripts to main jar, in-memory jar, sources jar, and standalone jar -->
 		<resources>
 			<resource>
 				<directory>scripts</directory>
@@ -101,21 +83,34 @@
 					<exclude>staging/**/*</exclude>
 					<exclude>nn/test/compare_backends/*</exclude>
 					<exclude>nn/test/compare_backends/*</exclude>
-					<exclude>nn/examples/caffe2dml/**/*</exclude>
-					<!-- <exclude>*.sh</exclude> --> <!-- applies to sparkDML.sh -->
 				</excludes>
 				<targetPath>scripts</targetPath>
 			</resource>
 			<resource>
-				<directory>src/main/cpp/kernels</directory>
-				<excludes>
-					<exclude>*.cu</exclude>
-				</excludes>
-				<targetPath>kernels</targetPath>
+				<directory>src/main/cuda/kernels</directory>
+				<includes>
+					<include>SystemDS.ptx</include>
+					<include>reduction.ptx</include>
+				</includes>
+				<targetPath>cuda/kernels</targetPath>
 			</resource>
 			<resource>
 				<directory>src/main/cpp/lib</directory>
 				<targetPath>lib</targetPath>
+			</resource>
+			<resource>
+				<directory>src/main/cuda/spoof</directory>
+				<targetPath>cuda/spoof</targetPath>
+			</resource>
+			<resource>
+				<directory>src/main/cuda/headers</directory>
+				<includes>
+					<include>agg_ops.cuh</include>
+					<include>reduction.cuh</include>
+					<include>spoof_utils.cuh</include>
+					<include>utils.cuh</include>
+				</includes>
+				<targetPath>cuda/headers</targetPath>
 			</resource>
 		</resources>
 
@@ -158,7 +153,7 @@
 				</executions>
 			</plugin>
 
-			<!-- PLEASE DO NOT REMOVE! NEEDED to "PACKAGE" ANTLR RUNTIME INTO SYSTEMML.JAR -->
+			<!-- PLEASE DO NOT REMOVE! NEEDED to "PACKAGE" ANTLR RUNTIME INTO SYSTEMDS.JAR -->
 			<plugin>
 				<groupId>org.apache.maven.plugins</groupId>
 				<artifactId>maven-shade-plugin</artifactId>
@@ -176,14 +171,31 @@
 									<include>org.antlr:antlr4-runtime:*</include>
 								</includes>
 							</artifactSet>
+							<transformers>
+								<transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
+									<mainClass>org.apache.sysds.api.DMLScript</mainClass>
+								</transformer>
+								<transformer implementation="org.apache.maven.plugins.shade.resource.ApacheLicenseResourceTransformer">
+								</transformer>
+								<transformer implementation="org.apache.maven.plugins.shade.resource.IncludeResourceTransformer">
+									<resource>META-INF/LICENSE</resource>
+									<file>src/assembly/bin/LICENSE</file>
+								</transformer>
+								<transformer implementation="org.apache.maven.plugins.shade.resource.IncludeResourceTransformer">
+									<resource>META-INF/NOTICE</resource>
+									<file>NOTICE</file>
+								</transformer>
+							</transformers>
+							<createDependencyReducedPom>false</createDependencyReducedPom>
 						</configuration>
 					</execution>
 				</executions>
-
 				<configuration>
-					<!-- Include signature files so that recent versions of Java will run 
-						the resulting jar without complaining about "Invalid signature file digest 
-						for Manifest main attributes". -->
+					<!-- Include signature files so that recent versions of Java will run
+						the resulting jar without complaining about "Invalid signature file digest
+						for Manifest main attributes".
+						Furthermore, the excluded notice and license files will be explicitly
+						added by the resource transformers above -->
 					<filters>
 						<filter>
 							<artifact>*:*</artifact>
@@ -191,6 +203,8 @@
 								<exclude>META-INF/*.SF</exclude>
 								<exclude>META-INF/*.DSA</exclude>
 								<exclude>META-INF/*.RSA</exclude>
+								<exclude>META-INF/LICENSE</exclude>
+								<exclude>META-INF/NOTICE</exclude>
 							</excludes>
 						</filter>
 					</filters>
@@ -198,86 +212,13 @@
 			</plugin>
 
 			<plugin>
-				<groupId>org.codehaus.mojo</groupId>
-				<artifactId>build-helper-maven-plugin</artifactId>
-				<version>1.8</version>
-				<executions>
-					<execution>
-						<id>add-test-source</id>
-						<phase>generate-test-sources</phase>
-						<goals>
-							<goal>add-test-source</goal>
-						</goals>
-						<configuration>
-							<sources>
-								<!-- Test suite classes kept in a separate folder for compatibility 
-									with the Eclipse JUnit test runner. -->
-								<source>${basedir}/src/test_suites/java</source>
-							</sources>
-						</configuration>
-					</execution>
-				</executions>
-			</plugin>
-			<plugin>
 				<groupId>org.apache.maven.plugins</groupId>
 				<artifactId>maven-compiler-plugin</artifactId>
+				<version>3.8.1</version><!--$NO-MVN-MAN-VER$-->
 				<configuration>
 					<source>1.8</source>
 					<target>1.8</target>
 				</configuration>
-			</plugin>
-			<plugin>
-				<groupId>net.alchim31.maven</groupId>
-				<artifactId>scala-maven-plugin</artifactId>
-				<version>3.2.2</version>
-				<executions>
-					<execution>
-						<id>eclipse-add-source</id>
-						<goals>
-							<goal>add-source</goal>
-						</goals>
-					</execution>
-					<execution>
-						<id>scala-compile-first</id>
-						<phase>process-resources</phase>
-						<goals>
-							<goal>compile</goal>
-						</goals>
-					</execution>
-					<execution>
-						<id>scala-test-compile-first</id>
-						<phase>process-test-resources</phase>
-						<goals>
-							<goal>testCompile</goal>
-						</goals>
-					</execution>
-				</executions>
-			</plugin>
-			<plugin>
-				<groupId>org.apache.maven.plugins</groupId>
-				<artifactId>maven-jar-plugin</artifactId>
-				<executions>
-					<execution>
-						<id>default-jar</id>
-						<goals>
-							<goal>jar</goal>
-						</goals>
-						<phase>package</phase>
-						<configuration>
-							<archive>
-								<index>true</index>
-								<manifestEntries>
-									<Build-Timestamp>${maven.build.timestamp}</Build-Timestamp>
-									<Main-Class>org.apache.sysml.api.DMLScript</Main-Class>
-								</manifestEntries>
-							</archive>
-							<excludes>
-								<exclude>**/caffe/*</exclude>
-								<exclude>**/org/apache/sysml/api/dl/*</exclude>
-							</excludes>
-						</configuration>
-					</execution>
-				</executions>
 			</plugin>
 
 			<plugin>
@@ -303,27 +244,6 @@
 							<outputDirectory>${basedir}/target/lib/hadoop/bin</outputDirectory>
 						</configuration>
 					</execution>
-
-					<execution>
-						<id>copy-resources-filtered</id>
-						<phase>compile</phase>
-						<goals>
-							<goal>copy-resources</goal>
-						</goals>
-						<configuration>
-							<overwrite>true</overwrite>
-							<outputDirectory>${basedir}/target/scripts</outputDirectory>
-							<resources>
-								<resource>
-									<directory>${basedir}/src/main/resources/scripts</directory>
-									<includes>
-										<include>sparkDML.sh</include>
-									</includes>
-									<filtering>true</filtering>
-								</resource>
-							</resources>
-						</configuration>
-					</execution>
 				</executions>
 			</plugin>
 
@@ -345,134 +265,22 @@
 				</executions>
 			</plugin>
 
-			<plugin>
-				<groupId>com.github.os72</groupId>
-				<artifactId>protoc-jar-maven-plugin</artifactId>
-				<version>3.4.0.1</version>
-				<executions>
-					<execution>
-						<id>caffe-sources</id>
-						<phase>generate-sources</phase>
-						<goals>
-							<goal>run</goal>
-						</goals>
-						<configuration>
-							<protocVersion>2.5.0</protocVersion> <!-- 2.4.1, 2.5.0, 2.6.1, 3.4.0 -->
-							<inputDirectories>
-								<include>src/main/proto/caffe</include>
-							</inputDirectories>
-							<outputDirectories>
-								<include>src/main/java</include>
-							</outputDirectories>
-						</configuration>
-					</execution>
-				</executions>
-			</plugin>
 
-			<!-- Currently, all tests are integration tests. -->
-			<plugin>
+			<plugin> <!-- unit tests -->
 				<groupId>org.apache.maven.plugins</groupId>
 				<artifactId>maven-surefire-plugin</artifactId>
-				<version>2.18</version><!--$NO-MVN-MAN-VER$ -->
+				<version>3.0.0-M4</version><!--$NO-MVN-MAN-VER$ -->
 				<configuration>
-
-					<!-- STDERR/STDOUT to individual .txt files instead of console -->
-					<redirectTestOutputToFile>true</redirectTestOutputToFile>
-
-					<!-- Run (num cores) test harness classes in parallel, each in a separate 
-						process -->
+					<skipTests>${maven.test.skip}</skipTests>
+					<parallel>classes</parallel>
+					<!-- <useUnlimitedThreads>true</useUnlimitedThreads> -->
+					<threadCount>12</threadCount>
+					<!-- 1C means the number of threads times 1 possible maximum forks for testing-->
 					<forkCount>1C</forkCount>
-					<reuseForks>true</reuseForks>
-
-					<!-- Third argument prevents Java from popping up lots of windows on 
-						MacOS -->
-					<argLine>-Dfile.encoding=UTF-8 -Xmx2g -Xms2g -Xmn200m
-						-Djava.awt.headless=true</argLine>
-
-					<includes>
-						<!-- All tests are integration tests as far as Maven is concerned. -->
-					</includes>
-
-					<excludes>
-						<exclude>**/slowtest/**</exclude>
-						<exclude>**/integration/**</exclude>
-						<exclude>**/test/unit/**</exclude>
-						<exclude>**/test/gpu/**</exclude>
-					</excludes>
-
-				</configuration>
-			</plugin>
-
-			<plugin>
-				<groupId>org.apache.maven.plugins</groupId>
-				<artifactId>maven-failsafe-plugin</artifactId>
-
-				<!-- *** HACK ALERT *** HACK ALERT *** HACK ALERT *** -->
-				<!-- Failsafe 2.18 has a bug in computing # cores, so use 2.17 -->
-				<version>2.17</version><!--$NO-MVN-MAN-VER$ -->
-				<!-- *** END HACK *** -->
-
-				<executions>
-					<execution>
-						<goals>
-							<goal>integration-test</goal>
-							<goal>verify</goal>
-						</goals>
-					</execution>
-				</executions>
-				<configuration>
-
-					<!-- STDERR/STDOUT to individual .txt files instead of console -->
-					<redirectTestOutputToFile>true</redirectTestOutputToFile>
-
-					<!-- Tests are grouped into suites, one suite per package. -->
-					<parallel>suites</parallel>
-					<threadCount>1</threadCount>
-
-					<!-- 2 processes per test -->
-					<forkCount>0.5C</forkCount>
 					<reuseForks>false</reuseForks>
-
-					<!-- Limit Spark log output-->
-					<systemPropertyVariables>
-					  <log4j.configuration>file:${basedir}/conf/log4j-silent.properties</log4j.configuration>
-					</systemPropertyVariables>
-					
-					<!-- Last argument prevents Java from popping up lots of windows on 
-						MacOS -->
-					<argLine>-Dfile.encoding=UTF-8 -Xmx2g -Xms2g -Xmn200m
-						${integrationTestExtraJVMArgs}
-						-Djava.awt.headless=true</argLine>
-
-					<includes>
-						<include>${gpuTestsPath}</include> <!-- Path for GPU integration tests, enabled for gpuTests profile -->
-						<!-- <include>**/integration/applications/**/*Suite.java</include> -->
-						<!-- <include>**/integration/conversion/*Suite.java</include> -->
-						<!-- <include>**/integration/functions/data/*Suite.java</include> -->
-						<include>**/integration/functions/estim/*Suite.java</include>
-						<include>**/integration/functions/external/*Suite.java</include>
-						<include>**/integration/functions/frame/*Suite.java</include>
-						<include>**/integration/functions/io/*Suite.java</include>
-						<include>**/integration/functions/jmlc/*Suite.java</include>
-						<include>**/integration/functions/misc/*Suite.java</include>
-						<include>**/integration/functions/parfor/*Suite.java</include>
-						<include>**/integration/functions/sparse/*Suite.java</include>
-						<include>**/integration/functions/tensor/*Suite.java</include>
-						<include>**/integration/functions/updateinplace/*Suite.java</include>
-						<include>**/integration/functions/vect/*Suite.java</include>
-						<!-- <include>**/integration/functions/codegenalg/*Suite.java</include> -->
-						<!-- <include>**/integration/functions/**/*Test*.java</include> -->
-						<include>**/integration/mlcontext/*Suite.java</include>
-						<!-- <include>**/integration/mlcontext/algorithms/*Suite.java</include> -->
-						<include>**/integration/scripts/nn/*Suite.java</include>
-						<!-- <include>**/integration/scalability/**/*Test.java</include> -->
-					</includes>
-
-					<excludes>
-						<exclude>**/slowtest/**</exclude>
-						<exclude>**/integration/functions/data/*Test*.java</exclude>
-					</excludes>
-
+					<reportFormat>brief</reportFormat>
+					<trimStackTrace>true</trimStackTrace>
+					<rerunFailingTestsCount>2</rerunFailingTestsCount>
 				</configuration>
 			</plugin>
 
@@ -498,48 +306,9 @@
 						</configuration>
 					</execution>
 					<execution>
-						<!-- NOTE: We don't clean up systemml.egg-info since this makes it 
-							difficult to uninstall a dev version after a maven clean -->
-						<id>clean-python-files</id>
-						<phase>clean</phase>
-						<goals>
-							<goal>clean</goal>
-						</goals>
-						<configuration>
-							<excludeDefaultDirectories>true</excludeDefaultDirectories>
-							<filesets>
-								<fileset>
-									<directory>src/main/python/dist</directory>
-								</fileset>
-								<fileset>
-									<directory>src/main/python/systemml/systemml-java</directory>
-								</fileset>
-								<fileset>
-									<directory>src/main/python/systemml/__pycache__</directory>
-								</fileset>
-								<fileset>
-									<directory>src/main/python/systemml/mllearn</directory>
-									<includes>
-										<include>*.pyc</include>
-									</includes>
-								</fileset>
-								<fileset>
-									<directory>src/main/python/systemml/mllearn/__pycache__</directory>
-								</fileset>
-								<fileset>
-									<directory>src/main/python/systemml</directory>
-									<includes>
-										<include>project_info.py</include>
-										<include>*.pyc</include>
-									</includes>
-								</fileset>
-							</filesets>
-						</configuration>
-					</execution>
-					<execution>
 						<!-- remove antlr tokens files during initialize phase so antlr4 -->
 						<!-- plugin can regenerate them during generate-sources phase -->
-						<id>remove-antlr-tokens-files</id>
+						<!-- <id>remove-antlr-tokens-files</id>
 						<phase>initialize</phase>
 						<goals>
 							<goal>clean</goal>
@@ -553,41 +322,7 @@
 									</includes>
 								</fileset>
 							</filesets>
-						</configuration>
-					</execution>
-				</executions>
-			</plugin>
-
-			<plugin>
-				<artifactId>maven-assembly-plugin</artifactId>
-				<configuration>
-					<tarLongFileMode>gnu</tarLongFileMode>
-				</configuration>
-				<executions>
-					<execution>
-						<id>create-main-jar</id>
-						<phase>package</phase>
-						<goals>
-							<goal>single</goal>
-						</goals>
-						<configuration>
-							<descriptors>
-								<descriptor>src/assembly/jar.xml</descriptor>
-							</descriptors>
-							<appendAssemblyId>false</appendAssemblyId>
-							<archive>
-								<manifest>
-									<mainClass>org.apache.sysml.api.DMLScript</mainClass>
-								</manifest>
-								<manifestEntries>
-									<Build-Time>${maven.build.timestamp}</Build-Time>
-									<Group-Id>${project.groupId}</Group-Id>
-									<Artifact-Id>${project.artifactId}</Artifact-Id>
-									<Version>${project.version}</Version>
-									<Minimum-Recommended-Spark-Version>${spark.version}</Minimum-Recommended-Spark-Version>
-								</manifestEntries>
-							</archive>
-						</configuration>
+						</configuration> -->
 					</execution>
 				</executions>
 			</plugin>
@@ -601,7 +336,7 @@
 						<phase>package</phase>
 						<configuration>
 							<target name="copy and rename JAR">
-								<copy file="${project.build.directory}/${project.artifactId}-${project.version}.jar" tofile="${project.build.directory}/SystemML.jar" />
+								<copy file="${project.build.directory}/${project.artifactId}-${project.version}.jar" tofile="${project.build.directory}/SystemDS.jar" />
 							</target>
 						</configuration>
 						<goals>
@@ -612,63 +347,61 @@
 			</plugin>
 
 			<plugin>
-				<groupId>org.codehaus.mojo</groupId>
-				<artifactId>exec-maven-plugin</artifactId>
-				<version>1.6.0</version>
-				<executions>
-					<execution>
-						<id>install-dependency-for-integration-tests</id>
-						<phase>prepare-package</phase>
-						<goals>
-							<goal>java</goal>
-						</goals>
-						<configuration>
-							<mainClass>org.apache.sysml.utils.InstallDependencyForIntegrationTests</mainClass>
-							<arguments>
-								<argument>true</argument> <!-- <argument>${skipTests}</argument> -->
-								<argument>${enableGPU}</argument>
-							</arguments>
-						</configuration>
-					</execution>
-					<execution>
-						<id>generate-classes-for-mlcontext</id>
-						<phase>prepare-package</phase>
-						<goals>
-							<goal>java</goal>
-						</goals>
-						<configuration>
-							<mainClass>org.apache.sysml.utils.GenerateClassesForMLContext</mainClass>
-							<arguments>
-								<arguments>scripts</arguments>
-								<arguments>target/classes</arguments>
-							</arguments>
-						</configuration>
-					</execution>
-				</executions>
-			</plugin>
-			<plugin>
 				<groupId>org.jacoco</groupId>
 				<artifactId>jacoco-maven-plugin</artifactId>
-				<version>0.7.6.201602180812</version>
+				<version>0.8.5</version>
 				<executions>
 					<execution>
-						<id>prepare-agent</id>
 						<goals>
 							<goal>prepare-agent</goal>
 						</goals>
 					</execution>
+					<execution>
+						<id>generate-code-coverage-report</id>
+						<phase>test</phase>
+						<goals>
+							<goal>report</goal>
+						</goals>
+					</execution>
 				</executions>
 			</plugin>
+
 			<plugin>
 				<groupId>org.eluder.coveralls</groupId>
 				<artifactId>coveralls-maven-plugin</artifactId>
 				<version>4.3.0</version>
 			</plugin>
+
+			<plugin>
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-javadoc-plugin</artifactId>
+				<version>3.2.0</version>
+				<configuration>
+					<quiet>true</quiet>
+					<skip>true</skip>
+				</configuration>
+			</plugin>
+
+			<plugin>
+				<groupId>org.codehaus.mojo</groupId>
+				<artifactId>properties-maven-plugin</artifactId>
+				<version>1.0.0</version>
+				<executions>
+					<execution>
+						<phase>generate-resources</phase>
+						<goals>
+							<goal>write-project-properties</goal>
+						</goals>
+						<configuration>
+							<outputFile>${project.build.testOutputDirectory}/my.properties</outputFile>
+						</configuration>
+					</execution>
+				</executions>
+			</plugin>
 		</plugins>
 	</build>
 
 	<profiles>
-
 		<profile>
 			<id>windows-x86_64</id>
 			<activation>
@@ -719,37 +452,6 @@
 			<properties>
 				<jcuda.os>linux</jcuda.os>
 				<jcuda.arch>ppc_64</jcuda.arch>
-			</properties>
-		</profile>
-
-		<profile>
-			<id>scala-2.10</id>
-			<properties>
-				<scala.version>2.10.5</scala.version>
-				<scala.binary.version>2.10</scala.binary.version>
-			</properties>
-		</profile>
-
-		<profile>
-			<id>scala-2.11</id>
-			<properties>
-				<scala.version>2.11.8</scala.version>
-				<scala.binary.version>2.11</scala.binary.version>
-			</properties>
-		</profile>
-
-		<profile>
-			<!-- Profile for Windows builds. Not currently needed, but might be needed 
-				in the future. -->
-			<id>platform-windows</id>
-			<activation>
-				<os>
-					<family>windows</family>
-				</os>
-			</activation>
-			<properties>
-				<!-- Extra JVM args for Windows go here. -->
-				<integrationTestExtraJVMArgs />
 			</properties>
 		</profile>
 
@@ -813,36 +515,6 @@
 												</ignore>
 											</action>
 										</pluginExecution>
-										<pluginExecution>
-											<pluginExecutionFilter>
-												<groupId>net.alchim31.maven</groupId>
-												<artifactId>scala-maven-plugin</artifactId>
-												<versionRange>[3.2.2,)</versionRange>
-												<goals>
-													<goal>add-source</goal>
-													<goal>compile</goal>
-													<goal>testCompile</goal>
-												</goals>
-											</pluginExecutionFilter>
-											<action>
-												<ignore>
-												</ignore>
-											</action>
-										</pluginExecution>
-										<pluginExecution>
-											<pluginExecutionFilter>
-												<groupId>org.codehaus.mojo</groupId>
-												<artifactId>build-helper-maven-plugin</artifactId>
-												<versionRange>[1.8,)</versionRange>
-												<goals>
-													<goal>add-test-source</goal>
-												</goals>
-											</pluginExecutionFilter>
-											<action>
-												<ignore>
-												</ignore>
-											</action>
-										</pluginExecution>
 									</pluginExecutions>
 								</lifecycleMappingMetadata>
 							</configuration>
@@ -872,38 +544,45 @@
 						<configuration>
 							<excludes>
 								<exclude>.gitignore</exclude>
+								<exclude>.gitmodules</exclude>
 								<exclude>.repository/</exclude>
 								<exclude>.idea/</exclude>
 								<exclude>.git</exclude>
 								<exclude>.settings</exclude>
 								<exclude>.classpath</exclude>
 								<exclude>.project</exclude>
-								<exclude>docs</exclude>
-								<exclude>**/docs/**</exclude>
+								<exclude>src/main/python/docs/build/**/*</exclude>
+								<exclude>src/main/python/docs/source/_build/**</exclude>
+								<exclude>docs/api/**/*</exclude>
+								<exclude>docs/_site/**/*</exclude>
+								<exclude>docs/site/run_issues.md</exclude>
+								<exclude>docs/.jekyll-cache/**/*</exclude>
+								<exclude>docs/css/bootstrap.min.css</exclude>
+								<exclude>docs/css/pygments-default.css</exclude>
+								<exclude>docs/js/vendor/**/*</exclude>
+								<exclude>**/*.lock</exclude>
 								<exclude>**/*.csv</exclude>
 								<exclude>**/*.ijv</exclude>
 								<exclude>**/*.json</exclude>
+								<exclude>**/*.libsvm</exclude>
 								<exclude>**/*.mtx</exclude>
 								<exclude>**/*.mtd</exclude>
+								<exclude>**/*.out</exclude>
+								<exclude>**/__pycache__/**</exclude>
 								<exclude>**/part-*</exclude>
 								<exclude>**/*.keep</exclude>
 								<exclude>**/target/**</exclude>
 								<exclude>**/README.md</exclude>
 								<exclude>**/*.svg</exclude>
+								<exclude>dev/release/damslab-pubkey.asc</exclude>
 								<!-- Jupyter Notebooks -->
 								<exclude>**/*.ipynb</exclude>
 								<!-- Generated antlr files -->
 								<exclude>src/main/java/*.tokens</exclude>
 								<exclude>**/*.interp</exclude>
-								<!-- Generated python files -->
-								<exclude>src/main/python/systemml.egg-info/**</exclude>
-								<!-- Sphinx reStructuredText files -->
-								<exclude>src/main/pythondoc/*.rst</exclude>
 								<!-- Compiled ptx file from nvcc -->
-								<exclude>src/main/cpp/kernels/SystemML.ptx</exclude>
-								<!-- Proto files -->
-								<exclude>src/main/proto/caffe/caffe.proto</exclude>
-								<exclude>scripts/nn/examples/caffe2dml/models/**/*</exclude>
+								<exclude>src/main/cuda/kernels/SystemDS.ptx</exclude>
+								<exclude>src/main/cuda/kernels/reduction.ptx</exclude>
 								<!-- Test Validation files -->
 								<exclude>src/test/scripts/functions/jmlc/**/*.impute</exclude>
 								<exclude>src/test/scripts/functions/jmlc/**/*.map</exclude>
@@ -916,8 +595,14 @@
 								<exclude>src/test/scripts/functions/jmlc/tfmtd_example/dummycoded.column.names</exclude>
 								<exclude>src/test/scripts/functions/jmlc/tfmtd_example2/column.names</exclude>
 								<exclude>src/test/scripts/functions/jmlc/tfmtd_frame_example/tfmtd_frame</exclude>
+								<!-- csv test input not captured by *.csv -->
+								<exclude>src/test/scripts/functions/io/csv/in/*/*</exclude>
+								<!-- Python bindings lineage test result comparison -->
+								<exclude>src/main/python/tests/lt*.txt</exclude>
 								<!-- Perftest requirement file -->
 								<exclude>scripts/perftest/python/requirements.txt</exclude>
+								<!-- external sources -->
+								<exclude>src/main/cuda/ext/**</exclude>
 							</excludes>
 						</configuration>
 					</plugin>
@@ -925,25 +610,8 @@
 			</build>
 		</profile>
 
-		<!-- profile to enable running tests on the GPU -->
 		<profile>
-			<id>gpuTests</id>
-			<properties>
-				<gpuTestsPath>**/integration/gpu/**/*Suite.java</gpuTestsPath>
-			</properties>
-		</profile>
-
-		<profile>
-			<!-- Can be used to ignore doclint javadoc issues -->
-			<id>ignore-doclint</id>
-			<!-- <activation> <jdk>[1.8,)</jdk> </activation> -->
-			<properties>
-				<javadoc.opts>-Xdoclint:none</javadoc.opts>
-			</properties>
-		</profile>
-
-		<profile>
-			<!-- Profile to create binary distributions. Execute with `mvn clean package 
+			<!-- Profile to create binary distributions. Execute with `mvn clean package
 				-P distribution` -->
 			<id>distribution</id>
 			<build>
@@ -951,7 +619,7 @@
 					<plugin>
 						<artifactId>maven-assembly-plugin</artifactId>
 						<configuration>
-							<tarLongFileMode>gnu</tarLongFileMode>
+							<tarLongFileMode>posix</tarLongFileMode>
 						</configuration>
 						<executions>
 							<execution>
@@ -963,19 +631,6 @@
 								<configuration>
 									<descriptors>
 										<descriptor>src/assembly/source.xml</descriptor>
-									</descriptors>
-								</configuration>
-							</execution>
-
-							<execution>
-								<id>create-binary-distribution</id>
-								<phase>package</phase>
-								<goals>
-									<goal>single</goal>
-								</goals>
-								<configuration>
-									<descriptors>
-										<descriptor>src/assembly/bin.xml</descriptor>
 									</descriptors>
 								</configuration>
 							</execution>
@@ -996,7 +651,18 @@
 											<Version>${project.version}</Version>
 										</manifestEntries>
 									</archive>
-									<classifier>extra</classifier>
+								</configuration>
+							</execution>
+							<execution>
+								<id>create-binary-distribution</id>
+								<phase>package</phase>
+								<goals>
+									<goal>single</goal>
+								</goals>
+								<configuration>
+									<descriptors>
+										<descriptor>src/assembly/bin.xml</descriptor>
+									</descriptors>
 								</configuration>
 							</execution>
 						</executions>
@@ -1011,20 +677,13 @@
 								<goals>
 									<goal>sign</goal>
 								</goals>
-							</execution>
-						</executions>
-					</plugin>
-
-					<plugin>
-						<groupId>org.apache.maven.plugins</groupId>
-						<artifactId>maven-source-plugin</artifactId>
-						<version>2.4</version>
-						<executions>
-							<execution>
-								<id>attach-sources</id>
-								<goals>
-									<goal>jar-no-fork</goal>
-								</goals>
+								<configuration>
+									<!-- This is necessary for gpg to not try to use the pinentry programs -->
+									<gpgArguments>
+										<arg>--pinentry-mode</arg>
+										<arg>loopback</arg>
+									</gpgArguments>
+								</configuration>
 							</execution>
 						</executions>
 					</plugin>
@@ -1051,14 +710,15 @@
 					<plugin>
 						<groupId>org.apache.maven.plugins</groupId>
 						<artifactId>maven-javadoc-plugin</artifactId>
-						<version>2.10.3</version>
+						<version>3.2.0</version>
 						<configuration>
-							<!-- Need to include the following packages, so exclude others: org.apache.sysml.api 
-								org.apache.sysml.runtime.instructions.spark.utils (for RDDConverterUtils, 
-								etc) org.apache.sysml.runtime.matrix (for MatrixCharacteristics, etc) org.apache.sysml.runtime.matrix.data 
-								(for MatrixIndexes, MatrixBlock, etc) org.apache.sysml.udf -->
-							<excludePackageNames>caffe:org.apache.sysml.conf:org.apache.sysml.debug:org.apache.sysml.hops:org.apache.sysml.lops:org.apache.sysml.parser:org.apache.sysml.runtime.controlprogram:org.apache.sysml.runtime.functionobjects:org.apache.sysml.runtime.instructions.cp:org.apache.sysml.runtime.instructions.cpfile:org.apache.sysml.runtime.instructions.mr:org.apache.sysml.runtime.instructions.spark.data:org.apache.sysml.runtime.instructions.spark.functions:org.apache.sysml.runtime.io:org.apache.sysml.runtime.matrix.data.hadoopfix:org.apache.sysml.runtime.matrix.mapred:org.apache.sysml.runtime.matrix.operators:org.apache.sysml.runtime.matrix.sort:org.apache.sysml.runtime.transform:org.apache.sysml.runtime.util:org.apache.sysml.utils:org.apache.sysml.yarn</excludePackageNames>
-							<additionalparam>${javadoc.opts}</additionalparam>
+							<!-- https://maven.apache.org/plugins/maven-javadoc-plugin/javadoc-mojo.html -->
+							<excludePackageNames>*.protobuf</excludePackageNames>
+							<notimestamp>true</notimestamp>
+							<failOnWarnings>true</failOnWarnings>
+							<quiet>true</quiet>
+							<skip>false</skip>
+							<show>public</show>
 						</configuration>
 						<executions>
 							<execution>
@@ -1069,259 +729,95 @@
 							</execution>
 						</executions>
 					</plugin>
+				</plugins>
+			</build>
+		</profile>
+
+		<profile>
+			<id>skip-sign</id>
+			<build>
+				<plugins>
 					<plugin>
 						<groupId>org.apache.maven.plugins</groupId>
-						<artifactId>maven-resources-plugin</artifactId>
-						<executions>
-							<execution>
-								<id>copy-project-info-for-python</id>
-								<phase>prepare-package</phase>
-								<goals>
-									<goal>copy-resources</goal>
-								</goals>
-								<configuration>
-									<overwrite>true</overwrite>
-									<outputDirectory>${basedir}/src/main/python/systemml</outputDirectory>
-									<resources>
-										<resource>
-											<directory>${basedir}/src/main/resources/python</directory>
-											<includes>
-												<include>project_info.py</include>
-											</includes>
-											<filtering>true</filtering>
-										</resource>
-									</resources>
-								</configuration>
-							</execution>
-						</executions>
-					</plugin>
-					<plugin>
-						<groupId>org.codehaus.mojo</groupId>
-						<artifactId>exec-maven-plugin</artifactId>
-						<version>1.6.0</version>
-						<executions>
-							<execution>
-								<id>generate-python-package-1</id>
-								<phase>package</phase>
-								<goals>
-									<goal>exec</goal>
-								</goals>
-								<configuration>
-									<executable>python</executable>
-									<workingDirectory>src/main/python</workingDirectory>
-									<arguments>
-										<argument>pre_setup.py</argument>
-									</arguments>
-								</configuration>
-							</execution>
-							<execution>
-								<id>generate-python-package-2</id>
-								<phase>package</phase>
-								<goals>
-									<goal>exec</goal>
-								</goals>
-								<configuration>
-									<executable>python</executable>
-									<workingDirectory>src/main/python</workingDirectory>
-									<arguments>
-										<argument>setup.py</argument>
-										<argument>sdist</argument>
-										<argument>--dist-dir=../../../target</argument>
-									</arguments>
-								</configuration>
-							</execution>
-							<execution>
-								<id>generate-python-package-3</id>
-								<phase>package</phase>
-								<goals>
-									<goal>exec</goal>
-								</goals>
-								<configuration>
-									<executable>python</executable>
-									<workingDirectory>src/main/python</workingDirectory>
-									<arguments>
-										<argument>post_setup.py</argument>
-									</arguments>
-								</configuration>
-							</execution>
-						</executions>
-					</plugin>
-					<!-- Attach python artifact so it can be installed and deployed. -->
-					<plugin>
-						<groupId>org.codehaus.mojo</groupId>
-						<artifactId>build-helper-maven-plugin</artifactId>
-						<version>1.8</version>
-						<executions>
-							<execution>
-								<id>attach-python-artifact</id>
-								<phase>pre-integration-test</phase>
-								<goals>
-									<goal>attach-artifact</goal>
-								</goals>
-								<configuration>
-									<artifacts>
-										<artifact>
-											<file>${basedir}/target/${project.artifactId}-${project.version}-python.tar.gz</file>
-											<type>tar.gz</type>
-											<classifier>python</classifier>
-										</artifact>
-									</artifacts>
-								</configuration>
-							</execution>
-						</executions>
-					</plugin>
-				</plugins>
-			</build>
-		</profile>
-
-		<profile>
-			<!-- Profile to create lightweight jar (currently for JMLC only) -->
-			<id>lite</id>
-			<build>
-				<plugins>
-					<plugin>
-						<artifactId>maven-assembly-plugin</artifactId>
+						<artifactId>maven-gpg-plugin</artifactId>
 						<configuration>
-							<tarLongFileMode>gnu</tarLongFileMode>
+							<skip>true</skip>
 						</configuration>
-						<executions>
-							<execution>
-								<id>create-lite-jar</id>
-								<phase>package</phase>
-								<goals>
-									<goal>single</goal>
-								</goals>
-								<configuration>
-									<descriptors>
-										<descriptor>src/assembly/lite.xml</descriptor>
-									</descriptors>
-									<archive>
-										<manifest>
-											<mainClass>org.apache.sysml.api.DMLScript</mainClass>
-										</manifest>
-										<manifestEntries>
-											<Build-Time>${maven.build.timestamp}</Build-Time>
-											<Group-Id>${project.groupId}</Group-Id>
-											<Artifact-Id>${project.artifactId}-lite</Artifact-Id>
-											<Version>${project.version}</Version>
-										</manifestEntries>
-									</archive>
-								</configuration>
-							</execution>
-						</executions>
-					</plugin>
-				</plugins>
-			</build>
-		</profile>
-
-		<profile>
-			<!-- Profile to create standalone jar. Execute with `mvn clean package 
-				-P standalone-jar` -->
-			<id>standalone-jar</id>
-			<build>
-				<plugins>
-					<plugin>
-						<artifactId>maven-assembly-plugin</artifactId>
-						<configuration>
-							<tarLongFileMode>gnu</tarLongFileMode>
-						</configuration>
-						<executions>
-							<execution>
-								<id>create-standalone-jar</id>
-								<phase>package</phase>
-								<goals>
-									<goal>single</goal>
-								</goals>
-								<configuration>
-									<descriptors>
-										<descriptor>src/assembly/standalone-jar.xml</descriptor>
-									</descriptors>
-									<archive>
-										<index>true</index>
-										<manifest>
-											<mainClass>org.apache.sysml.api.DMLScript</mainClass>
-										</manifest>
-									</archive>
-								</configuration>
-							</execution>
-						</executions>
 					</plugin>
 				</plugins>
 			</build>
 		</profile>
 	</profiles>
 
-
 	<dependencies>
-		<dependency>
-			<groupId>com.google.protobuf</groupId>
-			<artifactId>protobuf-java</artifactId>
-			<version>3.2.0</version>
-		</dependency>
 		<dependency>
 			<groupId>org.jcuda</groupId>
 			<artifactId>jcuda</artifactId>
 			<version>${jcuda.version}</version>
 			<scope>${jcuda.scope}</scope>
 			<exclusions>
-	        	<exclusion>  
-	        		<!-- always exclude recursive fetching of native libraries -->
-	          		<groupId>org.jcuda</groupId>
+				<exclusion>
+					<!-- always exclude recursive fetching of native libraries -->
+			  		<groupId>org.jcuda</groupId>
 					<artifactId>jcuda-natives</artifactId>
-	        	</exclusion>
-	      	</exclusions> 
+				</exclusion>
+		  	</exclusions>
 		</dependency>
+
 		<dependency>
 			<groupId>org.jcuda</groupId>
 			<artifactId>jcublas</artifactId>
 			<version>${jcuda.version}</version>
 			<scope>${jcuda.scope}</scope>
 			<exclusions>
-	        	<exclusion>  
-	        		<!-- always exclude recursive fetching of native libraries -->
-	          		<groupId>org.jcuda</groupId>
+				<exclusion>
+					<!-- always exclude recursive fetching of native libraries -->
+			  		<groupId>org.jcuda</groupId>
 					<artifactId>jcublas-natives</artifactId>
-	        	</exclusion>
-	      	</exclusions>
+				</exclusion>
+		  	</exclusions>
 		</dependency>
+
 		<dependency>
 			<groupId>org.jcuda</groupId>
 			<artifactId>jcusparse</artifactId>
 			<version>${jcuda.version}</version>
 			<scope>${jcuda.scope}</scope>
 			<exclusions>
-	        	<exclusion>  
-	        		<!-- always exclude recursive fetching of native libraries -->
-	          		<groupId>org.jcuda</groupId>
+				<exclusion>
+					<!-- always exclude recursive fetching of native libraries -->
+			  		<groupId>org.jcuda</groupId>
 					<artifactId>jcusparse-natives</artifactId>
-	        	</exclusion>
-	      	</exclusions>
+				</exclusion>
+		  	</exclusions>
 		</dependency>
+
 		<dependency>
 			<groupId>org.jcuda</groupId>
 			<artifactId>jcusolver</artifactId>
 			<version>${jcuda.version}</version>
 			<scope>${jcuda.scope}</scope>
 			<exclusions>
-	        	<exclusion>  
-	        		<!-- always exclude recursive fetching of native libraries -->
-	          		<groupId>org.jcuda</groupId>
+				<exclusion>
+					<!-- always exclude recursive fetching of native libraries -->
+			  		<groupId>org.jcuda</groupId>
 					<artifactId>jcusolver-natives</artifactId>
-	        	</exclusion>
-	      	</exclusions>
+				</exclusion>
+		  	</exclusions>
 		</dependency>
+
 		<dependency>
 			<groupId>org.jcuda</groupId>
 			<artifactId>jcudnn</artifactId>
 			<version>${jcuda.version}</version>
 			<scope>${jcuda.scope}</scope>
 			<exclusions>
-	        	<exclusion>  
-	        		<!-- always exclude recursive fetching of native libraries -->
-	          		<groupId>org.jcuda</groupId>
+				<exclusion>
+					<!-- always exclude recursive fetching of native libraries -->
+			  		<groupId>org.jcuda</groupId>
 					<artifactId>jcudnn-natives</artifactId>
-	        	</exclusion>
-	      	</exclusions>
+				</exclusion>
+		  	</exclusions>
 		</dependency>
 
 		<!-- for all platforms, to be included in the extra jar -->
@@ -1332,6 +828,7 @@
 			<version>${jcuda.version}</version>
 			<scope>${jcuda.scope}</scope>
 		</dependency>
+
 		<dependency>
 			<groupId>org.jcuda</groupId>
 			<artifactId>jcublas-natives</artifactId>
@@ -1339,6 +836,7 @@
 			<version>${jcuda.version}</version>
 			<scope>${jcuda.scope}</scope>
 		</dependency>
+
 		<dependency>
 			<groupId>org.jcuda</groupId>
 			<artifactId>jcusparse-natives</artifactId>
@@ -1346,6 +844,7 @@
 			<version>${jcuda.version}</version>
 			<scope>${jcuda.scope}</scope>
 		</dependency>
+
 		<dependency>
 			<groupId>org.jcuda</groupId>
 			<artifactId>jcusolver-natives</artifactId>
@@ -1353,6 +852,7 @@
 			<version>${jcuda.version}</version>
 			<scope>${jcuda.scope}</scope>
 		</dependency>
+
 		<dependency>
 			<groupId>org.jcuda</groupId>
 			<artifactId>jcudnn-natives</artifactId>
@@ -1368,6 +868,7 @@
 			<version>${jcuda.version}</version>
 			<scope>${jcuda.scope}</scope>
 		</dependency>
+
 		<dependency>
 			<groupId>org.jcuda</groupId>
 			<artifactId>jcublas-natives</artifactId>
@@ -1375,6 +876,7 @@
 			<version>${jcuda.version}</version>
 			<scope>${jcuda.scope}</scope>
 		</dependency>
+
 		<dependency>
 			<groupId>org.jcuda</groupId>
 			<artifactId>jcusparse-natives</artifactId>
@@ -1382,6 +884,7 @@
 			<version>${jcuda.version}</version>
 			<scope>${jcuda.scope}</scope>
 		</dependency>
+
 		<dependency>
 			<groupId>org.jcuda</groupId>
 			<artifactId>jcusolver-natives</artifactId>
@@ -1389,6 +892,7 @@
 			<version>${jcuda.version}</version>
 			<scope>${jcuda.scope}</scope>
 		</dependency>
+
 		<dependency>
 			<groupId>org.jcuda</groupId>
 			<artifactId>jcudnn-natives</artifactId>
@@ -1397,45 +901,6 @@
 			<scope>${jcuda.scope}</scope>
 		</dependency>
 
-		<!-- Commented until the PowerPC jcuda libraries are deployed for 0.9.0 version
-		<dependency>
-			<groupId>org.jcuda</groupId>
-			<artifactId>jcuda-natives</artifactId>
-			<classifier>linux-ppc_64</classifier>
-			<version>${jcuda.version}</version>
-			<scope>${jcuda.scope}</scope>
-		</dependency>
-		<dependency>
-			<groupId>org.jcuda</groupId>
-			<artifactId>jcublas-natives</artifactId>
-			<classifier>linux-ppc_64</classifier>
-			<version>${jcuda.version}</version>
-			<scope>${jcuda.scope}</scope>
-		</dependency>
-		<dependency>
-			<groupId>org.jcuda</groupId>
-			<artifactId>jcusparse-natives</artifactId>
-			<classifier>linux-ppc_64</classifier>
-			<version>${jcuda.version}</version>
-			<scope>${jcuda.scope}</scope>
-		</dependency>
-		<dependency>
-			<groupId>org.jcuda</groupId>
-			<artifactId>jcusolver-natives</artifactId>
-			<classifier>linux-ppc_64</classifier>
-			<version>${jcuda.version}</version>
-			<scope>${jcuda.scope}</scope>
-		</dependency>
-		<dependency>
-			<groupId>org.jcuda</groupId>
-			<artifactId>jcudnn-natives</artifactId>
-			<classifier>linux-ppc_64</classifier>
-			<version>${jcuda.version}</version>
-			<scope>${jcuda.scope}</scope>
-		</dependency>
-		 -->
-		 
-		 <!-- Commented until the MacOS jcuda libraries are deployed for 0.9.0 version
 		<dependency>
 			<groupId>org.jcuda</groupId>
 			<artifactId>jcuda-natives</artifactId>
@@ -1443,6 +908,7 @@
 			<version>${jcuda.version}</version>
 			<scope>${jcuda.scope}</scope>
 		</dependency>
+
 		<dependency>
 			<groupId>org.jcuda</groupId>
 			<artifactId>jcublas-natives</artifactId>
@@ -1450,6 +916,7 @@
 			<version>${jcuda.version}</version>
 			<scope>${jcuda.scope}</scope>
 		</dependency>
+
 		<dependency>
 			<groupId>org.jcuda</groupId>
 			<artifactId>jcusparse-natives</artifactId>
@@ -1457,6 +924,7 @@
 			<version>${jcuda.version}</version>
 			<scope>${jcuda.scope}</scope>
 		</dependency>
+
 		<dependency>
 			<groupId>org.jcuda</groupId>
 			<artifactId>jcusolver-natives</artifactId>
@@ -1464,6 +932,7 @@
 			<version>${jcuda.version}</version>
 			<scope>${jcuda.scope}</scope>
 		</dependency>
+
 		<dependency>
 			<groupId>org.jcuda</groupId>
 			<artifactId>jcudnn-natives</artifactId>
@@ -1471,13 +940,13 @@
 			<version>${jcuda.version}</version>
 			<scope>${jcuda.scope}</scope>
 		</dependency>
-		 -->
 
 		<dependency>
 			<groupId>org.apache.spark</groupId>
 			<artifactId>spark-mllib_${scala.binary.version}</artifactId>
 			<version>${spark.version}</version>
 		</dependency>
+
 		<dependency>
 			<groupId>org.apache.hadoop</groupId>
 			<artifactId>hadoop-common</artifactId>
@@ -1489,6 +958,7 @@
 				</exclusion>
 			</exclusions>
 		</dependency>
+
 		<dependency>
 			<groupId>org.apache.hadoop</groupId>
 			<artifactId>hadoop-hdfs</artifactId>
@@ -1500,33 +970,19 @@
 				</exclusion>
 			</exclusions>
 		</dependency>
+
 		<dependency>
 			<groupId>org.apache.hadoop</groupId>
 			<artifactId>hadoop-client</artifactId>
 			<version>${hadoop.version}</version>
 		</dependency>
-		<dependency>
-			<groupId>org.apache.hadoop</groupId>
-			<artifactId>hadoop-mapreduce-client-app</artifactId>
-			<version>${hadoop.version}</version>
-			<exclusions>
-				<exclusion>
-					<groupId>javax.servlet</groupId>
-					<artifactId>servlet-api</artifactId>
-				</exclusion>
-			</exclusions>
-		</dependency>
-		<dependency>
-			<groupId>org.apache.hadoop</groupId>
-			<artifactId>hadoop-mapreduce-client-jobclient</artifactId>
-			<version>${hadoop.version}</version>
-			<scope>provided</scope>
-		</dependency>
+
 		<dependency>
 			<groupId>commons-logging</groupId>
 			<artifactId>commons-logging</artifactId>
 			<version>1.1.3</version>
 		</dependency>
+
 		<dependency>
 			<groupId>org.apache.commons</groupId>
 			<artifactId>commons-math3</artifactId>
@@ -1534,29 +990,15 @@
 		</dependency>
 
 		<dependency>
-			<groupId>log4j</groupId>
-			<artifactId>log4j</artifactId>
-			<version>1.2.15</version>
-			<exclusions>
-				<exclusion>
-					<groupId>com.sun.jmx</groupId>
-					<artifactId>jmxri</artifactId>
-				</exclusion>
-				<exclusion>
-					<groupId>com.sun.jdmk</groupId>
-					<artifactId>jmxtools</artifactId>
-				</exclusion>
-				<exclusion>
-					<groupId>javax.jms</groupId>
-					<artifactId>jms</artifactId>
-				</exclusion>
-			</exclusions>
-		</dependency>
-
-		<dependency>
 			<groupId>org.apache.wink</groupId>
 			<artifactId>wink-json4j</artifactId>
 			<version>1.4</version>
+		</dependency>
+
+		<dependency>
+			<groupId>com.fasterxml.jackson.core</groupId>
+			<artifactId>jackson-databind</artifactId>
+			<version>2.6.5</version>
 		</dependency>
 
 		<dependency>
@@ -1567,9 +1009,18 @@
 		</dependency>
 
 		<dependency>
-			<groupId>commons-collections</groupId>
-			<artifactId>commons-collections</artifactId>
-			<version>3.2.1</version>
+			<groupId>org.openjdk.jol</groupId>
+			<artifactId>jol-core</artifactId>
+			<version>0.10</version>
+			<scope>test</scope>
+		</dependency>
+
+		<dependency>
+			<!--Used for annotations in tests to execute tests in thread safe manner-->
+			<groupId>com.github.stephenc.jcip</groupId>
+			<artifactId>jcip-annotations</artifactId>
+			<version>1.0-1</version>
+			<scope>test</scope>
 		</dependency>
 
 		<!-- fast java compiler for codegen, consistent version w/ spark -->
@@ -1592,59 +1043,58 @@
 				</exclusion>
 			</exclusions>
 		</dependency>
+
 		<dependency>
 			<groupId>org.antlr</groupId>
 			<artifactId>antlr4-runtime</artifactId>
 			<version>${antlr.version}</version>
 		</dependency>
 
-		<!-- Libraries for yarn integration -->
 		<dependency>
-			<groupId>org.apache.hadoop</groupId>
-			<artifactId>hadoop-yarn-api</artifactId>
-			<version>${hadoop.version}</version>
-		</dependency>
-
-		<dependency>
-			<groupId>org.apache.hadoop</groupId>
-			<artifactId>hadoop-yarn-common</artifactId>
-			<version>${hadoop.version}</version>
-		</dependency>
-
-		<dependency>
-			<groupId>org.apache.hadoop</groupId>
-			<artifactId>hadoop-yarn-client</artifactId>
-			<version>${hadoop.version}</version>
-		</dependency>
-
-		<dependency>
-			<groupId>org.apache.hadoop</groupId>
-			<artifactId>hadoop-mapreduce-client-common</artifactId>
-			<version>${hadoop.version}</version>
-		</dependency>
-		<dependency>
-			<groupId>org.scala-lang</groupId>
-			<artifactId>scala-library</artifactId>
-			<version>${scala.version}</version>
-		</dependency>
-		<dependency>
-			<groupId>org.scala-lang</groupId>
-			<artifactId>scalap</artifactId>
-			<version>${scala.version}</version>
+			<groupId>org.apache.derby</groupId>
+			<artifactId>derby</artifactId>
+			<version>10.14.2.0</version>
 			<scope>provided</scope>
 		</dependency>
+
 		<dependency>
-			<groupId>org.scalatest</groupId>
-			<artifactId>scalatest_${scala.binary.version}</artifactId>
-			<version>${scala.test.version}</version>
-			<scope>test</scope>
+			<groupId>io.netty</groupId>
+			<artifactId>netty-all</artifactId>
+			<version>4.0.42.Final</version>
+			<scope>provided</scope>
 		</dependency>
+
 		<dependency>
-			<groupId>org.mockito</groupId>
-			<artifactId>mockito-core</artifactId>
-			<version>1.9.5</version>
-			<scope>test</scope>
+			<groupId>net.sf.py4j</groupId>
+			<artifactId>py4j</artifactId>
+			<version>0.10.9</version>
+		</dependency>
+
+		<!-- https://mvnrepository.com/artifact/org.apache.maven.plugins/maven-javadoc-plugin -->
+		<dependency>
+			<groupId>org.apache.maven.plugins</groupId>
+			<artifactId>maven-javadoc-plugin</artifactId>
+			<version>3.2.0</version>
+		</dependency>
+
+		<!-- https://mvnrepository.com/artifact/org.apache.maven.plugins/maven-gpg-plugin -->
+		<dependency>
+			<groupId>org.apache.maven.plugins</groupId>
+			<artifactId>maven-gpg-plugin</artifactId>
+			<version>1.6</version>
+		</dependency>
+
+		<!-- https://github.com/protocolbuffers/protobuf/tree/master/java -->
+		<dependency>
+			<groupId>com.google.protobuf</groupId>
+			<artifactId>protobuf-java</artifactId>
+			<version>3.12.2</version>
+		</dependency>
+
+		<dependency>
+			<groupId>com.google.protobuf</groupId>
+			<artifactId>protobuf-java-util</artifactId>
+			<version>3.12.2</version>
 		</dependency>
 	</dependencies>
-
 </project>

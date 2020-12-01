@@ -1,0 +1,39 @@
+#-------------------------------------------------------------
+#
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+#
+#-------------------------------------------------------------
+
+A = federated(addresses=list($in1), ranges=list(list(0, 0), list($rows, $cols)))
+BF = federated(addresses=list($in2), ranges=list(list(0, 0), list($rows, $cols)))
+B = read($in2_local)
+
+R_FF = rbind(A, BF)
+C_FF = cbind(A, BF)
+R_FL = rbind(A, B)
+C_FL = cbind(A, B)
+R_LF = rbind(B, A)
+C_LF = cbind(B, A)
+
+write(R_FF, $out_R_FF)
+write(R_FL, $out_R_FL)
+write(R_LF, $out_R_LF)
+
+write(C_FF, $out_C_FF)
+write(C_FL, $out_C_FL)
+write(C_LF, $out_C_LF)

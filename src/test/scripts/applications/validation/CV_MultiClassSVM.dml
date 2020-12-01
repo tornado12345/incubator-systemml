@@ -7,9 +7,9 @@
 # to you under the Apache License, Version 2.0 (the
 # "License"); you may not use this file except in compliance
 # with the License.  You may obtain a copy of the License at
-# 
+#
 #   http://www.apache.org/licenses/LICENSE-2.0
-# 
+#
 # Unless required by applicable law or agreed to in writing,
 # software distributed under the License is distributed on an
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
@@ -22,12 +22,12 @@
 # 50k Dataset w/ 4-fold CV w/ 2 classes
 #    Total time:		3.7473180000000004 sec.
 #    Number of executed MR Jobs:	0.
-# hadoop jar SystemML.jar -f CV_MultiClassSVM.dml -args itau/svm/X_50k_10 itau/svm/y_50k 4 0 2 0.001 1.0 100 
+# hadoop jar SystemDS.jar -f CV_MultiClassSVM.dml -args itau/svm/X_50k_10 itau/svm/y_50k 4 0 2 0.001 1.0 100
 
 # 100k Dataset w/ 4-fold CV w/ 2 classes
 #    Total time:		206.549618 sec.
 #    Number of executed MR Jobs:	16.
-# hadoop jar SystemML.jar -f CV_MultiClassSVM.dml -args itau/svm/X_100k_500 itau/svm/y_100k 4 0 2 0.001 1.0 100 
+# hadoop jar SystemDS.jar -f CV_MultiClassSVM.dml -args itau/svm/X_100k_500 itau/svm/y_100k 4 0 2 0.001 1.0 100
 
 
 X = read( $1 );

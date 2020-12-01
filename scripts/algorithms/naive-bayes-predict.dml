@@ -7,9 +7,9 @@
 # to you under the Apache License, Version 2.0 (the
 # "License"); you may not use this file except in compliance
 # with the License.  You may obtain a copy of the License at
-# 
+#
 #   http://www.apache.org/licenses/LICENSE-2.0
-# 
+#
 # Unless required by applicable law or agreed to in writing,
 # software distributed under the License is distributed on an
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
@@ -22,7 +22,7 @@
 # Implements scoring with a naive Bayes model learnt using
 # naive-bayes.dml
 #
-# hadoop jar SystemML.jar -f naive-bayes-predict.dml -nvargs X=data Y=labels prior=model_file1 conditionals=model_file2 probabilities=probabilities accuracy=accuracy confusion=confusion fmt="text"
+# hadoop jar SystemDS.jar -f naive-bayes-predict.dml -nvargs X=data Y=labels prior=model_file1 conditionals=model_file2 probabilities=probabilities accuracy=accuracy confusion=confusion fmt="text"
 #
 
 cmdLine_Y = ifdef($Y, " ")

@@ -7,9 +7,9 @@
 # to you under the Apache License, Version 2.0 (the
 # "License"); you may not use this file except in compliance
 # with the License.  You may obtain a copy of the License at
-# 
+#
 #   http://www.apache.org/licenses/LICENSE-2.0
-# 
+#
 # Unless required by applicable law or agreed to in writing,
 # software distributed under the License is distributed on an
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
@@ -37,7 +37,7 @@ $INDEX1     = Indices for Set1
 $INDEX2     = Indices for Set2
 $FMT        = output format
 ------------------------------------------------
-hadoop jar SystemML.jar -f genData4Stats.dml -nvargs R=1000000 C=1000 NC=50 MAXDOMAIN=1100 DATA=stats/data TYPES=stats/types SETSIZE=15 LABELSETSIZE=10 TYPES1=... Types2=... INDEX1=.. INDEX2=..FMT=csv
+hadoop jar SystemDS.jar -f genData4Stats.dml -nvargs R=1000000 C=1000 NC=50 MAXDOMAIN=1100 DATA=stats/data TYPES=stats/types SETSIZE=15 LABELSETSIZE=10 TYPES1=... Types2=... INDEX1=.. INDEX2=..FMT=csv
 ------------------------------------------------
 */
 

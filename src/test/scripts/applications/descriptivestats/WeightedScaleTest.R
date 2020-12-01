@@ -25,28 +25,8 @@
 args <- commandArgs(TRUE)
 options(digits=22)
 
-options(repos="http://cran.stat.ucla.edu/") 
-is.installed <- function(mypkg) is.element(mypkg, installed.packages()[,1])
-
-is_plotrix = is.installed("plotrix");
-if ( !is_plotrix ) {
-install.packages("plotrix");
-} 
-library("plotrix");
-
-is_psych = is.installed("psych");
-if ( !is_psych ) {
-install.packages("psych");
-} 
 library("psych")
-
-is_moments = is.installed("moments");
-if( !is_moments){
-install.packages("moments");
-}
 library("moments")
-
-#library("batch")
 library("Matrix")
 
 # Usage: R --vanilla -args Xfile X < DescriptiveStatistics.R
@@ -77,7 +57,7 @@ var = var(V)
 std_dev = sd(V, na.rm = FALSE)
 
 # standard errors of mean
-SE = std.error(V, na.rm)
+SE = sd(V)/sqrt(sum(!is.na(V)))
 
 # coefficients of variation
 cv = std_dev/mu

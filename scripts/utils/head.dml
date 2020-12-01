@@ -7,9 +7,9 @@
 # to you under the Apache License, Version 2.0 (the
 # "License"); you may not use this file except in compliance
 # with the License.  You may obtain a copy of the License at
-# 
+#
 #   http://www.apache.org/licenses/LICENSE-2.0
-# 
+#
 # Unless required by applicable law or agreed to in writing,
 # software distributed under the License is distributed on an
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
@@ -28,7 +28,7 @@
 #    ofmt : (default "csv") format of output
 #
 # Example:
-#   hadoop jar SystemML.jar -f algorithms/utils/head.dml -nvargs x="/tmp/M.mtx" n=100 o="/tmp/o.mtx"
+#   hadoop jar SystemDS.jar -f algorithms/utils/head.dml -nvargs x="/tmp/M.mtx" n=100 o="/tmp/o.mtx"
 #
 
 ofmt = ifdef ($ofmt, "csv");
